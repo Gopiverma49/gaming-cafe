@@ -21,9 +21,15 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
     if (isUnmountedRef.current) return;
 
     // Build WebSocket URL
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const wsUrl = `${protocol}//${host}/ws/${channel}`;
+    let wsUrl: string;
+    if (import.meta.env.VITE_WS_URL) {
+      const baseWs = (import.meta.env.VITE_WS_URL as string).replace(/\/+$/, '');
+      wsUrl = `${baseWs}/ws/${channel}`;
+    } else {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.host;
+      wsUrl = `${protocol}//${host}/ws/${channel}`;
+    }
 
     try {
       const ws = new WebSocket(wsUrl);

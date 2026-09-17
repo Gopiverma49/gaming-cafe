@@ -2,16 +2,18 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
 
+db_url = settings.async_database_url
+
 # Engine configuration
 connect_args = {}
-if "sqlite" in settings.DATABASE_URL:
+if "sqlite" in db_url:
     connect_args["check_same_thread"] = False
 
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    db_url,
     echo=settings.ECHO_SQL,
     future=True,
-    pool_pre_ping=True if "sqlite" not in settings.DATABASE_URL else False,
+    pool_pre_ping=True if "sqlite" not in db_url else False,
     connect_args=connect_args,
 )
 

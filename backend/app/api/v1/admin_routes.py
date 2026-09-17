@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db, verify_admin_token
+from app.core.config import settings
 from app.core.security import create_admin_token
 from app.models.entities import Station, Session, Order, OrderItem, MenuItem
 from app.schemas.api_schemas import (
@@ -34,12 +35,12 @@ router = APIRouter(prefix="/admin", tags=["Admin Operations"])
 @router.post("/auth/login", response_model=TokenResponse)
 async def admin_login(creds: LoginRequest):
     """
-    Demo/Admin authentication route generating an admin-scoped Bearer token.
+    Admin authentication route generating an admin-scoped Bearer token.
     """
-    if creds.username != "admin" or creds.password != "admin123":
+    if creds.username != settings.ADMIN_USERNAME or creds.password != settings.ADMIN_PASSWORD:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid admin credentials (use admin/admin123)",
+            detail="Invalid admin credentials",
         )
     token = create_admin_token(username=creds.username)
     return TokenResponse(access_token=token, scope="admin", expires_in=60 * 12 * 60)

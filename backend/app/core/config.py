@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional
+from typing import List, Union
 
 
 class Settings(BaseSettings):
@@ -17,9 +17,36 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 12  # 12 hours
     CUSTOMER_TOKEN_EXPIRE_MINUTES: int = 60 * 6  # 6 hours
 
+    # Admin Credentials (Configurable for production hosting)
+    ADMIN_USERNAME: str = "admin"
+    ADMIN_PASSWORD: str = "admin123"
+
     # UPI Billing Info
     UPI_MERCHANT_VPA: str = "gamingcafe@upi"
     UPI_MERCHANT_NAME: str = "ApexCyberLounge"
+
+    # CORS Settings (can be "*" or comma-separated domains: "http://localhost:5173,https://mycafe.com")
+    CORS_ORIGINS: Union[str, List[str]] = "*"
+
+    @property
+    def cors_origin_list(self) -> List[str]:
+        if isinstance(self.CORS_ORIGINS, list):
+            return self.CORS_ORIGINS
+        if isinstance(self.CORS_ORIGINS, str):
+            if self.CORS_ORIGINS.strip() == "*":
+                return ["*"]
+            return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+        return ["*"]
+
+    @property
+    def async_database_url(self) -> str:
+        """Ensures PostgreSQL URLs use asyncpg driver dialect."""
+        url = self.DATABASE_URL
+        if url.startswith("postgres://"):
+            return url.replace("postgres://", "postgresql+asyncpg://", 1)
+        if url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
+            return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return url
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
