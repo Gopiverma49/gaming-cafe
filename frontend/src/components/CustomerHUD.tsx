@@ -9,6 +9,8 @@ import {
   Sparkles,
   AlertTriangle,
   X,
+  ShoppingCart,
+  ArrowLeft,
 } from 'lucide-react';
 import { CustomerDeskSession, MenuItem } from '../types';
 import {
@@ -34,6 +36,7 @@ export const CustomerHUD: React.FC<CustomerHUDProps> = ({
 
   const [deskToken, setDeskToken] = useState<string | null>(null);
   const [isMenuDrawerOpen, setIsMenuDrawerOpen] = useState(false);
+  const [menuCategory, setMenuCategory] = useState<'ALL' | 'Food' | 'Beverages'>('ALL');
   const [cart, setCart] = useState<Record<string, number>>({}); // itemId -> qty
   const [orderSuccessMessage, setOrderSuccessMessage] = useState<string | null>(null);
 
@@ -98,35 +101,34 @@ export const CustomerHUD: React.FC<CustomerHUDProps> = ({
     setCart((prev) => {
       const current = prev[itemId] || 0;
       if (current <= 1) {
-        const copy = { ...prev };
-        delete copy[itemId];
-        return copy;
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
       }
       return { ...prev, [itemId]: current - 1 };
     });
   };
 
-  const cartItemsList = Object.entries(cart).map(([itemId, qty]) => {
+  const cartItemsList = Object.entries(cart).map(([itemId, quantity]) => {
     const item = menuItems.find((m) => m.id === itemId);
-    const unitPrice = item ? Number(item.price) : 0;
     return {
       itemId,
-      name: item?.name || 'Item',
-      quantity: qty,
-      unitPrice,
-      subtotal: unitPrice * qty,
+      quantity,
+      item,
+      subtotal: (item ? Number(item.price) : 0) * quantity,
     };
   });
 
-  const cartSubtotal = cartItemsList.reduce((acc, it) => acc + it.subtotal, 0);
+  const cartSubtotal = cartItemsList.reduce((acc, curr) => acc + curr.subtotal, 0);
 
-  // SVG Radial Ring Calculation
+  // Countdown timer calculations
+  const remainingMins = deskSession?.remaining_minutes ?? 0;
+  const totalMins = (deskSession?.elapsed_minutes ?? 0) + remainingMins;
+  const progressPercent = totalMins > 0 ? Math.max(0, Math.min(100, (remainingMins / totalMins) * 100)) : 0;
+
   const radius = 80;
   const circumference = 2 * Math.PI * radius;
-  const totalMins = deskSession?.allocated_minutes || 60;
-  const remainingMins = deskSession?.remaining_minutes ?? 60;
-  const progressRatio = Math.max(0, Math.min(1, remainingMins / totalMins));
-  const strokeDashoffset = circumference - progressRatio * circumference;
+  const strokeDashoffset = circumference - (progressPercent / 100) * circumference;
 
   const ringColor =
     remainingMins <= 0
@@ -135,11 +137,16 @@ export const CustomerHUD: React.FC<CustomerHUDProps> = ({
       ? 'stroke-amber-400'
       : 'stroke-emerald-400';
 
+  const filteredMenuItems =
+    menuCategory === 'ALL'
+      ? menuItems
+      : menuItems.filter((i) => i.category.toLowerCase() === menuCategory.toLowerCase());
+
   if (!deskToken || isSessionLoading) {
     return (
-      <div className="flex flex-col items-center justify-center p-12 glass-panel rounded-2xl text-center border border-slate-800">
-        <div className="w-12 h-12 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin mb-4"></div>
-        <h3 className="text-lg font-bold text-white font-display">Initializing Desk HUD...</h3>
+      <div className="flex flex-col items-center justify-center p-8 sm:p-12 glass-panel rounded-2xl text-center border border-slate-800">
+        <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin mb-4"></div>
+        <h3 className="text-base sm:text-lg font-bold text-white font-display">Initializing Desk HUD...</h3>
         <p className="text-xs text-slate-400 font-mono-code mt-1">
           Zero-trust JWT verification & ephemeral session handshake
         </p>
@@ -148,27 +155,27 @@ export const CustomerHUD: React.FC<CustomerHUDProps> = ({
   }
 
   return (
-    <div className="relative space-y-6">
+    <div className="relative space-y-4 sm:space-y-6">
       {/* Top Banner */}
-      <div className="flex flex-wrap items-center justify-between gap-4 glass-panel p-4 rounded-xl border border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-4 glass-panel p-3.5 sm:p-4 rounded-xl border border-slate-800">
         <div>
           <div className="flex items-center space-x-2">
             <span className="text-[10px] font-mono-code uppercase px-2 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/60">
               {deskSession?.tier} TIER
             </span>
-            <h2 className="text-xl font-bold tracking-wide font-display text-white">
+            <h2 className="text-lg sm:text-xl font-bold tracking-wide font-display text-white truncate">
               {deskSession?.station_name}
             </h2>
           </div>
-          <p className="text-xs text-slate-400 font-mono-code mt-0.5">
-            Active Session ID: {deskSession?.session_id.slice(0, 12)}...
+          <p className="text-[11px] sm:text-xs text-slate-400 font-mono-code mt-0.5">
+            Active Session ID: {deskSession?.session_id.slice(0, 10)}...
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
           <button
             onClick={() => setIsMenuDrawerOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg hover:shadow-emerald-500/25"
+            className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 min-h-[42px] bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-black font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg hover:shadow-emerald-500/25"
           >
             <Utensils className="w-4 h-4" />
             <span>Order Food & Drinks</span>
@@ -182,52 +189,57 @@ export const CustomerHUD: React.FC<CustomerHUDProps> = ({
           {onBackToMatrix && (
             <button
               onClick={onBackToMatrix}
-              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700 transition-colors"
+              className="px-3 py-2.5 min-h-[42px] rounded-xl bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-300 text-xs font-semibold border border-slate-700 transition-colors shrink-0"
+              title="Return to Stations Matrix"
             >
-              Back to Matrix
+              <span className="hidden sm:inline">Back to Matrix</span>
+              <span className="sm:hidden flex items-center gap-1">
+                <ArrowLeft className="w-3.5 h-3.5" />
+                Back
+              </span>
             </button>
           )}
         </div>
       </div>
 
       {orderSuccessMessage && (
-        <div className="p-4 rounded-xl bg-emerald-950/90 border border-emerald-600/80 text-emerald-200 text-xs flex items-center justify-between shadow-lg">
+        <div className="p-3.5 sm:p-4 rounded-xl bg-emerald-950/90 border border-emerald-600/80 text-emerald-200 text-xs flex items-center justify-between shadow-lg">
           <div className="flex items-center space-x-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>{orderSuccessMessage}</span>
           </div>
-          <button onClick={() => setOrderSuccessMessage(null)} className="text-emerald-400 hover:text-white">
+          <button onClick={() => setOrderSuccessMessage(null)} className="text-emerald-400 hover:text-white p-1">
             <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
       {/* Main HUD Dashboard */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Radial Countdown Timer Card */}
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800 flex flex-col items-center justify-center text-center relative overflow-hidden">
+        <div className="glass-panel p-5 sm:p-6 rounded-2xl border border-slate-800 flex flex-col items-center justify-center text-center relative overflow-hidden">
           <div className="text-xs font-mono-code uppercase text-slate-400 tracking-wider mb-2">
             Remaining Session Time
           </div>
 
-          <div className="relative w-52 h-52 flex items-center justify-center my-2">
+          <div className="relative w-44 h-44 sm:w-52 sm:h-52 flex items-center justify-center my-2">
             <svg className="w-full h-full transform -rotate-90">
               {/* Background ring */}
               <circle
-                cx="104"
-                cy="104"
+                cx="50%"
+                cy="50%"
                 r={radius}
                 className="stroke-slate-800"
-                strokeWidth="12"
+                strokeWidth="10"
                 fill="transparent"
               />
               {/* Animated Progress Ring */}
               <circle
-                cx="104"
-                cy="104"
+                cx="50%"
+                cy="50%"
                 r={radius}
                 className={`${ringColor} transition-all duration-1000 ease-out`}
-                strokeWidth="12"
+                strokeWidth="10"
                 strokeDasharray={circumference}
                 strokeDashoffset={strokeDashoffset}
                 strokeLinecap="round"
@@ -237,10 +249,10 @@ export const CustomerHUD: React.FC<CustomerHUDProps> = ({
 
             {/* Inner Content */}
             <div className="absolute flex flex-col items-center justify-center">
-              <span className="text-3xl font-bold font-mono-code text-white">
+              <span className="text-2xl sm:text-3xl font-bold font-mono-code text-white">
                 {remainingMins}m
               </span>
-              <span className="text-[11px] font-mono-code text-slate-400">
+              <span className="text-[10px] sm:text-[11px] font-mono-code text-slate-400">
                 of {totalMins}m
               </span>
             </div>
@@ -262,14 +274,14 @@ export const CustomerHUD: React.FC<CustomerHUDProps> = ({
         </div>
 
         {/* Live Running Bill Breakdown */}
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800 flex flex-col justify-between">
+        <div className="glass-panel p-5 sm:p-6 rounded-2xl border border-slate-800 flex flex-col justify-between">
           <div>
-            <h3 className="text-base font-bold text-white font-display mb-4 flex items-center gap-2">
+            <h3 className="text-sm sm:text-base font-bold text-white font-display mb-3 sm:mb-4 flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-emerald-400" />
               Live Running Tab Breakdown
             </h3>
 
-            <div className="space-y-3 text-xs">
+            <div className="space-y-2.5 sm:space-y-3 text-xs">
               <div className="flex justify-between items-center text-slate-400">
                 <span>Station Rate ({deskSession?.tier})</span>
                 <span className="font-mono-code text-slate-200">
@@ -297,12 +309,12 @@ export const CustomerHUD: React.FC<CustomerHUDProps> = ({
             </div>
           </div>
 
-          <div className="bg-slate-950/80 p-4 rounded-xl border border-slate-800 mt-6">
+          <div className="bg-slate-950/80 p-3.5 sm:p-4 rounded-xl border border-slate-800 mt-4 sm:mt-6">
             <div className="flex justify-between items-center">
-              <span className="text-xs uppercase font-mono-code text-slate-400 font-bold">
+              <span className="text-[11px] sm:text-xs uppercase font-mono-code text-slate-400 font-bold">
                 Total Current Balance
               </span>
-              <span className="text-xl font-bold font-mono-code text-emerald-400">
+              <span className="text-lg sm:text-xl font-bold font-mono-code text-emerald-400">
                 ₹{Number(deskSession?.running_total).toFixed(2)}
               </span>
             </div>
@@ -310,9 +322,9 @@ export const CustomerHUD: React.FC<CustomerHUDProps> = ({
         </div>
 
         {/* Active Kitchen Pipeline Tracker */}
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800 flex flex-col justify-between">
+        <div className="glass-panel p-5 sm:p-6 rounded-2xl border border-slate-800 flex flex-col justify-between">
           <div>
-            <h3 className="text-base font-bold text-white font-display mb-3 flex items-center gap-2">
+            <h3 className="text-sm sm:text-base font-bold text-white font-display mb-3 flex items-center gap-2">
               <Utensils className="w-4 h-4 text-cyan-400" />
               Kitchen Order Pipeline Tracker
             </h3>
@@ -337,7 +349,7 @@ export const CustomerHUD: React.FC<CustomerHUDProps> = ({
 
                       {/* Stepper Pipeline */}
                       <div className="flex items-center justify-between text-[10px] font-mono-code pt-1">
-                        <span className={`flex items-center gap-1 ${isQueued || isPreparing || isServed ? 'text-cyan-400' : 'text-slate-600'}`}>
+                        <span className={`flex items-center gap-1 ${isQueued || isPreparing || isServed ? 'text-cyan-400 font-semibold' : 'text-slate-600'}`}>
                           <span className="w-2 h-2 rounded-full bg-cyan-400"></span> Queued
                         </span>
                         <ChevronRight className="w-3 h-3 text-slate-600" />
@@ -354,7 +366,7 @@ export const CustomerHUD: React.FC<CustomerHUDProps> = ({
                 })}
               </div>
             ) : (
-              <div className="h-40 flex flex-col items-center justify-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
+              <div className="h-36 sm:h-40 flex flex-col items-center justify-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
                 <Utensils className="w-6 h-6 mb-2 opacity-40" />
                 <span>No active food orders placed yet</span>
               </div>
@@ -363,67 +375,122 @@ export const CustomerHUD: React.FC<CustomerHUDProps> = ({
 
           <button
             onClick={() => setIsMenuDrawerOpen(true)}
-            className="w-full mt-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition-colors"
+            className="w-full mt-4 py-2.5 min-h-[42px] bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-300 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-2"
           >
-            Browse Menu & Add Items →
+            <ShoppingCart className="w-3.5 h-3.5" />
+            <span>Browse Menu & Order Items →</span>
           </button>
         </div>
       </div>
 
-      {/* SLIDE-OUT MENU DRAWER */}
+      {/* Floating Bottom Cart Pill (Visible on Mobile/Desktop when drawer is closed and items are in cart) */}
+      {!isMenuDrawerOpen && cartItemsList.length > 0 && (
+        <div className="fixed bottom-20 md:bottom-6 left-3 right-3 sm:left-auto sm:right-6 z-40 animate-in slide-in-from-bottom-5">
+          <button
+            onClick={() => setIsMenuDrawerOpen(true)}
+            className="w-full sm:w-auto px-4 sm:px-5 py-3.5 min-h-[48px] bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-2xl shadow-[0_10px_25px_rgba(16,185,129,0.4)] flex items-center justify-between sm:gap-4 transition-all active:scale-95"
+          >
+            <div className="flex items-center gap-2">
+              <ShoppingCart className="w-5 h-5" />
+              <span className="text-xs uppercase tracking-wider">
+                {cartItemsList.length} Item(s) in Cart
+              </span>
+            </div>
+            <span className="font-mono-code text-sm font-black bg-black/20 px-2.5 py-1 rounded-lg">
+              ₹{cartSubtotal.toFixed(2)} →
+            </span>
+          </button>
+        </div>
+      )}
+
+      {/* SLIDE-OUT MENU DRAWER (Mobile Full Height Sheet / Desktop Right Drawer) */}
       {isMenuDrawerOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex justify-end">
-          <div className="w-full max-w-md bg-[#0f172a] h-full flex flex-col border-l border-slate-800 shadow-2xl p-6 animate-in slide-in-from-right duration-300">
+          <div className="w-full sm:max-w-md bg-[#0f172a] h-full flex flex-col border-l border-slate-800 shadow-2xl p-4 sm:p-6 pb-safe animate-in slide-in-from-right duration-300">
             {/* Drawer Header */}
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+            <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-800">
               <div className="flex items-center space-x-2">
                 <Utensils className="w-5 h-5 text-emerald-400" />
-                <h3 className="text-lg font-bold text-white font-display">Cyber Cafe Menu</h3>
+                <h3 className="text-base sm:text-lg font-bold text-white font-display">Cyber Cafe Menu</h3>
               </div>
               <button
                 onClick={() => setIsMenuDrawerOpen(false)}
-                className="text-slate-400 hover:text-white"
+                className="text-slate-400 hover:text-white p-1"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
+            {/* Menu Category Filter Pills */}
+            <div className="flex items-center gap-1.5 py-3 border-b border-slate-800/80 text-xs font-mono-code">
+              <button
+                onClick={() => setMenuCategory('ALL')}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                  menuCategory === 'ALL'
+                    ? 'bg-slate-200 text-black shadow-sm'
+                    : 'bg-slate-900 text-slate-400 border border-slate-800'
+                }`}
+              >
+                All Items
+              </button>
+              <button
+                onClick={() => setMenuCategory('Food')}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                  menuCategory === 'Food'
+                    ? 'bg-amber-500 text-black shadow-sm'
+                    : 'bg-slate-900 text-slate-400 border border-slate-800'
+                }`}
+              >
+                Food & Snacks
+              </button>
+              <button
+                onClick={() => setMenuCategory('Beverages')}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                  menuCategory === 'Beverages'
+                    ? 'bg-cyan-500 text-black shadow-sm'
+                    : 'bg-slate-900 text-slate-400 border border-slate-800'
+                }`}
+              >
+                Beverages
+              </button>
+            </div>
+
             {/* Menu Items List */}
-            <div className="flex-1 overflow-y-auto py-4 space-y-3 pr-1">
-              {menuItems.map((item) => {
+            <div className="flex-1 overflow-y-auto py-3 sm:py-4 space-y-2.5 sm:space-y-3 pr-1">
+              {filteredMenuItems.map((item) => {
                 const qtyInCart = cart[item.id] || 0;
                 return (
                   <div
                     key={item.id}
-                    className="bg-slate-900/80 p-3 rounded-xl border border-slate-800 flex items-center justify-between"
+                    className="bg-slate-900/80 p-3 rounded-xl border border-slate-800 flex items-center justify-between gap-3"
                   >
                     <div>
-                      <div className="text-sm font-semibold text-white">{item.name}</div>
-                      <span className="text-[11px] font-mono-code text-slate-400">{item.category}</span>
+                      <div className="text-xs sm:text-sm font-semibold text-white">{item.name}</div>
+                      <span className="text-[10px] sm:text-[11px] font-mono-code text-slate-400">{item.category}</span>
                       <div className="font-mono-code text-emerald-400 font-bold text-xs mt-0.5">
                         ₹{Number(item.price).toFixed(2)}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 shrink-0">
                       {qtyInCart > 0 && (
                         <>
                           <button
                             onClick={() => handleRemoveFromCart(item.id)}
-                            className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                            className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-300 flex items-center justify-center transition-colors"
                           >
                             <Minus className="w-3.5 h-3.5" />
                           </button>
-                          <span className="font-mono-code text-xs font-bold text-white w-4 text-center">
+                          <span className="font-mono-code text-xs font-bold text-white w-5 text-center">
                             {qtyInCart}
                           </span>
                         </>
                       )}
                       <button
                         onClick={() => handleAddToCart(item.id)}
-                        className="p-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-bold transition-colors"
+                        className="w-8 h-8 rounded-lg bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-black font-bold flex items-center justify-center transition-colors shadow-sm"
                       >
-                        <Plus className="w-3.5 h-3.5" />
+                        <Plus className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
@@ -432,7 +499,7 @@ export const CustomerHUD: React.FC<CustomerHUDProps> = ({
             </div>
 
             {/* Cart & Checkout Footer */}
-            <div className="pt-4 border-t border-slate-800 space-y-3">
+            <div className="pt-3 sm:pt-4 border-t border-slate-800 space-y-3">
               <div className="flex justify-between items-center text-sm">
                 <span className="text-slate-400">Order Subtotal:</span>
                 <span className="font-mono-code text-emerald-400 font-bold text-base">
@@ -450,7 +517,7 @@ export const CustomerHUD: React.FC<CustomerHUDProps> = ({
                     }))
                   )
                 }
-                className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-40 shadow-lg hover:shadow-emerald-500/30"
+                className="w-full py-3.5 min-h-[48px] rounded-xl bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-black font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-40 shadow-lg hover:shadow-emerald-500/30"
               >
                 {orderMutation.isPending ? 'Placing Order...' : `Place Order (₹${cartSubtotal.toFixed(2)})`}
               </button>

@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChefHat,
@@ -8,6 +8,7 @@ import {
   Utensils,
   Bell,
   ArrowRight,
+  Layers,
 } from 'lucide-react';
 import { Order, OrderStatus } from '../types';
 import { fetchKitchenOrders, updateKitchenOrderStatus } from '../api';
@@ -15,6 +16,7 @@ import { useCafeWebSocket } from '../hooks/useCafeWebSocket';
 
 export const KitchenKanban: React.FC = () => {
   const queryClient = useQueryClient();
+  const [mobileLaneFilter, setMobileLaneFilter] = useState<'ALL' | OrderStatus>('ALL');
 
   // Web Audio API 880Hz alert chime
   const play880HzChime = useCallback(() => {
@@ -103,24 +105,17 @@ export const KitchenKanban: React.FC = () => {
   const preparingOrders = orders.filter((o) => o.status === 'PREPARING');
   const servedOrders = orders.filter((o) => o.status === 'SERVED');
 
-  const swimlanes: {
-    status: OrderStatus;
-    title: string;
-    items: Order[];
-    badge: string;
-    border: string;
-    icon: any;
-  }[] = [
+  const swimlanes = [
     {
-      status: 'QUEUED',
-      title: 'Incoming Queue',
+      status: 'QUEUED' as OrderStatus,
+      title: 'Incoming / Queued',
       items: queuedOrders,
       badge: 'bg-rose-950/80 text-rose-300 border-rose-800/80',
       border: 'border-rose-500/30',
       icon: Bell,
     },
     {
-      status: 'PREPARING',
+      status: 'PREPARING' as OrderStatus,
       title: 'In Preparation',
       items: preparingOrders,
       badge: 'bg-amber-950/80 text-amber-300 border-amber-800/80',
@@ -128,7 +123,7 @@ export const KitchenKanban: React.FC = () => {
       icon: Flame,
     },
     {
-      status: 'SERVED',
+      status: 'SERVED' as OrderStatus,
       title: 'Ready / Served',
       items: servedOrders,
       badge: 'bg-emerald-950/80 text-emerald-300 border-emerald-800/80',
@@ -137,20 +132,25 @@ export const KitchenKanban: React.FC = () => {
     },
   ];
 
+  const visibleLanes =
+    mobileLaneFilter === 'ALL'
+      ? swimlanes
+      : swimlanes.filter((lane) => lane.status === mobileLaneFilter);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 glass-panel p-4 rounded-xl border border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-4 glass-panel p-3.5 sm:p-4 rounded-xl border border-slate-800">
         <div className="flex items-center space-x-3">
-          <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/30">
-            <ChefHat className="w-6 h-6" />
+          <div className="p-2 sm:p-2.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/30 shrink-0">
+            <ChefHat className="w-5 h-5 sm:w-6 sm:h-6" />
           </div>
           <div>
-            <h2 className="text-xl font-bold tracking-wide font-display text-white">
-              KITCHEN DISPLAY SYSTEM (KDS)
+            <h2 className="text-lg sm:text-xl font-bold tracking-wide font-display text-white">
+              KITCHEN DISPLAY SYSTEM
             </h2>
-            <p className="text-xs text-slate-400 font-mono-code">
-              Real-time Swimlanes • 880Hz Audio Chime on New Orders • Optimistic Progression
+            <p className="text-[11px] sm:text-xs text-slate-400 font-mono-code">
+              Real-time Swimlanes • 880Hz Audio Chimes • Instant Dispatch
             </p>
           </div>
         </div>
@@ -161,21 +161,73 @@ export const KitchenKanban: React.FC = () => {
           title="Test 880Hz Alert Tone"
         >
           <Bell className="w-3.5 h-3.5 text-amber-400" />
-          Test 880Hz Chime
+          <span className="hidden sm:inline">Test 880Hz Chime</span>
+          <span className="sm:hidden">Test Chime</span>
         </button>
       </div>
 
-      {/* Kanban Board */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {swimlanes.map((lane) => {
+      {/* Mobile Swimlane Filter Tabs (Visible on screens < md) */}
+      <div className="md:hidden flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs font-mono-code">
+        <button
+          onClick={() => setMobileLaneFilter('ALL')}
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-bold transition-all shrink-0 ${
+            mobileLaneFilter === 'ALL'
+              ? 'bg-slate-200 text-slate-950 shadow-md'
+              : 'bg-slate-900/80 text-slate-400 border border-slate-800'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5" />
+          <span>All ({orders.length})</span>
+        </button>
+
+        <button
+          onClick={() => setMobileLaneFilter('QUEUED')}
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-bold transition-all shrink-0 ${
+            mobileLaneFilter === 'QUEUED'
+              ? 'bg-rose-500 text-black shadow-md'
+              : 'bg-rose-950/40 text-rose-300 border border-rose-800/40'
+          }`}
+        >
+          <Bell className="w-3.5 h-3.5" />
+          <span>Queued ({queuedOrders.length})</span>
+        </button>
+
+        <button
+          onClick={() => setMobileLaneFilter('PREPARING')}
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-bold transition-all shrink-0 ${
+            mobileLaneFilter === 'PREPARING'
+              ? 'bg-amber-500 text-black shadow-md'
+              : 'bg-amber-950/40 text-amber-300 border border-amber-800/40'
+          }`}
+        >
+          <Flame className="w-3.5 h-3.5" />
+          <span>Cooking ({preparingOrders.length})</span>
+        </button>
+
+        <button
+          onClick={() => setMobileLaneFilter('SERVED')}
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-bold transition-all shrink-0 ${
+            mobileLaneFilter === 'SERVED'
+              ? 'bg-emerald-500 text-black shadow-md'
+              : 'bg-emerald-950/40 text-emerald-300 border border-emerald-800/40'
+          }`}
+        >
+          <CheckCircle className="w-3.5 h-3.5" />
+          <span>Served ({servedOrders.length})</span>
+        </button>
+      </div>
+
+      {/* Kanban Board Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+        {visibleLanes.map((lane) => {
           const Icon = lane.icon;
           return (
             <div
               key={lane.status}
-              className={`rounded-2xl glass-panel p-4 border ${lane.border} flex flex-col h-[700px]`}
+              className={`rounded-2xl glass-panel p-3.5 sm:p-4 border ${lane.border} flex flex-col h-[560px] sm:h-[650px] md:h-[700px]`}
             >
               {/* Lane Header */}
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-3 sm:mb-4">
                 <div className="flex items-center space-x-2">
                   <Icon className="w-4 h-4 text-slate-300" />
                   <h3 className="font-bold text-white text-sm font-display">{lane.title}</h3>
@@ -186,7 +238,7 @@ export const KitchenKanban: React.FC = () => {
               </div>
 
               {/* Lane Cards Container */}
-              <div className="flex-1 overflow-y-auto space-y-3.5 pr-1">
+              <div className="flex-1 overflow-y-auto space-y-3 sm:space-y-3.5 pr-1">
                 {lane.items.length === 0 ? (
                   <div className="h-40 flex flex-col items-center justify-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
                     <Utensils className="w-6 h-6 mb-2 opacity-40" />
@@ -196,7 +248,7 @@ export const KitchenKanban: React.FC = () => {
                   lane.items.map((order) => (
                     <div
                       key={order.id}
-                      className="bg-slate-900/90 hover:bg-slate-900 rounded-xl p-4 border border-slate-800 transition-all shadow-md space-y-3"
+                      className="bg-slate-900/90 hover:bg-slate-900 rounded-xl p-3 sm:p-4 border border-slate-800 transition-all shadow-md space-y-3"
                     >
                       {/* Ticket Header */}
                       <div className="flex items-start justify-between">
@@ -241,9 +293,9 @@ export const KitchenKanban: React.FC = () => {
                         {order.status === 'QUEUED' && (
                           <button
                             onClick={() => handleProgress(order)}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-black font-bold rounded-lg text-xs transition-all shadow-sm"
+                            className="flex items-center gap-1.5 px-3.5 py-2 min-h-[38px] bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-lg text-xs transition-all shadow-sm active:scale-95"
                           >
-                            <span>Cook</span>
+                            <span>Start Cook</span>
                             <ArrowRight className="w-3.5 h-3.5" />
                           </button>
                         )}
@@ -251,9 +303,9 @@ export const KitchenKanban: React.FC = () => {
                         {order.status === 'PREPARING' && (
                           <button
                             onClick={() => handleProgress(order)}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-lg text-xs transition-all shadow-sm"
+                            className="flex items-center gap-1.5 px-3.5 py-2 min-h-[38px] bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-lg text-xs transition-all shadow-sm active:scale-95"
                           >
-                            <span>Serve</span>
+                            <span>Serve Order</span>
                             <CheckCircle className="w-3.5 h-3.5" />
                           </button>
                         )}
