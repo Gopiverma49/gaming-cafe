@@ -95,10 +95,13 @@ async def get_live_stations(
                 )
             )
         else:
-            elapsed_sec = (now - active_session.started_at).total_seconds()
+            started_at = active_session.started_at
+            if started_at.tzinfo is None and now.tzinfo is not None:
+                started_at = started_at.replace(tzinfo=now.tzinfo)
+            elapsed_sec = (now - started_at).total_seconds()
             elapsed_min = max(0, int(elapsed_sec // 60))
             time_charge = calculate_station_charge(
-                active_session.started_at, now, station.hourly_rate
+                started_at, now, station.hourly_rate
             )
 
             orders_charge = Decimal("0.00")

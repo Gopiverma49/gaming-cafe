@@ -23,6 +23,12 @@ def calculate_station_charge(
     if not isinstance(hourly_rate, Decimal):
         hourly_rate = Decimal(str(hourly_rate))
 
+    # Normalize timezone awareness to avoid offset-naive vs offset-aware TypeError
+    if started_at.tzinfo is not None and ended_at.tzinfo is None:
+        ended_at = ended_at.replace(tzinfo=started_at.tzinfo)
+    elif started_at.tzinfo is None and ended_at.tzinfo is not None:
+        started_at = started_at.replace(tzinfo=ended_at.tzinfo)
+
     total_seconds = (ended_at - started_at).total_seconds()
     if total_seconds < 0:
         total_seconds = 0

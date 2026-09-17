@@ -52,6 +52,7 @@ yarn-error.log*
 
 # Database & Storage
 *.sqlite3
+*.db
 pgdata/
 
 # IDE & Editor files

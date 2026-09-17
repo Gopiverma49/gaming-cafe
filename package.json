@@ -1,0 +1,20 @@
+{
+  "name": "gaming-cafe-management",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Gaming Cafe Operations & Financial Management System",
+  "scripts": {
+    "dev:all": "concurrently -n \"BACKEND,FRONTEND\" -c \"magenta.bold,cyan.bold\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev": "npm run dev:all",
+    "dev:backend": "node run-backend.js",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "build": "npm run build --prefix frontend",
+    "test:backend": "node run-backend.js --test",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

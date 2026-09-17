@@ -78,13 +78,16 @@ async def get_desk_session(
         )
 
     now = datetime.now(timezone.utc)
-    elapsed_sec = (now - cafe_session.started_at).total_seconds()
+    started_at = cafe_session.started_at
+    if started_at.tzinfo is None and now.tzinfo is not None:
+        started_at = started_at.replace(tzinfo=now.tzinfo)
+    elapsed_sec = (now - started_at).total_seconds()
     elapsed_min = max(0, int(elapsed_sec // 60))
     allocated_mins = 60
     remaining_min = max(0, allocated_mins - elapsed_min)
 
     station = cafe_session.station
-    time_charge = calculate_station_charge(cafe_session.started_at, now, station.hourly_rate)
+    time_charge = calculate_station_charge(started_at, now, station.hourly_rate)
 
     orders_charge = Decimal("0.00")
     orders_out: List[OrderResponse] = []

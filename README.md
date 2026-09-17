@@ -16,9 +16,28 @@ A modern, full-stack management platform for gaming cafes and esports lounges. E
 
 ---
 
+## ⚡ 1-Command Local Development
+
+You can run both the Backend and Frontend concurrently with one command from the project root:
+
+```bash
+npm run dev:all
+```
+*(Alias: `npm run dev`)*
+
+- **Frontend App**: [http://localhost:5173](http://localhost:5173) (Vite Hot-Reload)
+- **Backend API**: [http://localhost:8000](http://localhost:8000) (Uvicorn Hot-Reload)
+- **Swagger Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Health Check**: [http://localhost:8000/health](http://localhost:8000/health)
+
+> [!TIP]
+> `npm run dev:all` automatically detects if PostgreSQL is running. If not, it seamlessly boots a local SQLite dev database so you can start coding and testing with zero setup!
+
+---
+
 ## 🚀 Quick Start (Docker Compose)
 
-The fastest way to launch the full system (Database, Backend, and Frontend):
+To launch the full containerized cluster (PostgreSQL 16, Backend, and Nginx Frontend):
 
 ### 1. Configure Environment
 ```bash
