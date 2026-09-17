@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: gaming_cafe_db
+    restart: unless-stopped
+    shm_size: 256mb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cafe_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cyber_secret_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-gaming_cafe_db}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cafe_admin} -d ${POSTGRES_DB:-gaming_cafe_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gaming_cafe_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-cafe_admin}:${POSTGRES_PASSWORD:-cyber_secret_2026}@db:5432/${POSTGRES_DB:-gaming_cafe_db}
+      JWT_SECRET: ${JWT_SECRET:-enterprise_gaming_cafe_super_secret_jwt_key_2026}
+      UPI_MERCHANT_VPA: ${UPI_MERCHANT_VPA:-gamingcafe@upi}
+      UPI_MERCHANT_NAME: ${UPI_MERCHANT_NAME:-ApexCyberLounge}
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --loop uvloop"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: gaming_cafe_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  pgdata:
+    driver: local

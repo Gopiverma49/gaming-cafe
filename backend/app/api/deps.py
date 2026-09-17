@@ -1,0 +1,187 @@
+import hashlib
+import time
+from typing import AsyncGenerator, Dict, Any, Optional
+import uuid
+
+from fastapi import Depends, HTTPException, Request, Response, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import JWTError
+from starlette.middleware.base import BaseHTTPMiddleware
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import async_session_factory
+from app.core.security import decode_jwt_token
+
+security_bearer = HTTPBearer(auto_error=False)
+
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Async session lifecycle dependency."""
+    async with async_session_factory() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+
+async def verify_admin_token(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
+) -> Dict[str, Any]:
+    """
+    Authenticates Bearer JWT and enforces admin scope.
+    """
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Authorization header",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    token = credentials.credentials
+    try:
+        payload = decode_jwt_token(token)
+        scope = payload.get("scope")
+        if scope != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions: Admin scope required",
+            )
+        return payload
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+async def verify_customer_token(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
+) -> Dict[str, Any]:
+    """
+    Zero-trust security using ephemeral, desk-scoped JWTs.
+    Extracts desk_id from the verified token, dropping client-supplied station parameters
+    to ensure strict desk isolation.
+    """
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing desk session token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    token = credentials.credentials
+    try:
+        payload = decode_jwt_token(token)
+        scope = payload.get("scope")
+        desk_id = payload.get("desk_id")
+        session_id = payload.get("session_id")
+        if scope != "customer" or not desk_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid desk credentials: customer scope and desk_id required",
+            )
+        return {
+            "desk_id": uuid.UUID(desk_id),
+            "session_id": uuid.UUID(session_id) if session_id else None,
+            "sub": payload.get("sub"),
+        }
+    except (JWTError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired desk token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+# In-memory Idempotency Store (TTL = 1 hour)
+# In high-volume production, this can be backed by Redis.
+class IdempotencyCache:
+    def __init__(self, ttl: int = 3600):
+        self.ttl = ttl
+        self._store: Dict[str, Dict[str, Any]] = {}
+
+    def get(self, key: str) -> Optional[Dict[str, Any]]:
+        record = self._store.get(key)
+        if not record:
+            return None
+        if time.time() - record["timestamp"] > self.ttl:
+            del self._store[key]
+            return None
+        return record
+
+    def set(self, key: str, payload_hash: str, status_code: int, response_body: bytes, headers: Dict[str, str]):
+        self._store[key] = {
+            "payload_hash": payload_hash,
+            "status_code": status_code,
+            "body": response_body,
+            "headers": headers,
+            "timestamp": time.time(),
+        }
+
+
+idempotency_store = IdempotencyCache()
+
+
+class IdempotencyMiddleware(BaseHTTPMiddleware):
+    """
+    IdempotencyMiddleware: Intercepts mutating requests (POST, PATCH).
+    Verifies payload hash matches the Idempotency-Key header, and drops duplicate operations
+    returning the recorded response.
+    """
+    async def dispatch(self, request: Request, call_next):
+        if request.method not in ("POST", "PATCH"):
+            return await call_next(request)
+
+        idempotency_key = request.headers.get("Idempotency-Key")
+        if not idempotency_key:
+            # Continue normally if header is not provided
+            return await call_next(request)
+
+        # Read request body
+        body = await request.body()
+        payload_hash = hashlib.sha256(body).hexdigest()
+
+        cached_entry = idempotency_store.get(idempotency_key)
+        if cached_entry:
+            if cached_entry["payload_hash"] != payload_hash:
+                return Response(
+                    content='{"detail": "Idempotency-Key reuse with conflicting request payload"}',
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    media_type="application/json",
+                )
+            # Return cached response
+            return Response(
+                content=cached_entry["body"],
+                status_code=cached_entry["status_code"],
+                headers=dict(cached_entry["headers"]),
+                media_type="application/json",
+            )
+
+        # Execute downstream route
+        response = await call_next(request)
+
+        # Cache only successful / client mutating responses (200-299)
+        if 200 <= response.status_code < 300:
+            resp_body = [section async for section in response.body_iterator]
+            response_bytes = b"".join(resp_body)
+
+            headers_dict = {
+                k: v for k, v in response.headers.items() if k.lower() in ("content-type", "content-length")
+            }
+            idempotency_store.set(
+                key=idempotency_key,
+                payload_hash=payload_hash,
+                status_code=response.status_code,
+                response_body=response_bytes,
+                headers=headers_dict,
+            )
+            return Response(
+                content=response_bytes,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.media_type,
+            )
+
+        return response

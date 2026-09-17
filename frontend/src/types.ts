@@ -1,0 +1,82 @@
+export type StationTier = 'STANDARD' | 'VIP' | 'SIMULATOR' | 'CONSOLE';
+
+export type StationStatus = 'AVAILABLE' | 'OCCUPIED' | 'RESERVED' | 'MAINTENANCE';
+
+export interface StationLive {
+  id: string;
+  name: string;
+  tier: StationTier;
+  hourly_rate: string | number;
+  status: StationStatus;
+  active_session_id?: string | null;
+  started_at?: string | null;
+  elapsed_minutes: number;
+  remaining_minutes?: number | null;
+  time_charge: string | number;
+  orders_charge: string | number;
+  running_total: string | number;
+  active_orders_count: number;
+}
+
+export interface MenuItem {
+  id: string;
+  name: string;
+  category: string;
+  price: string | number;
+  is_available: boolean;
+}
+
+export type OrderStatus = 'QUEUED' | 'PREPARING' | 'SERVED' | 'CANCELLED';
+
+export interface OrderItem {
+  id: string;
+  menu_item_id: string;
+  menu_item_name: string;
+  quantity: number;
+  unit_price: string | number;
+  subtotal: string | number;
+}
+
+export interface Order {
+  id: string;
+  session_id: string;
+  station_name?: string;
+  status: OrderStatus;
+  created_at: string;
+  items: OrderItem[];
+  total_amount: string | number;
+}
+
+export interface CheckoutResult {
+  session_id: string;
+  payment_id: string;
+  station_charge: string | number;
+  orders_charge: string | number;
+  total_amount: string | number;
+  payment_method: 'CASH' | 'UPI';
+  payment_status: string;
+  upi_qr_string?: string | null;
+}
+
+export interface CustomerDeskSession {
+  session_id: string;
+  station_id: string;
+  station_name: string;
+  tier: StationTier;
+  hourly_rate: string | number;
+  started_at: string;
+  elapsed_minutes: number;
+  allocated_minutes: number;
+  remaining_minutes: number;
+  time_charge: string | number;
+  orders_charge: string | number;
+  running_total: string | number;
+  active_orders: Order[];
+}
+
+export interface WebSocketEvent {
+  channel: string;
+  event_type: 'SESSION_UPDATED' | 'SESSION_STARTED' | 'SESSION_COMPLETED' | 'SESSION_TRANSFERRED' | 'ORDER_STATUS_CHANGED' | 'ORDER_CREATED' | 'STATION_LOCKED';
+  payload: any;
+  timestamp: string;
+}
