@@ -44,7 +44,7 @@ async function main() {
   const isTest = process.argv.includes('--test');
   const args = isTest
     ? ['-m', 'pytest', 'tests/', '-v']
-    : ['-m', 'uvicorn', 'app.main:app', '--reload', '--port', '8000'];
+    : ['-m', 'uvicorn', 'app.main:app', '--reload', '--host', '0.0.0.0', '--port', '8000'];
 
   const env = { ...process.env, PYTHONPATH: backendDir };
 
