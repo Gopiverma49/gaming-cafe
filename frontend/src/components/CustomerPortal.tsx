@@ -14,6 +14,7 @@ import { useNotificationStore } from '../store/notificationStore';
 import { fetchLiveStations, checkInStation } from '../api';
 import { StationLive } from '../types';
 
+
 export const CustomerPortal: React.FC = () => {
   const { user } = useAuthStore();
   const {
@@ -118,26 +119,7 @@ export const CustomerPortal: React.FC = () => {
 
   return (
     <div className="space-y-8 relative z-10">
-      {/* ========================================================================= */}
-      {/* 1. TOP WELCOME & DUAL EXPERIENCE HERO (GAMING + CAFE) */}
-      {/* ========================================================================= */}
-      <div className="relative overflow-hidden rounded-3xl bg-white/80 dark:bg-[#0c1424]/90 backdrop-blur-2xl border border-slate-200/90 dark:border-slate-800 p-6 sm:p-8 shadow-[0_15px_40px_-5px_rgba(0,0,0,0.05)] dark:shadow-2xl">
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2">
 
-
-            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white font-display tracking-wide">
-              Welcome to the Lounge, <span className="uppercase">{user?.name || 'GAMER'}</span>
-            </h2>
-            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 max-w-2xl leading-relaxed">
-              High-performance 4K PS5 gaming meets elevated comfort food.
-              <br />
-              Savor gourmet snacks, craft coffee, and chilled refreshments brought directly to your setup
-            </p>
-          </div>
-
-        </div>
-      </div>
 
       {/* Confirmation Alerts */}
       {bookingConfirmedNotice && (

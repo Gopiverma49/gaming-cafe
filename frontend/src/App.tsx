@@ -462,14 +462,6 @@ function MainDashboard() {
           </button>
         </nav>
       )}
-
-      {/* Desktop Footer */}
-      <footer className="hidden md:block border-t border-slate-800/60 py-4 px-8 text-center text-slate-500 text-xs font-mono-code bg-[#060911] backdrop-blur-md relative z-10">
-        <div className="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
-          <span>VANYA PLAYSTATION LOUNGE & CAFE • {isAdmin ? 'Staff Operations Console' : 'Customer Player Portal'}</span>
-          <span className="text-slate-400">Fresh Gourmet Bites • Ultra 4K Console Gaming</span>
-        </div>
-      </footer>
     </div>
   );
 }

@@ -126,3 +126,69 @@
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* ========================================================================= */
+/* PS5 GAME CATALOGUE CAROUSEL: RIGHT-TO-LEFT SLIDING REEL (GPU 60FPS) */
+/* ========================================================================= */
+@keyframes reelSlideRightToLeft {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.animate-reel-left {
+  animation: reelSlideRightToLeft var(--reel-duration, 32s) linear infinite;
+  will-change: transform;
+  backface-visibility: hidden;
+  transform: translate3d(0, 0, 0);
+}
+
+.animate-reel-left:hover,
+.animate-reel-left:active,
+.animate-reel-left:focus-within,
+.reel-paused {
+  animation-play-state: paused;
+}
+
+.carousel-touch-snap {
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+
+.carousel-snap-item {
+  scroll-snap-align: center;
+  scroll-snap-stop: normal;
+}
+
+
+/* Authentic PlayStation 3D Case & Bevel */
+.ps-case-container {
+  perspective: 1000px;
+}
+
+.ps-game-case {
+  position: relative;
+  transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.35s ease, filter 0.35s ease;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.ps-game-case:hover {
+  transform: translateY(-8px) scale(1.04);
+}
+
+/* Electric Neon Highlight Ring (matching Tekken 7 spotlight in video) */
+.ps-case-spotlight {
+  box-shadow: 0 0 25px 2px rgba(6, 182, 212, 0.85), 0 0 50px -5px rgba(59, 130, 246, 0.65);
+  border-color: #38bdf8 !important;
+}
+
+/* Floor Mirror Reflection Effect */
+.ps-case-reflection {
+  -webkit-box-reflect: below 4px linear-gradient(to bottom, rgba(0, 0, 0, 0) 65%, rgba(0, 0, 0, 0.35) 100%);
+}
+
