@@ -13,6 +13,7 @@ import { useLoungeStore, AdvanceBooking } from '../store/loungeStore';
 import { useNotificationStore } from '../store/notificationStore';
 import { fetchLiveStations, checkInStation } from '../api';
 import { StationLive } from '../types';
+import { GameCatalogueCarousel } from './GameCatalogueCarousel';
 
 
 export const CustomerPortal: React.FC = () => {
@@ -119,6 +120,8 @@ export const CustomerPortal: React.FC = () => {
 
   return (
     <div className="space-y-8 relative z-10">
+      {/* 1. TOP WELCOME & 21-GAME PS5 MARQUEE CAROUSEL (DISPLAY AD ONLY) */}
+      <GameCatalogueCarousel userName={user?.name || 'gopi'} />
 
 
       {/* Confirmation Alerts */}

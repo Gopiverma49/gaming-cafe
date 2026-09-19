@@ -114,7 +114,7 @@ async def websocket_endpoint(websocket: WebSocket, channel: str):
     try:
         while True:
             # Keep-alive ping / echo
-            data = await websocket.receive_text()
+            await websocket.receive_text()
             # Send acknowledgement
             await websocket.send_text(f'{{"type":"PONG","channel":"{channel}"}}')
     except WebSocketDisconnect:

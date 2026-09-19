@@ -22,7 +22,6 @@ from app.models.enums import (
     StationStatus,
     SessionStatus,
     OrderStatus,
-    PaymentMethod,
     PaymentStatus,
 )
 

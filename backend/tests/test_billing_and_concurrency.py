@@ -1,7 +1,6 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-import pytest
 
 from app.services.billing_engine import calculate_station_charge, generate_upi_qr_string
 from app.api.deps import IdempotencyCache
