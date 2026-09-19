@@ -1,6 +1,6 @@
 import uuid
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import (
@@ -18,6 +18,13 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.models.enums import (
+    StationStatus,
+    SessionStatus,
+    OrderStatus,
+    PaymentMethod,
+    PaymentStatus,
+)
 
 
 class Station(Base):
@@ -29,9 +36,9 @@ class Station(Base):
         default=uuid.uuid4,
     )
     name: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
-    tier: Mapped[str] = mapped_column(String(20), nullable=False)  # STANDARD, VIP, SIMULATOR
+    tier: Mapped[str] = mapped_column(String(20), nullable=False)  # STANDARD, VIP, SIMULATOR, CONSOLE
     hourly_rate: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="AVAILABLE", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default=StationStatus.AVAILABLE.value, nullable=False)
 
     __table_args__ = (
         CheckConstraint(
@@ -65,7 +72,7 @@ class Session(Base):
         DateTime(timezone=True),
         nullable=True,
     )
-    status: Mapped[str] = mapped_column(String(20), default="ACTIVE", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default=SessionStatus.ACTIVE.value, nullable=False)
     total_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
 
     __table_args__ = (
@@ -115,7 +122,7 @@ class Order(Base):
         ForeignKey("sessions.id", ondelete="CASCADE"),
         nullable=False,
     )
-    status: Mapped[str] = mapped_column(String(20), default="QUEUED", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default=OrderStatus.QUEUED.value, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -177,7 +184,7 @@ class Payment(Base):
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     method: Mapped[str] = mapped_column(String(20), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default=PaymentStatus.PENDING.value, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
 
     __table_args__ = (

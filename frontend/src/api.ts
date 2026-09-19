@@ -24,6 +24,15 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 // Admin API
+export async function loginAdminApi(username: string, password: string): Promise<{ access_token: string }> {
+  const res = await fetch(`${API_BASE}/admin/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  return handleResponse<{ access_token: string }>(res);
+}
+
 export async function fetchLiveStations(): Promise<StationLive[]> {
   const res = await fetch(`${API_BASE}/admin/stations/live`);
   return handleResponse<StationLive[]>(res);

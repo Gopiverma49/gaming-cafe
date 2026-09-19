@@ -8,13 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_db, verify_admin_token
+from app.api.deps import get_db
 from app.core.config import settings
 from app.core.security import create_admin_token
-from app.models.entities import Station, Session, Order, OrderItem, MenuItem
+from app.models.entities import Station, Session, Order, OrderItem
+from app.models.enums import StationStatus, SessionStatus, OrderStatus
 from app.schemas.api_schemas import (
     StationLiveResponse,
-    StationResponse,
     CheckInRequest,
     TransferRequest,
     CheckoutRequest,
@@ -26,6 +26,7 @@ from app.schemas.api_schemas import (
     LoginRequest,
 )
 from app.services.billing_engine import calculate_station_charge
+from app.services.order_service import serialize_order, ensure_utc, CURRENCY_QUANTIZATION
 from app.services.session_service import check_in, transfer_station, settle_checkout
 from app.services.ws_notifier import buffer_ws_event
 
@@ -43,14 +44,13 @@ async def admin_login(creds: LoginRequest):
             detail="Invalid admin credentials",
         )
     token = create_admin_token(username=creds.username)
-    return TokenResponse(access_token=token, scope="admin", expires_in=60 * 12 * 60)
+    expires_in_seconds = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    return TokenResponse(access_token=token, scope="admin", expires_in=expires_in_seconds)
 
 
 @router.get("/stations/live", response_model=List[StationLiveResponse])
 async def get_live_stations(
     db: AsyncSession = Depends(get_db),
-    # Allow demo access or authenticated access
-    # admin: dict = Depends(verify_admin_token),
 ):
     """
     Live matrix showing station statuses, remaining times, and running totals.
@@ -72,7 +72,7 @@ async def get_live_stations(
         # Find active session
         active_session: Optional[Session] = None
         for s in station.sessions:
-            if s.status == "ACTIVE":
+            if s.status == SessionStatus.ACTIVE.value:
                 active_session = s
                 break
 
@@ -95,9 +95,7 @@ async def get_live_stations(
                 )
             )
         else:
-            started_at = active_session.started_at
-            if started_at.tzinfo is None and now.tzinfo is not None:
-                started_at = started_at.replace(tzinfo=now.tzinfo)
+            started_at = ensure_utc(active_session.started_at)
             elapsed_sec = (now - started_at).total_seconds()
             elapsed_min = max(0, int(elapsed_sec // 60))
             time_charge = calculate_station_charge(
@@ -107,20 +105,19 @@ async def get_live_stations(
             orders_charge = Decimal("0.00")
             active_orders_count = 0
             for o in active_session.orders:
-                if o.status in ("QUEUED", "PREPARING"):
+                if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value):
                     active_orders_count += 1
-                if o.status == "SERVED":
+                if o.status == OrderStatus.SERVED.value:
                     for item in o.items:
                         orders_charge += (item.unit_price * Decimal(str(item.quantity))).quantize(
-                            Decimal("0.01"), rounding=ROUND_HALF_UP
+                            CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
                         )
 
-            # Estimate default 60 min session slot or remaining
-            allocated_mins = 60
+            allocated_mins = settings.DEFAULT_SESSION_DURATION_MINUTES
             remaining_min = max(0, allocated_mins - elapsed_min)
 
             running_total = (time_charge + orders_charge).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
+                CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
             )
 
             live_data.append(
@@ -155,7 +152,7 @@ async def admin_check_in(
     session = await check_in(
         db=db,
         station_id=payload.station_id,
-        allocated_minutes=payload.allocated_minutes or 60,
+        allocated_minutes=payload.allocated_minutes or settings.DEFAULT_SESSION_DURATION_MINUTES,
     )
     return {"message": "Station checked in successfully", "session_id": session.id, "station_id": session.station_id}
 
@@ -215,39 +212,7 @@ async def get_kitchen_orders(db: AsyncSession = Depends(get_db)):
     )
     result = await db.execute(stmt)
     orders = result.scalars().all()
-
-    response: List[OrderResponse] = []
-    for o in orders:
-        total = Decimal("0.00")
-        items_out: List[OrderItemResponse] = []
-        for item in o.items:
-            subtotal = (item.unit_price * Decimal(str(item.quantity))).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            )
-            total += subtotal
-            items_out.append(
-                OrderItemResponse(
-                    id=item.id,
-                    menu_item_id=item.menu_item_id,
-                    menu_item_name=item.menu_item.name if item.menu_item else "Unknown Item",
-                    quantity=item.quantity,
-                    unit_price=item.unit_price,
-                    subtotal=subtotal,
-                )
-            )
-
-        response.append(
-            OrderResponse(
-                id=o.id,
-                session_id=o.session_id,
-                station_name=o.session.station.name if o.session and o.session.station else "Desk",
-                status=o.status,
-                created_at=o.created_at,
-                items=items_out,
-                total_amount=total,
-            )
-        )
-    return response
+    return [serialize_order(o) for o in orders]
 
 
 @router.patch("/kitchen/orders/{order_id}/status", response_model=OrderResponse)
@@ -275,7 +240,7 @@ async def update_kitchen_order_status(
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
 
-    order.status = payload.status
+    order.status = payload.status.value if hasattr(payload.status, "value") else str(payload.status)
 
     # Buffer WebSocket event
     station_id = str(order.session.station_id) if order.session else None
@@ -303,31 +268,4 @@ async def update_kitchen_order_status(
     await db.commit()
     await db.refresh(order)
 
-    # Build response
-    total = Decimal("0.00")
-    items_out: List[OrderItemResponse] = []
-    for item in order.items:
-        subtotal = (item.unit_price * Decimal(str(item.quantity))).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
-        )
-        total += subtotal
-        items_out.append(
-            OrderItemResponse(
-                id=item.id,
-                menu_item_id=item.menu_item_id,
-                menu_item_name=item.menu_item.name if item.menu_item else "Unknown",
-                quantity=item.quantity,
-                unit_price=item.unit_price,
-                subtotal=subtotal,
-            )
-        )
-
-    return OrderResponse(
-        id=order.id,
-        session_id=order.session_id,
-        station_name=order.session.station.name if order.session and order.session.station else "Desk",
-        status=order.status,
-        created_at=order.created_at,
-        items=items_out,
-        total_amount=total,
-    )
+    return serialize_order(order)

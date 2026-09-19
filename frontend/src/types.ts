@@ -24,6 +24,8 @@ export interface MenuItem {
   category: string;
   price: string | number;
   is_available: boolean;
+  stock?: number;
+  description?: string;
 }
 
 export type OrderStatus = 'QUEUED' | 'PREPARING' | 'SERVED' | 'CANCELLED';
@@ -51,11 +53,13 @@ export interface CheckoutResult {
   session_id: string;
   payment_id: string;
   station_charge: string | number;
+  time_charge?: string | number;
   orders_charge: string | number;
   total_amount: string | number;
   payment_method: 'CASH' | 'UPI';
   payment_status: string;
   upi_qr_string?: string | null;
+  station_id?: string;
 }
 
 export interface CustomerDeskSession {
@@ -72,6 +76,13 @@ export interface CustomerDeskSession {
   orders_charge: string | number;
   running_total: string | number;
   active_orders: Order[];
+}
+
+export interface TokenResponse {
+  access_token: string;
+  token_type?: string;
+  scope?: string;
+  expires_in?: number;
 }
 
 export interface WebSocketEvent {

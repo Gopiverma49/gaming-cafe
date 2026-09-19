@@ -13,7 +13,14 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import DBAPIError
 
 from app.core.config import settings
-from app.models.entities import Station, Session, Order, OrderItem, Payment
+from app.models.entities import Station, Session, Order, Payment
+from app.models.enums import (
+    StationStatus,
+    SessionStatus,
+    OrderStatus,
+    PaymentStatus,
+    PaymentMethod,
+)
 from app.services.billing_engine import calculate_station_charge, generate_upi_qr_string
 from app.services.ws_notifier import buffer_ws_event
 
@@ -77,7 +84,7 @@ def with_transaction_retry(max_retries: int = 3, base_delay: float = 0.05):
 async def check_in(
     db: AsyncSession,
     station_id: uuid.UUID,
-    allocated_minutes: int = 60,
+    allocated_minutes: int = settings.DEFAULT_SESSION_DURATION_MINUTES,
 ) -> Session:
     """
     Check-in handler acquiring exclusive FOR UPDATE lock on the station.
@@ -91,20 +98,20 @@ async def check_in(
     if not station:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Station not found")
 
-    if station.status != "AVAILABLE":
+    if station.status != StationStatus.AVAILABLE.value:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Station '{station.name}' is currently {station.status} and cannot be checked in.",
         )
 
     # 2. Transition station to OCCUPIED
-    station.status = "OCCUPIED"
+    station.status = StationStatus.OCCUPIED.value
 
     # 3. Initialize ACTIVE session
     new_session = Session(
         station_id=station.id,
         started_at=datetime.now(timezone.utc),
-        status="ACTIVE",
+        status=SessionStatus.ACTIVE.value,
         total_amount=Decimal("0.00"),
     )
     db.add(new_session)
@@ -120,7 +127,7 @@ async def check_in(
             "station_id": str(station.id),
             "session_id": str(new_session.id),
             "station_name": station.name,
-            "status": "OCCUPIED",
+            "status": StationStatus.OCCUPIED.value,
         },
     )
     buffer_ws_event(
@@ -160,7 +167,7 @@ async def transfer_station(
     if not cafe_session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
-    if cafe_session.status != "ACTIVE":
+    if cafe_session.status != SessionStatus.ACTIVE.value:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot transfer session with status {cafe_session.status}",
@@ -190,15 +197,15 @@ async def transfer_station(
     target_station = second_station if second_station.id == target_station_id else first_station
 
     # 3. Validate target station availability
-    if target_station.status != "AVAILABLE":
+    if target_station.status != StationStatus.AVAILABLE.value:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Target station '{target_station.name}' is not available (status: {target_station.status}).",
         )
 
     # 4. Atomic transfer swap
-    origin_station.status = "AVAILABLE"
-    target_station.status = "OCCUPIED"
+    origin_station.status = StationStatus.AVAILABLE.value
+    target_station.status = StationStatus.OCCUPIED.value
     cafe_session.station_id = target_station.id
 
     # 5. Buffer post-commit notifications
@@ -261,14 +268,17 @@ async def settle_checkout(
     if not cafe_session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
-    if cafe_session.status != "ACTIVE":
+    if cafe_session.status != SessionStatus.ACTIVE.value:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Session is already closed (status: {cafe_session.status})",
         )
 
     # 2. Block checkout if any food orders are active in QUEUED or PREPARING
-    pending_orders = [o for o in cafe_session.orders if o.status in ("QUEUED", "PREPARING")]
+    pending_orders = [
+        o for o in cafe_session.orders
+        if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value)
+    ]
     if pending_orders:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -288,7 +298,7 @@ async def settle_checkout(
 
     orders_charge = Decimal("0.00")
     for order in cafe_session.orders:
-        if order.status == "SERVED":
+        if order.status == OrderStatus.SERVED.value:
             for item in order.items:
                 orders_charge += (item.unit_price * Decimal(str(item.quantity))).quantize(
                     Decimal("0.01"), rounding=ROUND_HALF_UP
@@ -303,11 +313,14 @@ async def settle_checkout(
     if existing_payment:
         payment = existing_payment
     else:
+        payment_method_str = (
+            payment_method.value if isinstance(payment_method, PaymentMethod) else str(payment_method)
+        )
         payment = Payment(
             session_id=cafe_session.id,
             amount=total_amount,
-            method=payment_method,
-            status="COMPLETED",
+            method=payment_method_str,
+            status=PaymentStatus.COMPLETED.value,
             idempotency_key=idempotency_key,
         )
         db.add(payment)
@@ -315,9 +328,9 @@ async def settle_checkout(
 
     # 6. Update session and station
     cafe_session.ended_at = ended_at
-    cafe_session.status = "COMPLETED"
+    cafe_session.status = SessionStatus.COMPLETED.value
     cafe_session.total_amount = total_amount
-    station.status = "AVAILABLE"
+    station.status = StationStatus.AVAILABLE.value
 
     # 7. Generate UPI QR string if UPI
     upi_qr_string = None

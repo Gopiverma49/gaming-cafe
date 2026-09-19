@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChefHat,
@@ -13,33 +13,11 @@ import {
 import { Order, OrderStatus } from '../types';
 import { fetchKitchenOrders, updateKitchenOrderStatus } from '../api';
 import { useCafeWebSocket } from '../hooks/useCafeWebSocket';
+import { play880HzChime } from '../utils/audioNotifier';
 
 export const KitchenKanban: React.FC = () => {
   const queryClient = useQueryClient();
   const [mobileLaneFilter, setMobileLaneFilter] = useState<'ALL' | OrderStatus>('ALL');
-
-  // Web Audio API 880Hz alert chime
-  const play880HzChime = useCallback(() => {
-    try {
-      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioCtxClass) return;
-      const audioCtx = new AudioCtxClass();
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, audioCtx.currentTime); // 880 Hz (A5 tone)
-      gain.gain.setValueAtTime(0.35, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.5);
-
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.start();
-      osc.stop(audioCtx.currentTime + 0.5);
-    } catch (e) {
-      console.warn('Audio chime trigger:', e);
-    }
-  }, []);
 
   // Listen to WebSocket on channel "admin"
   useCafeWebSocket({

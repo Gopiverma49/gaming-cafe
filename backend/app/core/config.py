@@ -23,7 +23,16 @@ class Settings(BaseSettings):
 
     # UPI Billing Info
     UPI_MERCHANT_VPA: str = "gamingcafe@upi"
-    UPI_MERCHANT_NAME: str = "ApexCyberLounge"
+    UPI_MERCHANT_NAME: str = "VanyaGamingCafe"
+    UPI_CURRENCY: str = "INR"
+
+    # Business Billing & Session Configuration
+    DEFAULT_SESSION_DURATION_MINUTES: int = 60
+    MINIMUM_BILLING_MINUTES: int = 30
+    GRACE_PERIOD_MINUTES: int = 5
+    MINIMUM_BILLABLE_HOURS: float = 0.5
+    IDEMPOTENCY_CACHE_TTL_SECONDS: int = 3600
+    IDEMPOTENCY_MAX_ENTRIES: int = 2000
 
     # CORS Settings (can be "*" or comma-separated domains: "http://localhost:5173,https://mycafe.com")
     CORS_ORIGINS: Union[str, List[str]] = "*"

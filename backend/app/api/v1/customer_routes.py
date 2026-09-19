@@ -9,8 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db, verify_customer_token
+from app.core.config import settings
 from app.core.security import create_customer_token
-from app.models.entities import Station, Session, MenuItem, Order, OrderItem
+from app.models.entities import Session, MenuItem, Order, OrderItem
+from app.models.enums import OrderStatus, SessionStatus
 from app.schemas.api_schemas import (
     CustomerDeskSession,
     MenuItemResponse,
@@ -21,6 +23,7 @@ from app.schemas.api_schemas import (
     CustomerTokenRequest,
 )
 from app.services.billing_engine import calculate_station_charge
+from app.services.order_service import serialize_order, ensure_utc, CURRENCY_QUANTIZATION
 from app.services.ws_notifier import buffer_ws_event
 
 router = APIRouter(prefix="/customer", tags=["Customer Operations"])
@@ -29,13 +32,13 @@ router = APIRouter(prefix="/customer", tags=["Customer Operations"])
 @router.post("/auth/token", response_model=TokenResponse)
 async def get_desk_token(
     payload: CustomerTokenRequest,
-    db: AsyncSession = Depends(get_db),
 ):
     """
     Simulates desk-side QR code scan or auto-login, generating an ephemeral, desk-scoped JWT.
     """
     token = create_customer_token(str(payload.desk_id), str(payload.session_id))
-    return TokenResponse(access_token=token, scope="customer", expires_in=60 * 6 * 60)
+    expires_in_seconds = settings.CUSTOMER_TOKEN_EXPIRE_MINUTES * 60
+    return TokenResponse(access_token=token, scope="customer", expires_in=expires_in_seconds)
 
 
 @router.get("/menu", response_model=List[MenuItemResponse])
@@ -62,7 +65,7 @@ async def get_desk_session(
 
     stmt = (
         select(Session)
-        .where(Session.station_id == desk_id, Session.status == "ACTIVE")
+        .where(Session.station_id == desk_id, Session.status == SessionStatus.ACTIVE.value)
         .options(
             selectinload(Session.station),
             selectinload(Session.orders).selectinload(Order.items).selectinload(OrderItem.menu_item),
@@ -78,12 +81,10 @@ async def get_desk_session(
         )
 
     now = datetime.now(timezone.utc)
-    started_at = cafe_session.started_at
-    if started_at.tzinfo is None and now.tzinfo is not None:
-        started_at = started_at.replace(tzinfo=now.tzinfo)
+    started_at = ensure_utc(cafe_session.started_at)
     elapsed_sec = (now - started_at).total_seconds()
     elapsed_min = max(0, int(elapsed_sec // 60))
-    allocated_mins = 60
+    allocated_mins = settings.DEFAULT_SESSION_DURATION_MINUTES
     remaining_min = max(0, allocated_mins - elapsed_min)
 
     station = cafe_session.station
@@ -92,40 +93,12 @@ async def get_desk_session(
     orders_charge = Decimal("0.00")
     orders_out: List[OrderResponse] = []
     for order in cafe_session.orders:
-        order_total = Decimal("0.00")
-        items_out: List[OrderItemResponse] = []
-        for item in order.items:
-            subtotal = (item.unit_price * Decimal(str(item.quantity))).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            )
-            order_total += subtotal
-            items_out.append(
-                OrderItemResponse(
-                    id=item.id,
-                    menu_item_id=item.menu_item_id,
-                    menu_item_name=item.menu_item.name if item.menu_item else "Item",
-                    quantity=item.quantity,
-                    unit_price=item.unit_price,
-                    subtotal=subtotal,
-                )
-            )
+        serialized = serialize_order(order)
+        if order.status == OrderStatus.SERVED.value:
+            orders_charge += serialized.total_amount
+        orders_out.append(serialized)
 
-        if order.status == "SERVED":
-            orders_charge += order_total
-
-        orders_out.append(
-            OrderResponse(
-                id=order.id,
-                session_id=order.session_id,
-                station_name=station.name,
-                status=order.status,
-                created_at=order.created_at,
-                items=items_out,
-                total_amount=order_total,
-            )
-        )
-
-    running_total = (time_charge + orders_charge).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    running_total = (time_charge + orders_charge).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
 
     return CustomerDeskSession(
         session_id=cafe_session.id,
@@ -159,7 +132,7 @@ async def place_order(
     # Verify active session for desk
     session_stmt = (
         select(Session)
-        .where(Session.station_id == desk_id, Session.status == "ACTIVE")
+        .where(Session.station_id == desk_id, Session.status == SessionStatus.ACTIVE.value)
         .options(selectinload(Session.station))
     )
     sess_res = await db.execute(session_stmt)
@@ -185,35 +158,37 @@ async def place_order(
 
     new_order = Order(
         session_id=cafe_session.id,
-        status="QUEUED",
+        status=OrderStatus.QUEUED.value,
         created_at=datetime.now(timezone.utc),
     )
     db.add(new_order)
-    await db.flush()
+    await db.flush()  # Generates new_order.id
 
     order_total = Decimal("0.00")
     order_items_out: List[OrderItemResponse] = []
+    order_items_to_add: List[OrderItem] = []
 
     for it in payload.items:
         menu_item = menu_map[it.menu_item_id]
         unit_price = menu_item.price
         subtotal = (unit_price * Decimal(str(it.quantity))).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
+            CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
         )
         order_total += subtotal
 
+        item_id = uuid.uuid4()
         db_order_item = OrderItem(
+            id=item_id,
             order_id=new_order.id,
             menu_item_id=menu_item.id,
             quantity=it.quantity,
             unit_price=unit_price,
         )
-        db.add(db_order_item)
-        await db.flush()
+        order_items_to_add.append(db_order_item)
 
         order_items_out.append(
             OrderItemResponse(
-                id=db_order_item.id,
+                id=item_id,
                 menu_item_id=menu_item.id,
                 menu_item_name=menu_item.name,
                 quantity=it.quantity,
@@ -221,6 +196,10 @@ async def place_order(
                 subtotal=subtotal,
             )
         )
+
+    # Batch add all order items in a single flush instead of N flushes in a loop
+    db.add_all(order_items_to_add)
+    await db.flush()
 
     # Post-commit notification for Kitchen KDS and Customer
     buffer_ws_event(
@@ -231,7 +210,7 @@ async def place_order(
             "order_id": str(new_order.id),
             "session_id": str(cafe_session.id),
             "station_name": cafe_session.station.name,
-            "status": "QUEUED",
+            "status": OrderStatus.QUEUED.value,
             "items_count": len(payload.items),
             "total_amount": str(order_total),
         },
@@ -242,7 +221,7 @@ async def place_order(
         event_type="ORDER_CREATED",
         payload={
             "order_id": str(new_order.id),
-            "status": "QUEUED",
+            "status": OrderStatus.QUEUED.value,
             "total_amount": str(order_total),
         },
     )

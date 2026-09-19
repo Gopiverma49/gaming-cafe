@@ -42,9 +42,17 @@ async function main() {
   }
 
   const isTest = process.argv.includes('--test');
+  const isVerbose = process.argv.includes('--verbose');
+  const uvicornArgs = [
+    '-m', 'uvicorn', 'app.main:app',
+    '--reload',
+    '--host', '0.0.0.0',
+    '--port', '8000',
+    ...(isVerbose ? [] : ['--no-access-log'])
+  ];
   const args = isTest
     ? ['-m', 'pytest', 'tests/', '-v']
-    : ['-m', 'uvicorn', 'app.main:app', '--reload', '--host', '0.0.0.0', '--port', '8000'];
+    : uvicornArgs;
 
   const env = { ...process.env, PYTHONPATH: backendDir };
 

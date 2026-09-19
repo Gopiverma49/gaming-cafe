@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import hashlib
 import time
 from typing import AsyncGenerator, Dict, Any, Optional
@@ -9,6 +10,7 @@ from jose import JWTError
 from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import async_session_factory
 from app.core.security import decode_jwt_token
 
@@ -95,12 +97,17 @@ async def verify_customer_token(
         )
 
 
-# In-memory Idempotency Store (TTL = 1 hour)
-# In high-volume production, this can be backed by Redis.
+# In-memory Idempotency Store with LRU eviction and TTL
+# In high-volume distributed production, this can be backed by Redis.
 class IdempotencyCache:
-    def __init__(self, ttl: int = 3600):
+    def __init__(
+        self,
+        ttl: int = settings.IDEMPOTENCY_CACHE_TTL_SECONDS,
+        max_entries: int = settings.IDEMPOTENCY_MAX_ENTRIES,
+    ):
         self.ttl = ttl
-        self._store: Dict[str, Dict[str, Any]] = {}
+        self.max_entries = max_entries
+        self._store: OrderedDict[str, Dict[str, Any]] = OrderedDict()
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
         record = self._store.get(key)
@@ -109,9 +116,23 @@ class IdempotencyCache:
         if time.time() - record["timestamp"] > self.ttl:
             del self._store[key]
             return None
+        self._store.move_to_end(key)
         return record
 
-    def set(self, key: str, payload_hash: str, status_code: int, response_body: bytes, headers: Dict[str, str]):
+    def set(
+        self,
+        key: str,
+        payload_hash: str,
+        status_code: int,
+        response_body: bytes,
+        headers: Dict[str, str],
+    ):
+        if key in self._store:
+            self._store.move_to_end(key)
+        elif len(self._store) >= self.max_entries:
+            # Evict oldest entry (LRU)
+            self._store.popitem(last=False)
+
         self._store[key] = {
             "payload_hash": payload_hash,
             "status_code": status_code,

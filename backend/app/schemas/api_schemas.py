@@ -1,14 +1,17 @@
 import uuid
 from decimal import Decimal
 from datetime import datetime
-from typing import List, Optional, Literal
+from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict
+
+from app.core.config import settings
+from app.models.enums import OrderStatus, PaymentMethod
 
 
 # Station Schemas
 class StationBase(BaseModel):
     name: str = Field(..., max_length=50)
-    tier: str = Field(..., max_length=20)  # STANDARD, VIP, SIMULATOR
+    tier: str = Field(..., max_length=20)  # STANDARD, VIP, SIMULATOR, CONSOLE
     hourly_rate: Decimal = Field(..., decimal_places=2, ge=Decimal("0.00"))
 
 
@@ -44,7 +47,11 @@ class StationLiveResponse(BaseModel):
 # Session Schemas
 class CheckInRequest(BaseModel):
     station_id: uuid.UUID
-    allocated_minutes: Optional[int] = Field(default=60, ge=15, description="Initial allocated time window")
+    allocated_minutes: Optional[int] = Field(
+        default=settings.DEFAULT_SESSION_DURATION_MINUTES,
+        ge=15,
+        description="Initial allocated time window",
+    )
 
 
 class TransferRequest(BaseModel):
@@ -54,7 +61,7 @@ class TransferRequest(BaseModel):
 
 class CheckoutRequest(BaseModel):
     session_id: uuid.UUID
-    payment_method: Literal["CASH", "UPI"]
+    payment_method: PaymentMethod
 
 
 class SessionResponse(BaseModel):
@@ -105,7 +112,7 @@ class OrderResponse(BaseModel):
     id: uuid.UUID
     session_id: uuid.UUID
     station_name: Optional[str] = None
-    status: Literal["QUEUED", "PREPARING", "SERVED", "CANCELLED"]
+    status: OrderStatus
     created_at: datetime
     items: List[OrderItemResponse]
     total_amount: Decimal
@@ -114,7 +121,7 @@ class OrderResponse(BaseModel):
 
 
 class OrderStatusUpdateRequest(BaseModel):
-    status: Literal["QUEUED", "PREPARING", "SERVED", "CANCELLED"]
+    status: OrderStatus
 
 
 # Payment & Checkout Schemas

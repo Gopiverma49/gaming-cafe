@@ -1,15 +1,14 @@
-import sys
 from contextlib import asynccontextmanager
 from decimal import Decimal
 import logging
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 from app.core.config import settings
 from app.core.database import engine, Base, async_session_factory
-from app.models.entities import Station, MenuItem
+from app.models.entities import Station, MenuItem, Session
 from app.api.deps import IdempotencyMiddleware
 from app.api.v1.admin_routes import router as admin_router
 from app.api.v1.customer_routes import router as customer_router
@@ -24,22 +23,24 @@ logger = logging.getLogger("main")
 
 
 async def seed_initial_data():
-    """Seeds starter gaming stations and menu items if database is empty."""
+    """Seeds starter gaming stations and menu items; ensures PS1, PS2, PS3 configuration."""
     async with async_session_factory() as db:
         stations_res = await db.execute(select(Station))
-        if not stations_res.scalars().first():
-            logger.info("Seeding initial gaming stations...")
+        current_stations = stations_res.scalars().all()
+        station_names = {s.name for s in current_stations}
+
+        # If empty or not yet matching the 3 PS stations
+        if not current_stations or station_names != {"PS1", "PS2", "PS3"}:
+            logger.info("Configuring 3 gaming stations: PS1, PS2, PS3...")
+            await db.execute(delete(Session))
+            await db.execute(delete(Station))
             sample_stations = [
-                Station(name="RIG-01 (RTX 4090)", tier="VIP", hourly_rate=Decimal("250.00"), status="AVAILABLE"),
-                Station(name="RIG-02 (RTX 4090)", tier="VIP", hourly_rate=Decimal("250.00"), status="AVAILABLE"),
-                Station(name="RIG-03 (RTX 4080)", tier="STANDARD", hourly_rate=Decimal("150.00"), status="AVAILABLE"),
-                Station(name="RIG-04 (RTX 4080)", tier="STANDARD", hourly_rate=Decimal("150.00"), status="AVAILABLE"),
-                Station(name="SIM-01 (Moza R9)", tier="SIMULATOR", hourly_rate=Decimal("350.00"), status="AVAILABLE"),
-                Station(name="SIM-02 (Flight Sim)", tier="SIMULATOR", hourly_rate=Decimal("400.00"), status="AVAILABLE"),
-                Station(name="PS5-01 (OLED 65\")", tier="CONSOLE", hourly_rate=Decimal("180.00"), status="AVAILABLE"),
-                Station(name="PS5-02 (OLED 65\")", tier="CONSOLE", hourly_rate=Decimal("180.00"), status="AVAILABLE"),
+                Station(name="PS1", tier="CONSOLE", hourly_rate=Decimal("180.00"), status="AVAILABLE"),
+                Station(name="PS2", tier="CONSOLE", hourly_rate=Decimal("180.00"), status="AVAILABLE"),
+                Station(name="PS3", tier="CONSOLE", hourly_rate=Decimal("180.00"), status="AVAILABLE"),
             ]
             db.add_all(sample_stations)
+            await db.commit()
 
         menu_res = await db.execute(select(MenuItem))
         if not menu_res.scalars().first():

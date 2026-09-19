@@ -7,7 +7,7 @@
   "scripts": {
     "dev:all": "node dev-runner.js",
     "dev": "node dev-runner.js",
-    "dev:qr": "node dev-runner.js",
+    "dev:qr": "node dev-runner.js --qr",
     "dev:backend": "node run-backend.js",
     "dev:frontend": "npm run dev --prefix frontend",
     "build": "npm run build --prefix frontend",

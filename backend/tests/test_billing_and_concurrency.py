@@ -114,3 +114,19 @@ def test_idempotency_cache():
     assert entry["payload_hash"] == payload_hash
     assert entry["status_code"] == 200
     assert entry["body"] == b'{"status": "ok"}'
+
+
+def test_idempotency_cache_lru_eviction():
+    # Test bounded capacity and eviction of oldest entry
+    cache = IdempotencyCache(ttl=3600, max_entries=2)
+    cache.set("k1", "h1", 200, b"r1", {})
+    cache.set("k2", "h2", 200, b"r2", {})
+    assert cache.get("k1") is not None
+    assert cache.get("k2") is not None
+
+    # Adding third key must evict least recently used (which is k1 because k2 was touched last, or k1 if k2 was accessed)
+    # Since k2 was queried last, k1 is least recently used
+    cache.set("k3", "h3", 200, b"r3", {})
+    assert cache.get("k1") is None
+    assert cache.get("k2") is not None
+    assert cache.get("k3") is not None

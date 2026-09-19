@@ -16,6 +16,11 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
   const reconnectAttemptRef = useRef(0);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const isUnmountedRef = useRef(false);
+  const onEventRef = useRef(onEvent);
+
+  useEffect(() => {
+    onEventRef.current = onEvent;
+  }, [onEvent]);
 
   const connect = useCallback(() => {
     if (isUnmountedRef.current) return;
@@ -49,8 +54,8 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
 
           const wsEvent = parsed as WebSocketEvent;
           setLastEvent(wsEvent);
-          if (onEvent) {
-            onEvent(wsEvent);
+          if (onEventRef.current) {
+            onEventRef.current(wsEvent);
           }
 
           // Automatically invalidate TanStack Query cache keys based on event_type
@@ -106,7 +111,7 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
         connect();
       }, 3000);
     }
-  }, [channel, onEvent, queryClient]);
+  }, [channel, queryClient]);
 
   useEffect(() => {
     isUnmountedRef.current = false;

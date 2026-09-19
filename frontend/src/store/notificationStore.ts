@@ -1,0 +1,59 @@
+import { create } from 'zustand';
+import { playNotificationChime } from '../utils/audioNotifier';
+
+export interface AdminNotification {
+  id: string;
+  type: 'BOOKING' | 'FOOD_ORDER' | 'MENU_CHANGE' | 'SYSTEM';
+  title: string;
+  message: string;
+  timestamp: string;
+  read: boolean;
+}
+
+interface NotificationState {
+  notifications: AdminNotification[];
+  activeToast: AdminNotification | null;
+  addNotification: (type: AdminNotification['type'], title: string, message: string) => void;
+  dismissToast: () => void;
+  markAllAsRead: () => void;
+  clearNotifications: () => void;
+}
+
+export const useNotificationStore = create<NotificationState>((set, get) => ({
+  notifications: [],
+  activeToast: null,
+
+  addNotification: (type, title, message) => {
+    // Play distinctive audio sound
+    playNotificationChime(type);
+
+    const newNotif: AdminNotification = {
+      id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      type,
+      title,
+      message,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      read: false,
+    };
+
+    set({
+      notifications: [newNotif, ...get().notifications.slice(0, 49)],
+      activeToast: newNotif,
+    });
+
+    // Automatically auto-dismiss toast after 6 seconds
+    setTimeout(() => {
+      set((state) => (state.activeToast?.id === newNotif.id ? { activeToast: null } : {}));
+    }, 6000);
+  },
+
+  dismissToast: () => set({ activeToast: null }),
+
+  markAllAsRead: () => {
+    set((state) => ({
+      notifications: state.notifications.map((n) => ({ ...n, read: true })),
+    }));
+  },
+
+  clearNotifications: () => set({ notifications: [], activeToast: null }),
+}));
