@@ -61,17 +61,29 @@ export const LoginPage: React.FC = () => {
     e.preventDefault();
     setErrorMessage(null);
 
-    if (!regFullName.trim() || !regPhone.trim()) {
-      setErrorMessage('Please fill out all player profile fields.');
+    const name = regFullName.trim();
+    const phone = regPhone.trim();
+    const password = regPassword;
+
+    // 1. Full Name: at least 4 and at most 15 characters
+    if (name.length < 4 || name.length > 15) {
+      setErrorMessage('Full Name must be between 4 and 15 characters.');
       return;
     }
 
-    if (regPassword.length < 4) {
-      setErrorMessage('Password must be at least 4 characters long.');
+    // 2. Phone Number: strictly 10 digits
+    if (!/^\d{10}$/.test(phone)) {
+      setErrorMessage('Phone number must be exactly 10 digits (numbers only).');
       return;
     }
 
-    registerCustomer(regFullName.trim(), regPhone.trim(), regPhone.trim());
+    // 3. Password: at least 4 and at most 15 characters
+    if (password.length < 4 || password.length > 15) {
+      setErrorMessage('Password must be between 4 and 15 characters.');
+      return;
+    }
+
+    registerCustomer(name, phone, phone);
   };
 
   const handleAdminLogin = async (e: React.FormEvent) => {
@@ -264,30 +276,45 @@ export const LoginPage: React.FC = () => {
 
               <form onSubmit={handleCustomerRegister} className="space-y-3.5">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Full Name
-                  </label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      Full Name
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-mono-code">
+                      4–15 chars ({regFullName.length}/15)
+                    </span>
+                  </div>
                   <input
                     type="text"
                     value={regFullName}
-                    onChange={(e) => setRegFullName(e.target.value)}
-                    placeholder="e.g. Alex Mercer"
+                    onChange={(e) => setRegFullName(e.target.value.slice(0, 15))}
+                    minLength={4}
+                    maxLength={15}
+                    placeholder="e.g. Alex (4–15 characters)"
                     className="w-full px-3.5 py-2.5 bg-slate-50/80 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl text-xs sm:text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-colors"
                     required
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Phone Number (for booking & food receipts)
-                  </label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      Phone Number
+                    </label>
+                    <span className={`text-[10px] font-mono-code ${regPhone.length === 10 ? 'text-emerald-500 font-bold' : 'text-slate-400'}`}>
+                      {regPhone.length}/10 digits
+                    </span>
+                  </div>
                   <div className="relative">
                     <Phone className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                     <input
                       type="tel"
+                      inputMode="numeric"
                       value={regPhone}
-                      onChange={(e) => setRegPhone(e.target.value)}
-                      placeholder="e.g. +91 98765 43210"
+                      onChange={(e) => setRegPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                      pattern="[0-9]{10}"
+                      maxLength={10}
+                      placeholder="10-digit mobile number (e.g. 9876543210)"
                       className="w-full pl-10 pr-4 py-2.5 bg-slate-50/80 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl text-xs sm:text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-colors"
                       required
                     />
@@ -295,16 +322,23 @@ export const LoginPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Create Password / PIN
-                  </label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      Create Password / PIN
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-mono-code">
+                      4–15 chars ({regPassword.length}/15)
+                    </span>
+                  </div>
                   <div className="relative">
                     <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                     <input
                       type={showPassword ? 'text' : 'password'}
                       value={regPassword}
-                      onChange={(e) => setRegPassword(e.target.value)}
-                      placeholder="Minimum 4 characters"
+                      onChange={(e) => setRegPassword(e.target.value.slice(0, 15))}
+                      minLength={4}
+                      maxLength={15}
+                      placeholder="4 to 15 characters"
                       className="w-full pl-10 pr-10 py-2.5 bg-slate-50/80 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl text-xs sm:text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-colors"
                       required
                     />

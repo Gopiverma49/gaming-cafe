@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import cafeBackgroundImg from '../assets/gaming-cafe-bg.png';
 
 interface Particle {
   x: number;
@@ -6,7 +7,17 @@ interface Particle {
   vx: number;
   vy: number;
   size: number;
-  type: 'ps-triangle' | 'ps-circle' | 'ps-cross' | 'ps-square' | 'coffee' | 'burger' | 'pizza' | 'drink' | 'dot';
+  type:
+    | 'ps-triangle'
+    | 'ps-circle'
+    | 'ps-cross'
+    | 'ps-square'
+    | 'sparkle'
+    | 'coffee'
+    | 'burger'
+    | 'pizza'
+    | 'drink'
+    | 'dot';
   color: string;
   rotation: number;
   rotationSpeed: number;
@@ -17,7 +28,7 @@ interface GamingCafeCanvasProps {
   isLight?: boolean;
 }
 
-export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = true }) => {
+export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = false }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -47,7 +58,7 @@ export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = tr
     };
     window.addEventListener('mousemove', handleMouseMove);
 
-    // Color palettes
+    // Color palettes (tuned for high-end neon PlayStation & warm cafe ambiance)
     const lightColors = [
       '#3b82f6', // PlayStation Blue
       '#f59e0b', // Cafe Caramel
@@ -58,12 +69,14 @@ export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = tr
     ];
 
     const darkColors = [
-      '#60a5fa',
-      '#fbbf24',
-      '#34d399',
-      '#f472b6',
-      '#a78bfa',
-      '#fb923c',
+      '#38bdf8', // Neon Sky / PS Cyan
+      '#60a5fa', // Electric PS Blue
+      '#fbbf24', // Warm Amber Bar
+      '#f59e0b', // Glowing Caramel
+      '#a78bfa', // Neon Purple / Indigo
+      '#34d399', // Emerald Neon
+      '#f43f5e', // Hot Coral / Cherry
+      '#e2e8f0', // Crisp Starlight
     ];
 
     const colors = isLight ? lightColors : darkColors;
@@ -72,6 +85,7 @@ export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = tr
       'ps-circle',
       'ps-cross',
       'ps-square',
+      'sparkle',
       'coffee',
       'burger',
       'pizza',
@@ -79,8 +93,8 @@ export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = tr
       'dot',
     ];
 
-    // Create 36 ambient particles (well-spaced, never cluttered)
-    const count = Math.min(36, Math.floor((width * height) / 32000));
+    // Create ambient particles (well-spaced, never cluttered)
+    const count = Math.min(42, Math.floor((width * height) / 28000));
     const particles: Particle[] = [];
 
     for (let i = 0; i < count; i++) {
@@ -94,7 +108,7 @@ export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = tr
         color: colors[i % colors.length],
         rotation: Math.random() * Math.PI * 2,
         rotationSpeed: (Math.random() - 0.5) * 0.015,
-        opacity: isLight ? Math.random() * 0.18 + 0.12 : Math.random() * 0.22 + 0.15,
+        opacity: isLight ? Math.random() * 0.2 + 0.12 : Math.random() * 0.28 + 0.2,
       });
     }
 
@@ -105,8 +119,13 @@ export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = tr
       ctx.rotate(p.rotation);
       ctx.strokeStyle = p.color;
       ctx.fillStyle = p.color;
-      ctx.lineWidth = 1.8;
+      ctx.lineWidth = 1.6;
       ctx.globalAlpha = p.opacity;
+
+      if (!isLight) {
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = Math.min(p.size * 0.75, 15);
+      }
 
       const s = p.size;
 
@@ -139,6 +158,18 @@ export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = tr
           ctx.beginPath();
           ctx.rect(-s * 0.65, -s * 0.65, s * 1.3, s * 1.3);
           ctx.stroke();
+          break;
+
+        case 'sparkle':
+          // 4-pointed diamond star / sparkle
+          ctx.beginPath();
+          ctx.moveTo(0, -s * 0.85);
+          ctx.quadraticCurveTo(0, 0, s * 0.85, 0);
+          ctx.quadraticCurveTo(0, 0, 0, s * 0.85);
+          ctx.quadraticCurveTo(0, 0, -s * 0.85, 0);
+          ctx.quadraticCurveTo(0, 0, 0, -s * 0.85);
+          ctx.closePath();
+          ctx.fill();
           break;
 
         case 'coffee':
@@ -235,7 +266,7 @@ export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = tr
 
           if (dist < 130) {
             ctx.beginPath();
-            ctx.strokeStyle = isLight ? 'rgba(148, 163, 184, 0.08)' : 'rgba(148, 163, 184, 0.05)';
+            ctx.strokeStyle = isLight ? 'rgba(148, 163, 184, 0.08)' : 'rgba(148, 163, 184, 0.06)';
             ctx.lineWidth = 1;
             ctx.moveTo(particles[i].x, particles[i].y);
             ctx.lineTo(particles[j].x, particles[j].y);
@@ -285,10 +316,34 @@ export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = tr
   }, [isLight]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="fixed inset-0 pointer-events-none z-0 transition-opacity duration-700"
-      style={{ opacity: 0.95 }}
-    />
+    <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden select-none">
+      {/* Ambient Gaming Lounge & Cafe Background Scene */}
+      <div
+        className="absolute inset-0 bg-cover bg-center bg-no-repeat transition-all duration-700"
+        style={{
+          backgroundImage: `url(${cafeBackgroundImg})`,
+          filter: isLight
+            ? 'brightness(0.92) contrast(1.05)'
+            : 'brightness(0.72) contrast(1.18) saturate(1.12)',
+        }}
+      />
+
+      {/* Atmospheric Vignette & Deep Lounge Gradient Overlays */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background: isLight
+            ? 'radial-gradient(ellipse at center, rgba(248, 250, 252, 0.6) 0%, rgba(241, 245, 249, 0.88) 100%)'
+            : 'radial-gradient(ellipse at 35% 45%, rgba(10, 25, 47, 0.45) 0%, rgba(7, 11, 20, 0.78) 65%, rgba(3, 7, 18, 0.94) 100%), linear-gradient(to right, rgba(3, 7, 18, 0.62) 0%, rgba(15, 23, 42, 0.22) 50%, rgba(28, 14, 5, 0.58) 100%)',
+        }}
+      />
+
+      {/* Interactive Moving Canvas Symbols Layer */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 pointer-events-none z-10 transition-opacity duration-700"
+        style={{ opacity: 0.95 }}
+      />
+    </div>
   );
 };

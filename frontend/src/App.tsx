@@ -136,19 +136,19 @@ function MainDashboard() {
       )}
 
       {/* Responsive Top PlayStation & Cafe Navigation Bar */}
-      <header className="sticky top-0 z-40 bg-[#090d16]/95 backdrop-blur-xl border-b border-slate-800/80 px-3 sm:px-4 lg:px-8 py-2.5 sm:py-3.5 pt-safe transition-colors shadow-lg">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 sm:gap-4 relative z-10">
+      <header className="sticky top-0 z-40 bg-[#090d16]/95 backdrop-blur-xl border-b border-slate-800/80 px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3 pt-safe transition-colors shadow-md">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 sm:gap-4 relative z-10">
           {/* Brand Logo */}
-          <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-2xl bg-gradient-to-br from-blue-600 via-indigo-600 to-amber-500 flex items-center justify-center text-white font-black shadow-md shadow-blue-500/20 shrink-0">
+          <div className="flex items-center space-x-2.5 sm:space-x-3 shrink-0">
+            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-br from-blue-500 via-indigo-600 to-amber-500 flex items-center justify-center text-white font-black shadow-md shadow-blue-500/25 ring-1 ring-blue-500/20 shrink-0">
               <Gamepad2 className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
             </div>
             <div>
               <div className="flex items-center gap-1.5 sm:gap-2">
-                <h1 className="text-base sm:text-lg font-black tracking-wider font-display text-white whitespace-nowrap">
+                <h1 className="text-base sm:text-lg lg:text-xl font-black tracking-wide font-display text-white whitespace-nowrap">
                   VANYA GAMING & CAFE
                 </h1>
-                <span className={`hidden sm:inline-block text-[10px] font-mono-code px-2 py-0.5 rounded-full border font-bold ${
+                <span className={`hidden sm:inline-block text-[11px] font-mono-code px-2.5 py-0.5 rounded-full border font-bold ${
                   isAdmin
                     ? 'bg-amber-950/80 text-amber-400 border-amber-800/60'
                     : 'bg-blue-950/80 text-blue-400 border-blue-800/60'
@@ -156,7 +156,7 @@ function MainDashboard() {
                   {isAdmin ? 'Staff Operations' : 'PlayStation & Bites'}
                 </span>
               </div>
-              <p className="hidden sm:block text-[11px] text-slate-400 font-mono-code">
+              <p className="hidden sm:block text-[11px] sm:text-xs text-slate-300 font-mono-code">
                 {isAdmin ? 'Console Fleet, Financials & Shop Management' : 'PS5 Ultra Gaming & Table-Side Cafe Orders'}
               </p>
             </div>

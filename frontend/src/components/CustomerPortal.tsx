@@ -7,7 +7,6 @@ import {
   CalendarCheck,
   CalendarClock,
   XCircle,
-  Coffee,
 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useLoungeStore, AdvanceBooking } from '../store/loungeStore';
@@ -38,7 +37,6 @@ export const CustomerPortal: React.FC = () => {
     refetchInterval: 8000,
   });
 
-  const availableStations = stations.filter((s) => s.status === 'AVAILABLE');
 
   // Calculate estimated vacancy time for an occupied station
   const calculateVacancy = (station: StationLive) => {
@@ -126,49 +124,18 @@ export const CustomerPortal: React.FC = () => {
       <div className="relative overflow-hidden rounded-3xl bg-white/80 dark:bg-[#0c1424]/90 backdrop-blur-2xl border border-slate-200/90 dark:border-slate-800 p-6 sm:p-8 shadow-[0_15px_40px_-5px_rgba(0,0,0,0.05)] dark:shadow-2xl">
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/25 text-blue-700 dark:text-blue-400 text-xs font-bold font-display tracking-wide">
-                <Gamepad2 className="w-3.5 h-3.5" />
-                PlayStation 5 Lounge
-              </span>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-800 dark:text-amber-400 text-xs font-bold font-display tracking-wide">
-                <Coffee className="w-3.5 h-3.5" />
-                Kitchen & Bar
-              </span>
-              {user?.phone && (
-                <span className="text-xs text-slate-400 font-mono-code">
-                  • {user.phone}
-                </span>
-              )}
-            </div>
+
 
             <h2 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white font-display tracking-wide">
-              Welcome to the Lounge, {user?.name || 'Gamer'}!
+              Welcome to the Lounge, <span className="uppercase">{user?.name || 'GAMER'}</span>
             </h2>
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 max-w-2xl leading-relaxed">
-              High-performance 4K PS5 gaming meets elevated comfort food. Savor gourmet snacks, craft coffee, and chilled refreshments brought directly to your setup
+              High-performance 4K PS5 gaming meets elevated comfort food.
+              <br />
+              Savor gourmet snacks, craft coffee, and chilled refreshments brought directly to your setup
             </p>
           </div>
 
-          {/* Quick Stat Pill */}
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800 shadow-sm flex items-center gap-3.5">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
-                <Gamepad2 className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                  Live Console Availability
-                </div>
-                <div className="text-base font-black text-slate-900 dark:text-white font-mono-code">
-                  <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                    {availableStations.length} of 3
-                  </span>{' '}
-                  Consoles Free
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -201,25 +168,7 @@ export const CustomerPortal: React.FC = () => {
       {/* 2. PLAYSTATION 5 CONSOLES SECTION (PS1, PS2, PS3) */}
       {/* ========================================================================= */}
       <div className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200/80 dark:border-slate-800">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
-              <Gamepad2 className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white font-display">
-                PlayStation 5 Console Stations
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                DualSense wireless controllers, 65″ 4K 120Hz OLED, surround sound headsets
-              </p>
-            </div>
-          </div>
 
-          <div className="text-xs font-mono-code font-bold text-slate-500 dark:text-slate-400">
-            {availableStations.length} consoles available right now
-          </div>
-        </div>
 
         {/* 3 Console Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
