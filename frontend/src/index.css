@@ -90,12 +90,6 @@
   transform: translate3d(0, 0, 0);
 }
 
-.marquee-container:hover .animate-marquee-infinite,
-.marquee-container:active .animate-marquee-infinite,
-.marquee-paused .animate-marquee-infinite {
-  animation-play-state: paused !important;
-}
-
 .marquee-mask {
   mask-image: linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%);
   -webkit-mask-image: linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%);
