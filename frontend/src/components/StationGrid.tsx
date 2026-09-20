@@ -33,7 +33,7 @@ export type StationSubTab = 'stations' | 'customer_logs' | 'manage_station';
 export const StationGrid: React.FC = () => {
   const queryClient = useQueryClient();
   const { addNotification } = useNotificationStore();
-  const { recordTransaction, clearStationFoodOrders } = useLoungeStore();
+  const { clearStationFoodOrders } = useLoungeStore();
 
   // Sub-navigation state under Station option
   const [activeSubTab, setActiveSubTab] = useState<StationSubTab>('stations');
@@ -66,8 +66,8 @@ export const StationGrid: React.FC = () => {
   const transferMutation = useMutation({
     mutationFn: () =>
       transferStation(transferStationTarget!.active_session_id!, targetStationId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['stations-live'] });
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ['stations-live'] });
       setTransferStationTarget(null);
       setTargetStationId('');
       setActionError(null);
@@ -89,52 +89,23 @@ export const StationGrid: React.FC = () => {
   const handleExecuteCheckout = async () => {
     if (!checkoutStationTarget) return;
     setIsCheckingOut(true);
+    setActionError(null);
     try {
-      const timeCharge = Number(checkoutStationTarget.time_charge || 0);
-      const foodCharge = Number(checkoutStationTarget.orders_charge || 0);
-      const totalAmount = timeCharge + foodCharge;
-
-      let apiRes: CheckoutResult | null = null;
-      if (checkoutStationTarget.active_session_id) {
-        try {
-          apiRes = await checkoutSession(checkoutStationTarget.active_session_id, paymentMethod);
-        } catch (e: any) {
-          console.warn('Checkout backend sync fallback:', e.message);
-        }
+      if (!checkoutStationTarget.active_session_id) {
+        setActionError('No active session found for this station.');
+        return;
       }
 
-      const recorded = recordTransaction({
-        stationName: checkoutStationTarget.name,
-        customerName: 'Console Gamer',
-        timeCharge: Number(timeCharge.toFixed(2)),
-        foodCharge: Number(foodCharge.toFixed(2)),
-        totalAmount: Number(totalAmount.toFixed(2)),
-        paymentMethod,
-      });
+      // Call backend — must succeed for station to actually close
+      const apiRes = await checkoutSession(checkoutStationTarget.active_session_id, paymentMethod);
 
+      // Backend confirmed checkout: refresh station list from server
       clearStationFoodOrders(checkoutStationTarget.name);
-      queryClient.invalidateQueries({ queryKey: ['stations-live'] });
+      await queryClient.refetchQueries({ queryKey: ['stations-live'] });
 
-      setCheckoutResult(
-        apiRes || {
-          session_id: checkoutStationTarget.active_session_id || 'manual-session',
-          station_id: checkoutStationTarget.id,
-          total_amount: totalAmount,
-          station_charge: timeCharge,
-          time_charge: timeCharge,
-          orders_charge: foodCharge,
-          payment_method: paymentMethod,
-          payment_status: 'PAID',
-          payment_id: recorded.id,
-          upi_qr_string:
-            paymentMethod === 'UPI'
-              ? `upi://pay?pa=gamingcafe@upi&pn=VanyaGamingCafe&am=${totalAmount.toFixed(2)}&cu=INR`
-              : undefined,
-        }
-      );
-      setActionError(null);
+      setCheckoutResult(apiRes);
     } catch (err: any) {
-      setActionError(err.message || 'Checkout failed');
+      setActionError(err.message || 'Checkout failed. Please try again.');
     } finally {
       setIsCheckingOut(false);
     }
@@ -397,11 +368,11 @@ export const StationGrid: React.FC = () => {
                   <div className="flex justify-between text-slate-400">
                     <span>Play Time Charge:</span>
                     <span className="font-mono-code text-white">
-                      ₹{Number(checkoutResult.time_charge || 0).toFixed(2)}
+                      ₹{Number(checkoutResult.station_charge || checkoutResult.time_charge || 0).toFixed(2)}
                     </span>
                   </div>
                   <div className="flex justify-between text-slate-400">
-                    <span>Food & Snacks:</span>
+                    <span>Food &amp; Snacks:</span>
                     <span className="font-mono-code text-white">
                       ₹{Number(checkoutResult.orders_charge || 0).toFixed(2)}
                     </span>

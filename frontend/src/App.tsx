@@ -3,13 +3,11 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import {
   Monitor,
   ChefHat,
-  Gamepad2,
   LogOut,
   ShoppingBag,
   X,
   Utensils,
   Sparkles,
-  ShieldCheck,
 } from 'lucide-react';
 import { StationGrid } from './components/StationGrid';
 import { KitchenKanban } from './components/KitchenKanban';
@@ -186,34 +184,8 @@ function MainDashboard() {
             </nav>
           )}
 
-          {/* User Profile, Portal Switcher & Actions */}
+          {/* Header Actions: Sign Out only */}
           <div className="flex items-center gap-2 sm:gap-3">
-            {isAdminPortal ? (
-              <button
-                onClick={() => setPortal('customer')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-950/80 hover:bg-blue-900/80 text-blue-300 border border-blue-800/60 text-xs font-semibold transition-all shadow-sm"
-                title="Switch to Customer Lounge view"
-              >
-                <Gamepad2 className="w-3.5 h-3.5 text-blue-400" />
-                <span className="hidden sm:inline">Customer Lounge →</span>
-              </button>
-            ) : (
-              <button
-                onClick={() => setPortal('admin')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-950/80 hover:bg-amber-900/80 text-amber-300 border border-amber-800/60 text-xs font-semibold transition-all shadow-sm"
-                title="Switch to Staff Operations"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
-                <span className="hidden sm:inline">Staff Portal →</span>
-              </button>
-            )}
-
-            {/* Active User Pill */}
-            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900/80 border border-slate-800 text-xs font-mono-code text-slate-300">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="max-w-[120px] truncate">{activeUser.name}</span>
-            </div>
-
             {/* Sign Out Button */}
             <button
               onClick={logout}

@@ -4,7 +4,7 @@ import logging
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, delete
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.database import engine, Base, async_session_factory
@@ -68,11 +68,10 @@ async def seed_initial_data():
             {"duration_min": 120, "price": 320, "label": "2 hrs"},
         ]
 
-        # If empty or not yet matching the 3 PS stations
-        if not current_stations or station_names != {"PS1", "PS2", "PS3"}:
-            logger.info("Configuring 3 gaming stations: PS1, PS2, PS3...")
-            await db.execute(delete(Session))
-            await db.execute(delete(Station))
+        # Only seed default stations if the DB has NO stations at all.
+        # NEVER wipe stations — user-created stations must be preserved.
+        if not current_stations:
+            logger.info("No stations found. Seeding default PS1, PS2, PS3 gaming stations...")
             sample_stations = [
                 Station(name="PS1", tier="CONSOLE", hourly_rate=Decimal("180.00"), pricing_tiers=default_tiers, status="AVAILABLE"),
                 Station(name="PS2", tier="CONSOLE", hourly_rate=Decimal("180.00"), pricing_tiers=default_tiers, status="AVAILABLE"),
@@ -81,6 +80,16 @@ async def seed_initial_data():
             db.add_all(sample_stations)
             await db.commit()
         else:
+            # Add any missing default stations without touching existing ones
+            default_station_names = {"PS1", "PS2", "PS3"}
+            missing_names = default_station_names - station_names
+            if missing_names:
+                logger.info(f"Adding missing default stations: {missing_names}")
+                for name in sorted(missing_names):
+                    db.add(Station(name=name, tier="CONSOLE", hourly_rate=Decimal("180.00"), pricing_tiers=default_tiers, status="AVAILABLE"))
+                await db.commit()
+
+            # Backfill pricing_tiers for any station that still lacks them
             for s in current_stations:
                 if not s.pricing_tiers:
                     s.pricing_tiers = [

@@ -67,7 +67,10 @@ async def get_live_stations(
     stmt = (
         select(Station)
         .options(
-            selectinload(Station.sessions).selectinload(Session.orders).selectinload(Order.items)
+            selectinload(Station.sessions)
+            .selectinload(Session.orders)
+            .selectinload(Order.items)
+            .selectinload(OrderItem.menu_item)
         )
         .order_by(Station.name)
     )

@@ -78,8 +78,8 @@ export const ManageStation: React.FC = () => {
         pricing_tiers: createTiers,
       });
     },
-    onSuccess: (newSt) => {
-      queryClient.invalidateQueries({ queryKey: ['stations-live'] });
+    onSuccess: async (newSt) => {
+      await queryClient.refetchQueries({ queryKey: ['stations-live'] });
       setShowCreateModal(false);
       setCreateName('');
       setCreateRate('180');
@@ -104,8 +104,8 @@ export const ManageStation: React.FC = () => {
         pricing_tiers: editTiers,
       });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['stations-live'] });
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ['stations-live'] });
       setEditingStation(null);
       setActionError(null);
       showFeedback('Station details and pricing tiers updated successfully!');
@@ -122,8 +122,8 @@ export const ManageStation: React.FC = () => {
       }
       return await transferStation(transferSource.active_session_id, targetStationId);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['stations-live'] });
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ['stations-live'] });
       setTransferSource(null);
       setTargetStationId('');
       setActionError(null);
@@ -139,8 +139,8 @@ export const ManageStation: React.FC = () => {
       if (!deletingStation) return;
       return await deleteStation(deletingStation.id);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['stations-live'] });
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ['stations-live'] });
       setDeletingStation(null);
       setActionError(null);
       showFeedback('Station deleted from fleet.');
