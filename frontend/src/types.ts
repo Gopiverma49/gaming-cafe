@@ -2,11 +2,19 @@ export type StationTier = 'STANDARD' | 'VIP' | 'SIMULATOR' | 'CONSOLE';
 
 export type StationStatus = 'AVAILABLE' | 'OCCUPIED' | 'RESERVED' | 'MAINTENANCE';
 
+export interface PricingTier {
+  duration_min: number;
+  price: number | string;
+  label: string;
+}
+
 export interface StationLive {
   id: string;
   name: string;
   tier: StationTier;
   hourly_rate: string | number;
+  default_hourly_rate?: number;
+  pricing_tiers?: PricingTier[];
   status: StationStatus;
   active_session_id?: string | null;
   started_at?: string | null;
@@ -25,6 +33,7 @@ export interface MenuItem {
   price: string | number;
   is_available: boolean;
   stock?: number;
+  min_stock_alert?: number;
   description?: string;
 }
 
@@ -43,6 +52,7 @@ export interface Order {
   id: string;
   session_id: string;
   station_name?: string;
+  customer_name?: string;
   status: OrderStatus;
   created_at: string;
   items: OrderItem[];
@@ -83,6 +93,30 @@ export interface TokenResponse {
   token_type?: string;
   scope?: string;
   expires_in?: number;
+}
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  phone: string;
+  role: 'admin' | 'customer' | 'ADMIN' | 'CUSTOMER';
+  created_at?: string;
+}
+
+export interface AuthTokenResponse {
+  access_token: string;
+  token_type: string;
+  user: AuthUser;
+}
+
+export interface CustomerRecord {
+  id: string;
+  name: string;
+  phone: string;
+  visit_count: number;
+  last_visit?: string | null;
+  total_spent: number;
+  notes?: string | null;
 }
 
 export interface WebSocketEvent {
