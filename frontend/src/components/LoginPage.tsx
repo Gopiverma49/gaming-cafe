@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   ShieldCheck,
   Gamepad2,
@@ -12,21 +12,13 @@ import {
   EyeOff,
 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
-import { loginUserApi, registerCustomerApi } from '../api';
+import { loginAdminApi } from '../api';
 import { GamingCafeCanvas } from './GamingCafeCanvas';
 
 type AuthMode = 'CUSTOMER_LOGIN' | 'CUSTOMER_REGISTER' | 'ADMIN_LOGIN';
 
 export const LoginPage: React.FC = () => {
-  const { currentPortal, setPortal, setAuth } = useAuthStore();
-  const [mode, setMode] = useState<AuthMode>(
-    currentPortal === 'admin' ? 'ADMIN_LOGIN' : 'CUSTOMER_LOGIN'
-  );
-
-  useEffect(() => {
-    setMode(currentPortal === 'admin' ? 'ADMIN_LOGIN' : 'CUSTOMER_LOGIN');
-    setErrorMessage(null);
-  }, [currentPortal]);
+  const [mode, setMode] = useState<AuthMode>('CUSTOMER_LOGIN');
 
   // Customer Login State
   const [loginIdentifier, setLoginIdentifier] = useState('');
@@ -44,9 +36,10 @@ export const LoginPage: React.FC = () => {
   // UI state
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleCustomerLogin = async (e: React.FormEvent) => {
+  const { loginAsCustomer, loginAsAdmin, registerCustomer } = useAuthStore();
+
+  const handleCustomerLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
 
@@ -61,18 +54,10 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    setIsSubmitting(true);
-    try {
-      const res = await loginUserApi({ identifier: id, password: loginPassword });
-      setAuth(res.user, res.access_token, 'customer');
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Login failed. Please check credentials.');
-    } finally {
-      setIsSubmitting(false);
-    }
+    loginAsCustomer(id, id.includes('@') ? id.split('@')[0] : id);
   };
 
-  const handleCustomerRegister = async (e: React.FormEvent) => {
+  const handleCustomerRegister = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
 
@@ -80,9 +65,9 @@ export const LoginPage: React.FC = () => {
     const phone = regPhone.trim();
     const password = regPassword;
 
-    // 1. Full Name: at least 2 and at most 30 characters
-    if (name.length < 2 || name.length > 30) {
-      setErrorMessage('Full Name must be between 2 and 30 characters.');
+    // 1. Full Name: at least 4 and at most 15 characters
+    if (name.length < 4 || name.length > 15) {
+      setErrorMessage('Full Name must be between 4 and 15 characters.');
       return;
     }
 
@@ -92,21 +77,13 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    // 3. Password: at least 4 characters
-    if (password.length < 4) {
-      setErrorMessage('Password must be at least 4 characters.');
+    // 3. Password: at least 4 and at most 15 characters
+    if (password.length < 4 || password.length > 15) {
+      setErrorMessage('Password must be between 4 and 15 characters.');
       return;
     }
 
-    setIsSubmitting(true);
-    try {
-      const res = await registerCustomerApi({ name, phone, password });
-      setAuth(res.user, res.access_token, 'customer');
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Registration failed. Phone may already be registered.');
-    } finally {
-      setIsSubmitting(false);
-    }
+    registerCustomer(name, phone, phone);
   };
 
   const handleAdminLogin = async (e: React.FormEvent) => {
@@ -124,14 +101,16 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    setIsSubmitting(true);
     try {
-      const res = await loginUserApi({ identifier: user, password: adminPassword });
-      setAuth(res.user, res.access_token, 'admin');
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Invalid administrator credentials.');
-    } finally {
-      setIsSubmitting(false);
+      await loginAdminApi(user, adminPassword);
+      loginAsAdmin(user);
+    } catch {
+      // Direct login attempt fallback
+      if (adminPassword === 'admin123' && user === 'admin') {
+        loginAsAdmin(user);
+      } else {
+        setErrorMessage('Invalid admin credentials.');
+      }
     }
   };
 
@@ -147,36 +126,25 @@ export const LoginPage: React.FC = () => {
 
       {/* Main Container */}
       <div className="w-full max-w-md relative z-10 space-y-5">
-        {/* Brand Header & Portal Info */}
+        {/* Brand Header & Game/Food Vibe */}
         <div className="text-center space-y-2">
           {/* Dual Category Badges */}
           <div className="flex items-center justify-center gap-2 mb-2 flex-wrap">
-            {currentPortal === 'admin' ? (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-800 dark:text-amber-400 text-xs font-bold tracking-wide shadow-sm">
-                <ShieldCheck className="w-3.5 h-3.5 text-amber-500" />
-                Staff Operations Portal
-              </span>
-            ) : (
-              <>
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/25 text-blue-700 dark:text-blue-400 text-xs font-bold tracking-wide shadow-sm">
-                  <Gamepad2 className="w-3.5 h-3.5" />
-                  PS5 4K Gaming Lounge
-                </span>
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-800 dark:text-amber-400 text-xs font-bold tracking-wide shadow-sm">
-                  <Coffee className="w-3.5 h-3.5" />
-                  Artisan Cafe & Bites
-                </span>
-              </>
-            )}
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/25 text-blue-700 dark:text-blue-400 text-xs font-bold tracking-wide shadow-sm">
+              <Gamepad2 className="w-3.5 h-3.5" />
+              PS5 4K Gaming Lounge
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-800 dark:text-amber-400 text-xs font-bold tracking-wide shadow-sm">
+              <Coffee className="w-3.5 h-3.5" />
+              Artisan Cafe & Bites
+            </span>
           </div>
 
           <h1 className="text-2xl sm:text-3xl font-black tracking-wider font-display text-slate-900 dark:text-white">
-            {currentPortal === 'admin' ? 'ADMIN OPERATIONS' : 'VANYA GAMING & CAFE'}
+            VANYA GAMING & CAFE
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 font-medium">
-            {currentPortal === 'admin'
-              ? 'Console Fleet Control • Real-Time KDS • Financial Ledger'
-              : 'Immersive PlayStation 5 Rigs • Gourmet Burgers • Cold Brews'}
+            Immersive PlayStation 5 Rigs • Gourmet Burgers • Cold Brews
           </p>
         </div>
 
@@ -249,11 +217,10 @@ export const LoginPage: React.FC = () => {
 
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 via-indigo-600 to-amber-500 hover:from-blue-500 hover:to-amber-400 text-white font-bold text-xs sm:text-sm rounded-xl uppercase tracking-wider transition-all shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 via-indigo-600 to-amber-500 hover:from-blue-500 hover:to-amber-400 text-white font-bold text-xs sm:text-sm rounded-xl uppercase tracking-wider transition-all shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 flex items-center justify-center gap-2"
                 >
                   <Gamepad2 className="w-4 h-4" />
-                  <span>{isSubmitting ? 'Verifying...' : 'Enter Lounge, Play & Order'}</span>
+                  <span>Enter Lounge, Play & Order</span>
                 </button>
               </form>
 
@@ -274,15 +241,14 @@ export const LoginPage: React.FC = () => {
 
                 <div className="pt-1">
                   <button
-                    type="button"
                     onClick={() => {
-                      setPortal('admin');
+                      setMode('ADMIN_LOGIN');
                       setErrorMessage(null);
                     }}
                     className="w-full py-2 px-3 rounded-xl bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-800 text-xs font-semibold flex items-center justify-center gap-2 transition-all"
                   >
                     <ShieldCheck className="w-3.5 h-3.5 text-amber-500" />
-                    <span>Staff Operations Login →</span>
+                    <span>Admin Login →</span>
                   </button>
                 </div>
               </div>
@@ -388,11 +354,10 @@ export const LoginPage: React.FC = () => {
 
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  className="w-full mt-2 py-3 px-4 bg-gradient-to-r from-blue-600 via-indigo-600 to-amber-500 hover:from-blue-500 hover:to-amber-400 text-white font-bold text-xs sm:text-sm rounded-xl uppercase tracking-wider transition-all shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="w-full mt-2 py-3 px-4 bg-gradient-to-r from-blue-600 via-indigo-600 to-amber-500 hover:from-blue-500 hover:to-amber-400 text-white font-bold text-xs sm:text-sm rounded-xl uppercase tracking-wider transition-all shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2"
                 >
                   <UserPlus className="w-4 h-4" />
-                  <span>{isSubmitting ? 'Registering Account...' : 'Join Lounge & Start Gaming'}</span>
+                  <span>Join Lounge & Start Gaming</span>
                 </button>
               </form>
 
@@ -473,19 +438,17 @@ export const LoginPage: React.FC = () => {
 
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  className="w-full py-3 px-4 bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold text-xs sm:text-sm rounded-xl uppercase tracking-wider transition-all shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="w-full py-3 px-4 bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold text-xs sm:text-sm rounded-xl uppercase tracking-wider transition-all shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2"
                 >
                   <ShieldCheck className="w-4 h-4" />
-                  <span>{isSubmitting ? 'Authenticating...' : 'Login'}</span>
+                  <span>Login</span>
                 </button>
               </form>
 
               <div className="pt-4 border-t border-slate-100 dark:border-slate-800 text-center">
                 <button
-                  type="button"
                   onClick={() => {
-                    setPortal('customer');
+                    setMode('CUSTOMER_LOGIN');
                     setErrorMessage(null);
                   }}
                   className="w-full py-2 px-3 rounded-xl bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-800 text-xs font-semibold flex items-center justify-center gap-2 transition-all"

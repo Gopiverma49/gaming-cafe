@@ -85,9 +85,6 @@ async def check_in(
     db: AsyncSession,
     station_id: uuid.UUID,
     allocated_minutes: int = settings.DEFAULT_SESSION_DURATION_MINUTES,
-    customer_name: Optional[str] = None,
-    customer_phone: Optional[str] = None,
-    user_id: Optional[uuid.UUID] = None,
 ) -> Session:
     """
     Check-in handler acquiring exclusive FOR UPDATE lock on the station.
@@ -110,12 +107,9 @@ async def check_in(
     # 2. Transition station to OCCUPIED
     station.status = StationStatus.OCCUPIED.value
 
-    # 3. Initialize ACTIVE session with customer linkage
+    # 3. Initialize ACTIVE session
     new_session = Session(
         station_id=station.id,
-        user_id=user_id,
-        customer_name=customer_name,
-        customer_phone=customer_phone,
         started_at=datetime.now(timezone.utc),
         status=SessionStatus.ACTIVE.value,
         total_amount=Decimal("0.00"),

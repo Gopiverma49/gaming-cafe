@@ -316,7 +316,7 @@ export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = fa
   }, [isLight]);
 
   return (
-    <div className="fixed inset-0 pointer-events-none -z-10 overflow-hidden select-none">
+    <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden select-none">
       {/* Ambient Gaming Lounge & Cafe Background Scene */}
       <div
         className="absolute inset-0 bg-cover bg-center bg-no-repeat transition-all duration-700"
@@ -341,7 +341,7 @@ export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = fa
       {/* Interactive Moving Canvas Symbols Layer */}
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 pointer-events-none z-0 transition-opacity duration-700"
+        className="absolute inset-0 pointer-events-none z-10 transition-opacity duration-700"
         style={{ opacity: 0.95 }}
       />
     </div>
