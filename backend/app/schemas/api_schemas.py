@@ -8,42 +8,20 @@ from app.core.config import settings
 from app.models.enums import OrderStatus, PaymentMethod
 
 
-# Pricing Tier Schema
-class PricingTier(BaseModel):
-    duration_min: int = Field(..., gt=0)
-    price: Decimal = Field(..., ge=Decimal("0.00"))
-    label: str = Field(..., max_length=50)
-
-
 # Station Schemas
 class StationBase(BaseModel):
     name: str = Field(..., max_length=50)
     tier: str = Field(..., max_length=20)  # STANDARD, VIP, SIMULATOR, CONSOLE
     hourly_rate: Decimal = Field(..., decimal_places=2, ge=Decimal("0.00"))
-    pricing_tiers: Optional[List[PricingTier]] = Field(default_factory=list)
 
 
-class StationCreate(BaseModel):
-    name: str = Field(..., max_length=50)
-    tier: str = Field(..., max_length=20)
-    hourly_rate: Optional[Decimal] = Field(None, decimal_places=2, ge=Decimal("0.00"))
-    default_hourly_rate: Optional[Decimal] = Field(None, decimal_places=2, ge=Decimal("0.00"))
-    pricing_tiers: Optional[List[PricingTier]] = Field(default_factory=list)
-
-
-class UpdateStationRequest(BaseModel):
-    name: Optional[str] = Field(None, max_length=50)
-    tier: Optional[str] = Field(None, max_length=20)
-    hourly_rate: Optional[Decimal] = Field(None, decimal_places=2, ge=Decimal("0.00"))
-    default_hourly_rate: Optional[Decimal] = Field(None, decimal_places=2, ge=Decimal("0.00"))
-    pricing_tiers: Optional[List[PricingTier]] = None
-    status: Optional[str] = Field(None, max_length=20)  # AVAILABLE, MAINTENANCE, RESERVED
+class StationCreate(StationBase):
+    pass
 
 
 class StationResponse(StationBase):
     id: uuid.UUID
     status: str
-    default_hourly_rate: Optional[Decimal] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -53,8 +31,6 @@ class StationLiveResponse(BaseModel):
     name: str
     tier: str
     hourly_rate: Decimal
-    default_hourly_rate: Optional[Decimal] = None
-    pricing_tiers: Optional[List[PricingTier]] = Field(default_factory=list)
     status: str  # AVAILABLE, OCCUPIED, RESERVED, MAINTENANCE
     active_session_id: Optional[uuid.UUID] = None
     started_at: Optional[datetime] = None
@@ -73,12 +49,9 @@ class CheckInRequest(BaseModel):
     station_id: uuid.UUID
     allocated_minutes: Optional[int] = Field(
         default=settings.DEFAULT_SESSION_DURATION_MINUTES,
-        ge=5,
+        ge=15,
         description="Initial allocated time window",
     )
-    customer_name: Optional[str] = None
-    customer_phone: Optional[str] = None
-    user_id: Optional[uuid.UUID] = None
 
 
 class TransferRequest(BaseModel):
@@ -109,34 +82,9 @@ class MenuItemResponse(BaseModel):
     name: str
     category: str
     price: Decimal
-    stock: int = 50
-    min_stock_alert: int = 10
     is_available: bool
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class MenuItemCreate(BaseModel):
-    name: str = Field(..., max_length=100)
-    category: str = Field(..., max_length=50)
-    price: Decimal = Field(..., ge=Decimal("0.00"))
-    stock: int = Field(default=50, ge=0)
-    min_stock_alert: int = Field(default=10, ge=0)
-    is_available: bool = True
-
-
-class MenuItemUpdate(BaseModel):
-    name: Optional[str] = Field(None, max_length=100)
-    category: Optional[str] = Field(None, max_length=50)
-    price: Optional[Decimal] = Field(None, ge=Decimal("0.00"))
-    stock: Optional[int] = Field(None, ge=0)
-    min_stock_alert: Optional[int] = Field(None, ge=0)
-    is_available: Optional[bool] = None
-
-
-class InventoryRestockRequest(BaseModel):
-    item_id: uuid.UUID
-    amount: int = Field(..., gt=0)
 
 
 class OrderItemCreate(BaseModel):
@@ -160,17 +108,10 @@ class OrderCreateRequest(BaseModel):
     notes: Optional[str] = None
 
 
-class StationOrderCreateRequest(BaseModel):
-    station_id: uuid.UUID
-    items: List[OrderItemCreate] = Field(..., min_length=1)
-    customer_name: Optional[str] = None
-
-
 class OrderResponse(BaseModel):
     id: uuid.UUID
     session_id: uuid.UUID
     station_name: Optional[str] = None
-    customer_name: Optional[str] = None
     status: OrderStatus
     created_at: datetime
     items: List[OrderItemResponse]
@@ -223,7 +164,7 @@ class CustomerDeskSession(BaseModel):
     active_orders: List[OrderResponse]
 
 
-# Auth & Customer Directory Schemas
+# Auth Schemas
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -239,40 +180,3 @@ class LoginRequest(BaseModel):
 class CustomerTokenRequest(BaseModel):
     desk_id: uuid.UUID
     session_id: uuid.UUID
-
-
-class UserRegisterRequest(BaseModel):
-    name: str = Field(..., min_length=2, max_length=100)
-    phone: str = Field(..., min_length=10, max_length=15)
-    password: str = Field(..., min_length=4, max_length=50)
-
-
-class UserLoginRequest(BaseModel):
-    identifier: str = Field(..., description="Phone number or username")
-    password: str = Field(..., min_length=1)
-
-
-class UserResponse(BaseModel):
-    id: uuid.UUID
-    name: str
-    phone: str
-    role: str
-    created_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class AuthTokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    user: UserResponse
-
-
-class CustomerProfileResponse(BaseModel):
-    id: str
-    name: str
-    phone: str
-    visit_count: int
-    last_visit: Optional[str] = None
-    total_spent: float
-    notes: Optional[str] = None
