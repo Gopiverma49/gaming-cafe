@@ -1,92 +1,202 @@
 import { create } from 'zustand';
+import { AuthUser } from '../types';
 
 export type UserRole = 'admin' | 'customer';
+export type PortalType = 'admin' | 'customer';
 
-export interface AuthUser {
-  id: string;
-  name: string;
-  username: string;
-  role: UserRole;
-  phone?: string;
-  deskId?: string;
+const ADMIN_STORAGE_KEY = 'vanya_admin_auth';
+const ADMIN_TOKEN_KEY = 'vanya_admin_token';
+const CUSTOMER_STORAGE_KEY = 'vanya_customer_auth';
+const CUSTOMER_TOKEN_KEY = 'vanya_customer_token';
+
+// Determine initial portal based on URL pathname
+export function getCurrentPortal(): PortalType {
+  if (typeof window === 'undefined') return 'customer';
+  return window.location.pathname.toLowerCase().startsWith('/admin') ? 'admin' : 'customer';
+}
+
+// Load user from sessionStorage first (per-tab isolation), fallback to localStorage
+function loadStoredUser(sessionKey: string, localKey: string): AuthUser | null {
+  try {
+    const raw = sessionStorage.getItem(sessionKey) || localStorage.getItem(localKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.role) {
+      parsed.role = parsed.role.toLowerCase();
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+// Load token from sessionStorage first, fallback to localStorage
+function loadStoredToken(sessionKey: string, localKey: string): string | null {
+  try {
+    return sessionStorage.getItem(sessionKey) || localStorage.getItem(localKey) || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveToStorage(sessionKey: string, localKey: string, value: string | null) {
+  try {
+    if (value !== null) {
+      sessionStorage.setItem(sessionKey, value);
+      localStorage.setItem(localKey, value);
+    } else {
+      sessionStorage.removeItem(sessionKey);
+      localStorage.removeItem(localKey);
+    }
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 interface AuthState {
+  currentPortal: PortalType;
+  adminUser: AuthUser | null;
+  adminToken: string | null;
+  customerUser: AuthUser | null;
+  customerToken: string | null;
+
+  // Active user & token for the current portal
   user: AuthUser | null;
+  token: string | null;
+
+  setPortal: (portal: PortalType) => void;
+  setAuth: (user: AuthUser, token: string, targetPortal?: PortalType) => void;
   loginAsCustomer: (username: string, name?: string, phone?: string) => void;
   loginAsAdmin: (username: string) => void;
   registerCustomer: (name: string, username: string, phone: string) => void;
   logout: () => void;
 }
 
-const STORAGE_KEY = 'apex_cyber_lounge_auth';
+const initialPortal = getCurrentPortal();
+const initialAdminUser = loadStoredUser(ADMIN_STORAGE_KEY, ADMIN_STORAGE_KEY);
+const initialAdminToken = loadStoredToken(ADMIN_TOKEN_KEY, ADMIN_TOKEN_KEY);
+const initialCustomerUser = loadStoredUser(CUSTOMER_STORAGE_KEY, CUSTOMER_STORAGE_KEY);
+const initialCustomerToken = loadStoredToken(CUSTOMER_TOKEN_KEY, CUSTOMER_TOKEN_KEY);
 
-// Load initial state from localStorage if available
-function loadSavedUser(): AuthUser | null {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved) : null;
-  } catch {
-    return null;
-  }
-}
+export const useAuthStore = create<AuthState>((set, get) => ({
+  currentPortal: initialPortal,
+  adminUser: initialAdminUser,
+  adminToken: initialAdminToken,
+  customerUser: initialCustomerUser,
+  customerToken: initialCustomerToken,
 
-export const useAuthStore = create<AuthState>((set) => ({
-  user: loadSavedUser(),
+  user: initialPortal === 'admin' ? initialAdminUser : initialCustomerUser,
+  token: initialPortal === 'admin' ? initialAdminToken : initialCustomerToken,
+
+  setPortal: (portal: PortalType) => {
+    if (portal === 'admin') {
+      if (!window.location.pathname.toLowerCase().startsWith('/admin')) {
+        window.history.pushState(null, '', '/admin');
+      }
+      set((state) => ({
+        currentPortal: 'admin',
+        user: state.adminUser,
+        token: state.adminToken,
+      }));
+    } else {
+      if (window.location.pathname.toLowerCase().startsWith('/admin')) {
+        window.history.pushState(null, '', '/');
+      }
+      set((state) => ({
+        currentPortal: 'customer',
+        user: state.customerUser,
+        token: state.customerToken,
+      }));
+    }
+  },
+
+  setAuth: (user: AuthUser, token: string, targetPortal?: PortalType) => {
+    const role = (user.role?.toLowerCase() as 'admin' | 'customer') || 'customer';
+    const normalizedUser: AuthUser = {
+      ...user,
+      role,
+    };
+    const isTargetAdmin = targetPortal === 'admin' || role === 'admin';
+
+    if (isTargetAdmin) {
+      saveToStorage(ADMIN_STORAGE_KEY, ADMIN_STORAGE_KEY, JSON.stringify(normalizedUser));
+      saveToStorage(ADMIN_TOKEN_KEY, ADMIN_TOKEN_KEY, token);
+      set((state) => ({
+        adminUser: normalizedUser,
+        adminToken: token,
+        ...(state.currentPortal === 'admin' ? { user: normalizedUser, token } : {}),
+      }));
+    } else {
+      saveToStorage(CUSTOMER_STORAGE_KEY, CUSTOMER_STORAGE_KEY, JSON.stringify(normalizedUser));
+      saveToStorage(CUSTOMER_TOKEN_KEY, CUSTOMER_TOKEN_KEY, token);
+      set((state) => ({
+        customerUser: normalizedUser,
+        customerToken: token,
+        ...(state.currentPortal === 'customer' ? { user: normalizedUser, token } : {}),
+      }));
+    }
+  },
 
   loginAsCustomer: (username: string, name?: string, phone?: string) => {
     const user: AuthUser = {
       id: `cust_${Date.now()}`,
       name: name || username,
-      username,
+      phone: phone || '',
       role: 'customer',
-      phone,
     };
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-    } catch (e) {
-      console.error(e);
-    }
-    set({ user });
+    saveToStorage(CUSTOMER_STORAGE_KEY, CUSTOMER_STORAGE_KEY, JSON.stringify(user));
+    set((state) => ({
+      customerUser: user,
+      ...(state.currentPortal === 'customer' ? { user } : {}),
+    }));
   },
 
-  loginAsAdmin: (username: string) => {
+  loginAsAdmin: (_username: string) => {
     const user: AuthUser = {
       id: `admin_${Date.now()}`,
       name: 'System Administrator',
-      username,
+      phone: '0000000000',
       role: 'admin',
     };
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-    } catch (e) {
-      console.error(e);
-    }
-    set({ user });
+    saveToStorage(ADMIN_STORAGE_KEY, ADMIN_STORAGE_KEY, JSON.stringify(user));
+    set((state) => ({
+      adminUser: user,
+      ...(state.currentPortal === 'admin' ? { user } : {}),
+    }));
   },
 
-  registerCustomer: (name: string, username: string, phone: string) => {
+  registerCustomer: (name: string, _username: string, phone: string) => {
     const user: AuthUser = {
       id: `cust_${Date.now()}`,
       name,
-      username,
-      role: 'customer',
       phone,
+      role: 'customer',
     };
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-    } catch (e) {
-      console.error(e);
-    }
-    set({ user });
+    saveToStorage(CUSTOMER_STORAGE_KEY, CUSTOMER_STORAGE_KEY, JSON.stringify(user));
+    set((state) => ({
+      customerUser: user,
+      ...(state.currentPortal === 'customer' ? { user } : {}),
+    }));
   },
 
   logout: () => {
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch (e) {
-      console.error(e);
+    const portal = get().currentPortal;
+    if (portal === 'admin') {
+      saveToStorage(ADMIN_STORAGE_KEY, ADMIN_STORAGE_KEY, null);
+      saveToStorage(ADMIN_TOKEN_KEY, ADMIN_TOKEN_KEY, null);
+      set({ adminUser: null, adminToken: null, user: null, token: null });
+    } else {
+      saveToStorage(CUSTOMER_STORAGE_KEY, CUSTOMER_STORAGE_KEY, null);
+      saveToStorage(CUSTOMER_TOKEN_KEY, CUSTOMER_TOKEN_KEY, null);
+      set({ customerUser: null, customerToken: null, user: null, token: null });
     }
-    set({ user: null });
   },
 }));
+
+// Listen for browser Back/Forward navigation to sync current portal state
+if (typeof window !== 'undefined') {
+  window.addEventListener('popstate', () => {
+    const portal = getCurrentPortal();
+    useAuthStore.getState().setPortal(portal);
+  });
+}

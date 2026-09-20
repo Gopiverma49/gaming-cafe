@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { playNotificationChime } from '../utils/audioNotifier';
 
 export interface AdminNotification {
   id: string;
@@ -13,7 +12,7 @@ export interface AdminNotification {
 interface NotificationState {
   notifications: AdminNotification[];
   activeToast: AdminNotification | null;
-  addNotification: (type: AdminNotification['type'], title: string, message: string) => void;
+  addNotification: (type: AdminNotification['type'], title: string, message: string, silent?: boolean) => void;
   dismissToast: () => void;
   markAllAsRead: () => void;
   clearNotifications: () => void;
@@ -23,10 +22,7 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   notifications: [],
   activeToast: null,
 
-  addNotification: (type, title, message) => {
-    // Play distinctive audio sound
-    playNotificationChime(type);
-
+  addNotification: (type, title, message, _silent = false) => {
     const newNotif: AdminNotification = {
       id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       type,

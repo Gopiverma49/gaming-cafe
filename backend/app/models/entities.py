@@ -14,6 +14,7 @@ from sqlalchemy import (
     Index,
     func,
     Uuid,
+    JSON,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -37,7 +38,12 @@ class Station(Base):
     name: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
     tier: Mapped[str] = mapped_column(String(20), nullable=False)  # STANDARD, VIP, SIMULATOR, CONSOLE
     hourly_rate: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    pricing_tiers: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=list)
     status: Mapped[str] = mapped_column(String(20), default=StationStatus.AVAILABLE.value, nullable=False)
+
+    @property
+    def default_hourly_rate(self) -> Decimal:
+        return self.hourly_rate
 
     __table_args__ = (
         CheckConstraint(
@@ -47,6 +53,27 @@ class Station(Base):
     )
 
     sessions: Mapped[List["Session"]] = relationship("Session", back_populates="station", cascade="all, delete-orphan")
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    phone: Mapped[str] = mapped_column(String(20), unique=True, index=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), default="CUSTOMER", nullable=False)  # CUSTOMER, ADMIN
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    sessions: Mapped[List["Session"]] = relationship("Session", back_populates="user")
 
 
 class Session(Base):
@@ -62,6 +89,13 @@ class Session(Base):
         ForeignKey("stations.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    customer_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    customer_phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -88,6 +122,7 @@ class Session(Base):
     )
 
     station: Mapped["Station"] = relationship("Station", back_populates="sessions")
+    user: Mapped[Optional["User"]] = relationship("User", back_populates="sessions")
     orders: Mapped[List["Order"]] = relationship("Order", back_populates="session", cascade="all, delete-orphan")
     payments: Mapped[List["Payment"]] = relationship("Payment", back_populates="session", cascade="all, delete-orphan")
 
@@ -103,6 +138,8 @@ class MenuItem(Base):
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     category: Mapped[str] = mapped_column(String(50), nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    stock: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
+    min_stock_alert: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     order_items: Mapped[List["OrderItem"]] = relationship("OrderItem", back_populates="menu_item")
@@ -121,6 +158,7 @@ class Order(Base):
         ForeignKey("sessions.id", ondelete="CASCADE"),
         nullable=False,
     )
+    customer_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=OrderStatus.QUEUED.value, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
