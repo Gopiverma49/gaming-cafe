@@ -14,7 +14,7 @@ import {
   SlidersHorizontal,
   Gamepad2,
 } from 'lucide-react';
-import { StationLive, CheckoutResult } from '../types';
+import { StationLive, CheckoutResult, PricingTier } from '../types';
 import {
   fetchLiveStations,
   transferStation,
@@ -23,7 +23,7 @@ import {
 import { useLoungeStore } from '../store/loungeStore';
 import { useNotificationStore } from '../store/notificationStore';
 import { StationCard } from './StationCard';
-import { StationBookingModal } from './StationBookingModal';
+import { SessionUpsellDrawer } from './SessionUpsellDrawer';
 import { StationFoodOrderModal } from './StationFoodOrderModal';
 import { CustomerLogs } from './CustomerLogs';
 import { ManageStation } from './ManageStation';
@@ -40,6 +40,7 @@ export const StationGrid: React.FC = () => {
 
   // Unified Modals States
   const [bookingStation, setBookingStation] = useState<StationLive | null>(null);
+  const [bookingTier, setBookingTier] = useState<PricingTier | null>(null);
   const [foodOrderStation, setFoodOrderStation] = useState<StationLive | null>(null);
 
   // Transfer Modal
@@ -228,7 +229,15 @@ export const StationGrid: React.FC = () => {
                   key={station.id}
                   station={station}
                   isAdmin={true}
-                  onBookStation={(s) => setBookingStation(s)}
+                  onSelectTier={(s, tier) => {
+                    setBookingStation(s);
+                    setBookingTier(tier);
+                  }}
+                  onBookStation={(s) => {
+                    setBookingStation(s);
+                    const firstTier = Array.isArray(s.pricing_tiers) && s.pricing_tiers.length > 0 ? s.pricing_tiers[0] : null;
+                    setBookingTier(firstTier);
+                  }}
                   onOrderFood={(s) => setFoodOrderStation(s)}
                   onCheckout={(s) => {
                     setCheckoutStationTarget(s);
@@ -250,11 +259,15 @@ export const StationGrid: React.FC = () => {
       {/* MODALS (BOOKING, FOOD ORDER, CHECKOUT, TRANSFER) */}
       {/* ========================================================================= */}
 
-      {/* 1. Unified Booking Modal (Exact Same for Admin Walk-in) */}
-      <StationBookingModal
+      {/* 1. Interactive Session Upsell & Check-In Drawer (Admin Front-Desk) */}
+      <SessionUpsellDrawer
         isOpen={!!bookingStation}
         station={bookingStation}
-        onClose={() => setBookingStation(null)}
+        selectedTier={bookingTier}
+        onClose={() => {
+          setBookingStation(null);
+          setBookingTier(null);
+        }}
         isAdmin={true}
         defaultCustomerName="Walk-in Gamer"
       />

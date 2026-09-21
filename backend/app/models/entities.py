@@ -15,6 +15,7 @@ from sqlalchemy import (
     func,
     Uuid,
     JSON,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -118,6 +119,7 @@ class Session(Base):
             "station_id",
             unique=True,
             postgresql_where=(status == "ACTIVE"),
+            sqlite_where=text("status = 'ACTIVE'"),
         ),
     )
 

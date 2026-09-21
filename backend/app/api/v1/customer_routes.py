@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -238,3 +238,128 @@ async def place_order(
         items=order_items_out,
         total_amount=order_total,
     )
+
+
+# ---------------------------------------------------------------------------
+# Direct Database Real-time Customer Active Sessions / Bookings
+# ---------------------------------------------------------------------------
+
+@router.get("/sessions")
+async def get_customer_sessions(
+    phone: Optional[str] = None,
+    name: Optional[str] = None,
+    user_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Fetches real active and recent sessions for customer booking cards directly from database.
+    Zero localStorage reliance.
+    """
+    stmt = (
+        select(Session)
+        .options(
+            selectinload(Session.station),
+            selectinload(Session.orders).selectinload(Order.items),
+        )
+        .order_by(Session.started_at.desc())
+    )
+    conditions = []
+    if phone:
+        conditions.append(Session.customer_phone == phone)
+    if name:
+        conditions.append(Session.customer_name == name)
+    if user_id:
+        try:
+            u_uuid = uuid.UUID(user_id)
+            conditions.append(Session.user_id == u_uuid)
+        except ValueError:
+            pass
+
+    if conditions:
+        from sqlalchemy import or_
+        stmt = stmt.where(or_(*conditions))
+
+    result = await db.execute(stmt)
+    sessions = result.scalars().all()
+
+    out = []
+    now = datetime.now(timezone.utc)
+    for s in sessions:
+        started_at = ensure_utc(s.started_at)
+        elapsed_min = max(0, int((now - started_at).total_seconds() // 60))
+        station_name = s.station.name if s.station else "Station"
+        hourly_rate = float(s.station.hourly_rate) if s.station else 180.0
+
+        if s.status == SessionStatus.ACTIVE.value and s.station:
+            time_charge = float(calculate_station_charge(started_at, now, s.station.hourly_rate))
+        else:
+            time_charge = float(s.total_amount or 0)
+
+        orders_charge = sum(
+            float(itm.unit_price * Decimal(str(itm.quantity)))
+            for o in s.orders if o.status != OrderStatus.CANCELLED.value
+            for itm in o.items
+        )
+        total_cost = time_charge + orders_charge
+
+        out.append({
+            "id": str(s.id),
+            "stationId": str(s.station_id),
+            "stationName": station_name,
+            "customerName": s.customer_name or "Gamer",
+            "customerPhone": s.customer_phone,
+            "status": s.status,
+            "startedAt": started_at.isoformat(),
+            "elapsedMinutes": elapsed_min,
+            "durationMinutes": max(60, ((elapsed_min // 60) + 1) * 60) if s.status == SessionStatus.ACTIVE.value else max(30, elapsed_min),
+            "hourlyRate": hourly_rate,
+            "timeCharge": time_charge,
+            "ordersCharge": orders_charge,
+            "totalCost": total_cost,
+        })
+    return out
+
+
+@router.post("/sessions/{session_id}/cancel")
+async def cancel_customer_session(
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Cancels an active session and frees the station in database.
+    """
+    stmt = (
+        select(Session)
+        .where(Session.id == session_id)
+        .options(selectinload(Session.station))
+        .with_for_update()
+    )
+    res = await db.execute(stmt)
+    session = res.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if session.status != SessionStatus.ACTIVE.value:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Session is not active")
+
+    session.status = SessionStatus.CANCELLED.value
+    session.ended_at = datetime.now(timezone.utc)
+    if session.station:
+        session.station.status = "AVAILABLE"
+
+    buffer_ws_event(
+        db,
+        channel="admin",
+        event_type="SESSION_CANCELLED",
+        payload={"session_id": str(session.id), "station_id": str(session.station_id)},
+    )
+    buffer_ws_event(
+        db,
+        channel="customer",
+        event_type="SESSION_CANCELLED",
+        payload={"session_id": str(session.id), "station_id": str(session.station_id)},
+    )
+
+    await db.commit()
+    return {"message": "Session cancelled successfully", "session_id": str(session.id)}
+

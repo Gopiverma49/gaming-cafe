@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import List, Optional
 import uuid
@@ -688,4 +688,104 @@ async def get_customer_directory(db: AsyncSession = Depends(get_db)):
         )
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# Real-time Financial & Revenue Analytics (Direct Database Aggregation)
+# ---------------------------------------------------------------------------
+
+@router.get("/analytics/revenue")
+async def get_revenue_analytics(
+    period: str = "DAY",  # DAY, WEEK, MONTH
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Computes real-time revenue analytics directly from database sessions, payments, and orders.
+    Zero localStorage or mock data.
+    """
+    now = datetime.now(timezone.utc)
+    if period.upper() == "DAY":
+        cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        days_to_show = 1
+    elif period.upper() == "WEEK":
+        cutoff = now - timedelta(days=7)
+        days_to_show = 7
+    else:
+        cutoff = now - timedelta(days=30)
+        days_to_show = 14
+
+    stmt = (
+        select(Session)
+        .where(Session.started_at >= cutoff)
+        .options(
+            selectinload(Session.orders).selectinload(Order.items).selectinload(OrderItem.menu_item),
+            selectinload(Session.payments),
+        )
+    )
+    result = await db.execute(stmt)
+    sessions = result.scalars().all()
+
+    total_revenue = Decimal("0.00")
+    gaming_revenue = Decimal("0.00")
+    food_revenue = Decimal("0.00")
+    sessions_count = len(sessions)
+    item_counts: dict[str, int] = defaultdict(int)
+
+    daily_stats: dict[str, dict[str, Decimal]] = defaultdict(
+        lambda: {"total": Decimal("0.00"), "gaming": Decimal("0.00"), "food": Decimal("0.00")}
+    )
+
+    for s in sessions:
+        started_at = ensure_utc(s.started_at)
+        day_key = started_at.strftime("%Y-%m-%d")
+
+        s_time_charge = s.total_amount or Decimal("0.00")
+        s_food_charge = Decimal("0.00")
+        for o in s.orders:
+            if o.status != OrderStatus.CANCELLED.value:
+                for itm in o.items:
+                    s_food_charge += itm.unit_price * Decimal(str(itm.quantity))
+                    name = itm.menu_item.name if itm.menu_item else "Item"
+                    item_counts[name] += itm.quantity
+
+        s_total = s_time_charge + s_food_charge
+
+        gaming_revenue += s_time_charge
+        food_revenue += s_food_charge
+        total_revenue += s_total
+
+        daily_stats[day_key]["gaming"] += s_time_charge
+        daily_stats[day_key]["food"] += s_food_charge
+        daily_stats[day_key]["total"] += s_total
+
+    average_session_bill = (
+        float(total_revenue / Decimal(str(sessions_count))) if sessions_count > 0 else 0.0
+    )
+
+    top_item = "None"
+    if item_counts:
+        top_item = max(item_counts.items(), key=lambda x: x[1])[0]
+
+    chart_data = []
+    for i in range(days_to_show - 1, -1, -1):
+        d = now - timedelta(days=i)
+        d_key = d.strftime("%Y-%m-%d")
+        label = d.strftime("%a, %b %d") if days_to_show > 1 else "Today"
+        day_stat = daily_stats.get(d_key, {"total": Decimal("0.00"), "gaming": Decimal("0.00"), "food": Decimal("0.00")})
+        chart_data.append({
+            "label": label,
+            "total": float(day_stat["total"]),
+            "gaming": float(day_stat["gaming"]),
+            "food": float(day_stat["food"]),
+        })
+
+    return {
+        "totalRevenue": float(total_revenue),
+        "gamingRevenue": float(gaming_revenue),
+        "foodRevenue": float(food_revenue),
+        "sessionsCount": sessions_count,
+        "averageSessionBill": round(average_session_bill, 2),
+        "topSellingItem": top_item,
+        "chartData": chart_data,
+    }
 

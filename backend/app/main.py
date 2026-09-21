@@ -80,14 +80,7 @@ async def seed_initial_data():
             db.add_all(sample_stations)
             await db.commit()
         else:
-            # Add any missing default stations without touching existing ones
-            default_station_names = {"PS1", "PS2", "PS3"}
-            missing_names = default_station_names - station_names
-            if missing_names:
-                logger.info(f"Adding missing default stations: {missing_names}")
-                for name in sorted(missing_names):
-                    db.add(Station(name=name, tier="CONSOLE", hourly_rate=Decimal("180.00"), pricing_tiers=default_tiers, status="AVAILABLE"))
-                await db.commit()
+            # Backfill pricing_tiers for any existing station that still lacks them
 
             # Backfill pricing_tiers for any station that still lacks them
             for s in current_stations:

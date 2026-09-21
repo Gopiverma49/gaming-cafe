@@ -125,3 +125,37 @@ export interface WebSocketEvent {
   payload: any;
   timestamp: string;
 }
+
+export interface CustomerSessionRecord {
+  id: string;
+  stationId: string;
+  stationName: string;
+  customerName: string;
+  customerPhone?: string | null;
+  status: 'ACTIVE' | 'COMPLETED' | 'TRANSFERRED' | 'CANCELLED';
+  startedAt: string;
+  elapsedMinutes: number;
+  durationMinutes?: number;
+  hourlyRate: number;
+  timeCharge: number;
+  ordersCharge: number;
+  totalCost: number;
+}
+
+export interface RevenueChartPoint {
+  label: string;
+  total: number;
+  gaming: number;
+  food: number;
+}
+
+export interface RevenueAnalyticsSummary {
+  totalRevenue: number;
+  gamingRevenue: number;
+  foodRevenue: number;
+  sessionsCount: number;
+  averageSessionBill: number;
+  topSellingItem: string;
+  chartData: RevenueChartPoint[];
+}
+

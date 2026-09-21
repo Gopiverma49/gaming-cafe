@@ -72,54 +72,25 @@ interface LoungeState {
 }
 
 const DEFAULT_STATION_GAMES: Record<string, string[]> = {
-  PS1: ['EA Sports FC 24 (FIFA)', 'Marvel Spider-Man 2', 'Tekken 8', 'Mortal Kombat 1', 'Gran Turismo 7'],
-  PS2: ['EA Sports FC 24 (FIFA)', 'Marvel Spider-Man 2', 'Tekken 8', 'God of War Ragnarök', 'NBA 2K24'],
   PS3: ['EA Sports FC 24 (FIFA)', 'Marvel Spider-Man 2', 'Tekken 8', 'Street Fighter 6', 'Hogwarts Legacy'],
+  Solo: ['God of War Ragnarök', 'Ghost of Tsushima', 'Elden Ring', 'Cyberpunk 2077', 'Spider-Man 2'],
+  multiplyer: ['EA Sports FC 24 (FIFA)', 'Tekken 8', 'Mortal Kombat 1', 'NBA 2K24', 'Call of Duty: Warzone'],
 };
 
-// Seed sample historical records so day, week, month charts populate vivid analytics immediately
-function getSeedFinancialRecords(): FinancialRecord[] {
-  const records: FinancialRecord[] = [];
-  const now = new Date();
-  const stations = ['PS1', 'PS2', 'PS3'];
-
-  for (let i = 0; i < 25; i++) {
-    const pastDate = new Date(now.getTime() - i * 28 * 3600 * 1000);
-    const dateStr = pastDate.toISOString().split('T')[0];
-    const timeCharge = [180, 250, 360, 500, 700][i % 5];
-    const foodCharge = [0, 140, 280, 420, 560][i % 5];
-    records.push({
-      id: `seed_fin_${i}`,
-      stationName: stations[i % stations.length],
-      customerName: `Gamer ${i + 1}`,
-      timeCharge,
-      foodCharge,
-      totalAmount: timeCharge + foodCharge,
-      paymentMethod: i % 2 === 0 ? 'UPI' : 'CASH',
-      timestamp: pastDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      dateStr,
-    });
-  }
-  return records;
-}
-
-const STORAGE_KEY_GAMES = 'vanya_lounge_station_games_v2';
-const STORAGE_KEY_BOOKINGS = 'vanya_lounge_bookings_v2';
-const STORAGE_KEY_ORDERS = 'vanya_lounge_station_orders_v2';
-const STORAGE_KEY_FINANCE = 'vanya_lounge_financial_records_v2';
-
-function loadStored<T>(key: string, fallback: T): T {
+// Purge legacy localStorage keys on startup so stale mock data is completely eliminated
+if (typeof window !== 'undefined' && window.localStorage) {
   try {
-    const data = localStorage.getItem(key);
-    return data ? JSON.parse(data) : fallback;
+    localStorage.removeItem('vanya_lounge_bookings_v2');
+    localStorage.removeItem('vanya_lounge_station_orders_v2');
+    localStorage.removeItem('vanya_lounge_financial_records_v2');
   } catch {
-    return fallback;
+    // Ignore storage quota / restriction errors
   }
 }
 
 export const useLoungeStore = create<LoungeState>((set, get) => ({
-  // Active Station Food Orders
-  stationFoodOrders: loadStored<Record<string, OrderedFoodItem[]>>(STORAGE_KEY_ORDERS, {}),
+  // Active Station Food Orders (in-memory only; real orders persist to SQLite via API)
+  stationFoodOrders: {},
 
   addStationFoodOrder: (stationName, items) => {
     const rawOrders = get().stationFoodOrders[stationName];
@@ -140,11 +111,6 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
       ...get().stationFoodOrders,
       [stationName]: [...currentOrders, ...newItems],
     };
-    try {
-      localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(updated));
-    } catch (e) {
-      console.warn('Storage quota exceeded or unavailable', e);
-    }
     set({ stationFoodOrders: updated });
   },
 
@@ -156,21 +122,19 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
   clearStationFoodOrders: (stationName) => {
     const updated = { ...get().stationFoodOrders };
     delete updated[stationName];
-    localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(updated));
     set({ stationFoodOrders: updated });
   },
 
   // Station Games
-  stationGames: loadStored<Record<string, string[]>>(STORAGE_KEY_GAMES, DEFAULT_STATION_GAMES),
+  stationGames: DEFAULT_STATION_GAMES,
 
   updateStationGames: (stationId, games) => {
     const updated = { ...get().stationGames, [stationId]: games };
-    localStorage.setItem(STORAGE_KEY_GAMES, JSON.stringify(updated));
     set({ stationGames: updated });
   },
 
-  // Bookings
-  bookings: loadStored<AdvanceBooking[]>(STORAGE_KEY_BOOKINGS, []),
+  // Bookings (In-memory fallback; real reservations read from SQLite /api/v1/customer/sessions)
+  bookings: [],
 
   addBooking: (bookingData) => {
     const newBooking: AdvanceBooking = {
@@ -180,11 +144,6 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
     };
     const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
     const updated = [newBooking, ...currentBookings];
-    try {
-      localStorage.setItem(STORAGE_KEY_BOOKINGS, JSON.stringify(updated));
-    } catch (e) {
-      console.warn('Storage error', e);
-    }
     set({ bookings: updated });
     return newBooking;
   },
@@ -192,16 +151,11 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
   cancelBooking: (id) => {
     const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
     const updated = currentBookings.filter((b) => b?.id !== id);
-    try {
-      localStorage.setItem(STORAGE_KEY_BOOKINGS, JSON.stringify(updated));
-    } catch (e) {
-      console.warn('Storage error', e);
-    }
     set({ bookings: updated });
   },
 
-  // Transactions & Revenue Summary
-  financialRecords: loadStored<FinancialRecord[]>(STORAGE_KEY_FINANCE, getSeedFinancialRecords()),
+  // Transactions & Revenue Summary (In-memory fallback; real analytics read from SQLite /api/v1/admin/analytics/revenue)
+  financialRecords: [],
 
   recordTransaction: (recordData) => {
     const now = new Date();
@@ -214,11 +168,6 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
 
     const currentRecords = Array.isArray(get().financialRecords) ? get().financialRecords : [];
     const updated = [newRecord, ...currentRecords];
-    try {
-      localStorage.setItem(STORAGE_KEY_FINANCE, JSON.stringify(updated));
-    } catch (e) {
-      console.warn('Storage error', e);
-    }
     set({ financialRecords: updated });
     return newRecord;
   },

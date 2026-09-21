@@ -20,14 +20,23 @@ import {
   updateMenuItemApi,
   deleteMenuItemApi,
   restockMenuItemApi,
+  fetchRevenueAnalyticsApi,
 } from '../api';
-import { useLoungeStore } from '../store/loungeStore';
-import { MenuItem } from '../types';
+import { MenuItem, RevenueAnalyticsSummary } from '../types';
 import { POLL_INTERVALS, evaluateStockStatus, StockStatusType } from '../constants';
+
+const defaultRevenueSummary: RevenueAnalyticsSummary = {
+  totalRevenue: 0,
+  gamingRevenue: 0,
+  foodRevenue: 0,
+  sessionsCount: 0,
+  averageSessionBill: 0,
+  topSellingItem: 'None',
+  chartData: [],
+};
 
 export const AdminShopManager: React.FC = () => {
   const queryClient = useQueryClient();
-  const { getRevenueSummary } = useLoungeStore();
 
   const { data: menuItems = [] } = useQuery<MenuItem[]>({
     queryKey: ['admin-menu'],
@@ -149,8 +158,12 @@ export const AdminShopManager: React.FC = () => {
     });
   };
 
-  // Revenue metrics
-  const revenueData = getRevenueSummary(revenuePeriod);
+  // Real-time Revenue metrics directly aggregated from SQLite DB
+  const { data: revenueData = defaultRevenueSummary } = useQuery<RevenueAnalyticsSummary>({
+    queryKey: ['admin-revenue-analytics', revenuePeriod],
+    queryFn: () => fetchRevenueAnalyticsApi(revenuePeriod),
+    refetchInterval: 8000,
+  });
 
   return (
     <div className="space-y-6 relative z-10">

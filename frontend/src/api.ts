@@ -9,6 +9,8 @@ import {
   AuthUser,
   AuthTokenResponse,
   CustomerRecord,
+  CustomerSessionRecord,
+  RevenueAnalyticsSummary,
 } from './types';
 
 const RAW_BASE = import.meta.env.VITE_API_BASE_URL
@@ -379,3 +381,51 @@ export async function fetchAdminCustomers(): Promise<CustomerRecord[]> {
   const data = await handleResponse<CustomerRecord[]>(res, []);
   return Array.isArray(data) ? data : [];
 }
+
+// ---------------------------------------------------------------------------
+// Real Database Customer Sessions & Reservations
+// ---------------------------------------------------------------------------
+export async function fetchCustomerSessions(filter?: {
+  phone?: string;
+  name?: string;
+  userId?: string;
+}): Promise<CustomerSessionRecord[]> {
+  const params = new URLSearchParams();
+  if (filter?.phone) params.append('phone', filter.phone);
+  if (filter?.name) params.append('name', filter.name);
+  if (filter?.userId) params.append('user_id', filter.userId);
+
+  const query = params.toString() ? `?${params.toString()}` : '';
+  const res = await safeFetch(`${API_BASE}/customer/sessions${query}`);
+  const data = await handleResponse<CustomerSessionRecord[]>(res, []);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function cancelCustomerSessionApi(
+  sessionId: string
+): Promise<{ message: string; session_id: string }> {
+  const res = await safeFetch(`${API_BASE}/customer/sessions/${sessionId}/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  return handleResponse<{ message: string; session_id: string }>(res);
+}
+
+// ---------------------------------------------------------------------------
+// Real Database Financial & Revenue Analytics
+// ---------------------------------------------------------------------------
+export async function fetchRevenueAnalyticsApi(
+  period: 'DAY' | 'WEEK' | 'MONTH' = 'DAY'
+): Promise<RevenueAnalyticsSummary> {
+  const res = await safeFetch(`${API_BASE}/admin/analytics/revenue?period=${period}`);
+  return handleResponse<RevenueAnalyticsSummary>(res, {
+    totalRevenue: 0,
+    gamingRevenue: 0,
+    foodRevenue: 0,
+    sessionsCount: 0,
+    averageSessionBill: 0,
+    topSellingItem: 'None',
+    chartData: [],
+  });
+}
+
