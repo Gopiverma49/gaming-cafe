@@ -159,3 +159,33 @@ export interface RevenueAnalyticsSummary {
   chartData: RevenueChartPoint[];
 }
 
+export type KitchenTicketStatus = 'pending' | 'preparing' | 'completed' | 'rejected';
+
+export interface KitchenOrderItem {
+  itemId: string;
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  subtotal?: number;
+}
+
+export interface KitchenOrder {
+  id: string;
+  stationId: string;
+  stationName: string;
+  customerName: string;
+  createdAt: number | string;
+  status: KitchenTicketStatus;
+  items: KitchenOrderItem[];
+  totalAmount: number;
+  rawOrder?: Order;
+}
+
+export interface InventoryItem {
+  id: string;
+  name: string;
+  category: 'beverage' | 'snack' | string;
+  stockQuantity: number;
+  unitPrice: number;
+}
+

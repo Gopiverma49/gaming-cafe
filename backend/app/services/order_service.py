@@ -50,13 +50,21 @@ def serialize_order(order: Order) -> OrderResponse:
     """
     total, items_out = calculate_order_subtotals(order.items)
     station_name = "Desk"
-    if getattr(order, "session", None) and getattr(order.session, "station", None):
-        station_name = order.session.station.name
+    station_id = None
+    customer_name = order.customer_name
+    if getattr(order, "session", None):
+        if not customer_name and getattr(order.session, "customer_name", None):
+            customer_name = order.session.customer_name
+        if getattr(order.session, "station", None):
+            station_name = order.session.station.name
+            station_id = order.session.station.id
 
     return OrderResponse(
         id=order.id,
         session_id=order.session_id,
+        station_id=station_id,
         station_name=station_name,
+        customer_name=customer_name,
         status=order.status,
         created_at=order.created_at,
         items=items_out,

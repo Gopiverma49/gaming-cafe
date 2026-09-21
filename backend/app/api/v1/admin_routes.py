@@ -366,10 +366,36 @@ async def update_kitchen_order_status(
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
 
-    order.status = payload.status.value if hasattr(payload.status, "value") else str(payload.status)
+    old_status = order.status
+    new_status = payload.status.value if hasattr(payload.status, "value") else str(payload.status)
+
+    # 1. On Accept (transitioning from QUEUED to PREPARING/SERVED): Deduct inventory stock
+    if old_status == OrderStatus.QUEUED.value and new_status in (OrderStatus.PREPARING.value, OrderStatus.SERVED.value):
+        for itm in order.items:
+            if itm.menu_item:
+                itm.menu_item.stock = max(0, itm.menu_item.stock - itm.quantity)
+    # 2. On Cancel after having been accepted: Restore inventory stock
+    elif old_status in (OrderStatus.PREPARING.value, OrderStatus.SERVED.value) and new_status == OrderStatus.CANCELLED.value:
+        for itm in order.items:
+            if itm.menu_item:
+                itm.menu_item.stock = itm.menu_item.stock + itm.quantity
+
+    order.status = new_status
+
+    customer_message = (
+        "Order Accepted — Food is being prepared"
+        if new_status == OrderStatus.PREPARING.value
+        else "Order Served"
+        if new_status == OrderStatus.SERVED.value
+        else "Order Rejected"
+        if new_status == OrderStatus.CANCELLED.value
+        else f"Order {new_status}"
+    )
 
     # Buffer WebSocket event
     station_id = str(order.session.station_id) if order.session else None
+    station_name = order.session.station.name if order.session and order.session.station else None
+
     buffer_ws_event(
         db,
         channel="admin",
@@ -377,7 +403,20 @@ async def update_kitchen_order_status(
         payload={
             "order_id": str(order.id),
             "status": order.status,
-            "station_name": order.session.station.name if order.session and order.session.station else None,
+            "station_name": station_name,
+            "message": customer_message,
+        },
+    )
+    # Also notify general customer channel
+    buffer_ws_event(
+        db,
+        channel="customer",
+        event_type="ORDER_STATUS_CHANGED",
+        payload={
+            "order_id": str(order.id),
+            "status": order.status,
+            "station_id": station_id,
+            "message": customer_message,
         },
     )
     if station_id:
@@ -388,13 +427,14 @@ async def update_kitchen_order_status(
             payload={
                 "order_id": str(order.id),
                 "status": order.status,
+                "station_id": station_id,
+                "message": customer_message,
             },
         )
 
+    response_data = serialize_order(order)
     await db.commit()
-    await db.refresh(order)
-
-    return serialize_order(order)
+    return response_data
 
 
 # ---------------------------------------------------------------------------

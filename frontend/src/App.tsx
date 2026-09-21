@@ -9,9 +9,11 @@ import {
   Utensils,
   Sparkles,
   Gamepad2,
+  BellRing,
 } from 'lucide-react';
 import { StationGrid } from './components/StationGrid';
 import { KitchenKanban } from './components/KitchenKanban';
+import { AdminOrdersDispatcher } from './components/AdminOrdersDispatcher';
 import { CustomerPortal } from './components/CustomerPortal';
 import { AdminShopManager } from './components/AdminShopManager';
 import { LoginPage } from './components/LoginPage';
@@ -34,7 +36,7 @@ const queryClient = new QueryClient({
   },
 });
 
-type ActiveTab = 'matrix' | 'shop' | 'kitchen';
+type ActiveTab = 'matrix' | 'orders' | 'shop' | 'kitchen';
 
 function MainDashboard() {
   const { currentPortal, adminUser, customerUser, logout } = useAuthStore();
@@ -83,7 +85,9 @@ function MainDashboard() {
   }
 
   const safeKitchenOrders = Array.isArray(kitchenOrders) ? kitchenOrders : [];
-  const pendingOrdersCount = safeKitchenOrders.filter((o) => o?.status !== 'SERVED').length;
+  const pendingOrdersCount = safeKitchenOrders.filter(
+    (o) => o?.status === 'QUEUED' || (o?.status as any) === 'pending'
+  ).length;
 
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col selection:bg-blue-600 selection:text-white relative transition-colors duration-300">
@@ -139,30 +143,27 @@ function MainDashboard() {
               <Gamepad2 className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
             </div>
             <div>
-              <div className="flex items-center gap-1.5 sm:gap-2">
-                <h1 className="text-base sm:text-lg lg:text-xl font-black tracking-wide font-display text-white whitespace-nowrap">
-                  VANYA GAMING & CAFE
-                </h1>
-                <span className={`hidden sm:inline-block text-[11px] font-mono-code px-2.5 py-0.5 rounded-full border font-bold ${
-                  isAdminPortal
-                    ? 'bg-amber-950/80 text-amber-400 border-amber-800/60'
-                    : 'bg-blue-950/80 text-blue-400 border-blue-800/60'
-                }`}>
-                  {isAdminPortal ? 'Staff Operations' : 'PlayStation & Bites'}
+              <div className="flex items-center space-x-2">
+                <span className="font-black text-sm sm:text-base tracking-wider bg-gradient-to-r from-blue-400 via-cyan-400 to-white bg-clip-text text-transparent font-display uppercase">
+                  Vanya Gaming
+                </span>
+                <span className="hidden sm:inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30 font-mono-code">
+                  LOUNGE
                 </span>
               </div>
-              <p className="hidden sm:block text-[11px] sm:text-xs text-slate-300 font-mono-code">
-                {isAdminPortal ? 'Console Fleet, Financials & Shop Management' : 'PS5 Ultra Gaming & Table-Side Cafe Orders'}
+              <p className="text-[10px] sm:text-xs text-slate-400 font-mono-code">
+                {isAdminPortal ? 'Staff Operations Console' : 'Customer Self-Service Terminal'}
               </p>
             </div>
           </div>
 
           {/* Admin Navigation Switcher (Only for Admin) */}
           {isAdminPortal && (
-            <nav className="hidden md:flex items-center bg-slate-950/80 p-1 rounded-xl border border-slate-800/90 shadow-inner">
+            <nav className="hidden md:flex items-center bg-slate-950/80 p-1 rounded-xl border border-slate-800/90 shadow-inner space-x-1">
+              {/* STATIONS */}
               <button
                 onClick={() => setActiveTab('matrix')}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold font-display uppercase tracking-wider transition-all ${
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold font-display uppercase tracking-wider transition-all cursor-pointer ${
                   activeTab === 'matrix'
                     ? 'bg-emerald-500 text-black shadow-[0_0_15px_rgba(16,185,129,0.35)]'
                     : 'text-slate-400 hover:text-white'
@@ -172,9 +173,32 @@ function MainDashboard() {
                 <span>Stations</span>
               </button>
 
+              {/* ORDERS (LIVE DISPATCH & TICKET HANDLING) */}
+              <button
+                onClick={() => setActiveTab('orders')}
+                className={`relative flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold font-display uppercase tracking-wider transition-all cursor-pointer ${
+                  activeTab === 'orders'
+                    ? 'bg-amber-500 text-black shadow-[0_0_15px_rgba(245,158,11,0.35)]'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <BellRing className={`w-4 h-4 ${pendingOrdersCount > 0 ? 'animate-bounce text-amber-400' : ''}`} />
+                <span>Orders</span>
+                {pendingOrdersCount > 0 ? (
+                  <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-amber-400 text-black font-mono-code font-black shadow-sm animate-pulse">
+                    [ {pendingOrdersCount} ]
+                  </span>
+                ) : (
+                  <span className="ml-1 text-[10px] text-slate-500 font-mono-code font-bold">
+                    [ 0 ]
+                  </span>
+                )}
+              </button>
+
+              {/* KITCHEN MENU */}
               <button
                 onClick={() => setActiveTab('kitchen')}
-                className={`relative flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold font-display uppercase tracking-wider transition-all ${
+                className={`relative flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold font-display uppercase tracking-wider transition-all cursor-pointer ${
                   activeTab === 'kitchen'
                     ? 'bg-orange-500 text-black shadow-[0_0_15px_rgba(249,115,22,0.35)]'
                     : 'text-slate-400 hover:text-white'
@@ -182,18 +206,14 @@ function MainDashboard() {
               >
                 <ChefHat className="w-4 h-4" />
                 <span>Kitchen Menu</span>
-                {pendingOrdersCount > 0 && (
-                  <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-rose-500 text-white font-mono-code font-bold">
-                    {pendingOrdersCount}
-                  </span>
-                )}
               </button>
 
+              {/* INVENTORY */}
               <button
                 onClick={() => setActiveTab('shop')}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold font-display uppercase tracking-wider transition-all ${
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold font-display uppercase tracking-wider transition-all cursor-pointer ${
                   activeTab === 'shop'
-                    ? 'bg-amber-500 text-black shadow-[0_0_15px_rgba(245,158,11,0.35)]'
+                    ? 'bg-blue-500 text-black shadow-[0_0_15px_rgba(59,130,246,0.35)]'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -228,15 +248,21 @@ function MainDashboard() {
               </ErrorBoundary>
             )}
 
-            {activeTab === 'shop' && (
-              <ErrorBoundary level="view" fallbackTitle="Inventory Panel Encountered an Issue">
-                <AdminShopManager />
+            {activeTab === 'orders' && (
+              <ErrorBoundary level="view" fallbackTitle="Orders Dispatch Encountered an Issue">
+                <AdminOrdersDispatcher />
               </ErrorBoundary>
             )}
 
             {activeTab === 'kitchen' && (
               <ErrorBoundary level="view" fallbackTitle="Kitchen Kanban Encountered an Issue">
                 <KitchenKanban />
+              </ErrorBoundary>
+            )}
+
+            {activeTab === 'shop' && (
+              <ErrorBoundary level="view" fallbackTitle="Inventory Panel Encountered an Issue">
+                <AdminShopManager />
               </ErrorBoundary>
             )}
           </>
@@ -253,43 +279,55 @@ function MainDashboard() {
         <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#090d16]/95 backdrop-blur-xl border-t border-slate-800/90 px-2 py-2 pb-safe shadow-[0_-10px_25px_rgba(0,0,0,0.5)] flex items-center justify-around">
           <button
             onClick={() => setActiveTab('matrix')}
-            className={`flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition-all ${
+            className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-all cursor-pointer ${
               activeTab === 'matrix'
                 ? 'text-emerald-400 bg-emerald-950/50'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Monitor className="w-5 h-5" />
-            <span className="text-[10px] font-bold font-display uppercase tracking-wider">Stations</span>
+            <Monitor className="w-4 h-4" />
+            <span className="text-[9px] font-bold font-display uppercase tracking-wider">Stations</span>
           </button>
 
           <button
-            onClick={() => setActiveTab('kitchen')}
-            className={`relative flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition-all ${
-              activeTab === 'kitchen'
-                ? 'text-orange-400 bg-orange-950/50'
+            onClick={() => setActiveTab('orders')}
+            className={`relative flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-all cursor-pointer ${
+              activeTab === 'orders'
+                ? 'text-amber-400 bg-amber-950/50'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <ChefHat className="w-5 h-5" />
-            <span className="text-[10px] font-bold font-display uppercase tracking-wider">Kitchen</span>
+            <BellRing className="w-4 h-4" />
+            <span className="text-[9px] font-bold font-display uppercase tracking-wider">Orders</span>
             {pendingOrdersCount > 0 && (
-              <span className="absolute top-0 right-1 px-1.5 py-0.2 rounded-full text-[9px] bg-rose-500 text-white font-mono-code font-bold">
+              <span className="absolute top-0 right-1 px-1.5 py-0.2 rounded-full text-[9px] bg-amber-500 text-black font-mono-code font-black">
                 {pendingOrdersCount}
               </span>
             )}
           </button>
 
           <button
-            onClick={() => setActiveTab('shop')}
-            className={`flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition-all ${
-              activeTab === 'shop'
-                ? 'text-amber-400 bg-amber-950/50'
+            onClick={() => setActiveTab('kitchen')}
+            className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-all cursor-pointer ${
+              activeTab === 'kitchen'
+                ? 'text-orange-400 bg-orange-950/50'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <ShoppingBag className="w-5 h-5" />
-            <span className="text-[10px] font-bold font-display uppercase tracking-wider">Inventory</span>
+            <ChefHat className="w-4 h-4" />
+            <span className="text-[9px] font-bold font-display uppercase tracking-wider">Kitchen</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('shop')}
+            className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition-all cursor-pointer ${
+              activeTab === 'shop'
+                ? 'text-blue-400 bg-blue-950/50'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <ShoppingBag className="w-4 h-4" />
+            <span className="text-[9px] font-bold font-display uppercase tracking-wider">Inventory</span>
           </button>
         </nav>
       )}

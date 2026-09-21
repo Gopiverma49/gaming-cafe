@@ -169,6 +169,7 @@ class StationOrderCreateRequest(BaseModel):
 class OrderResponse(BaseModel):
     id: uuid.UUID
     session_id: uuid.UUID
+    station_id: Optional[uuid.UUID] = None
     station_name: Optional[str] = None
     customer_name: Optional[str] = None
     status: OrderStatus
