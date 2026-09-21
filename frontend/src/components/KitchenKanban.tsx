@@ -164,11 +164,14 @@ export const KitchenKanban: React.FC = () => {
     });
   }, [kitchenMenuItems, searchQuery, selectedCategory]);
 
+  const safeMenuItems = Array.isArray(kitchenMenuItems) ? kitchenMenuItems : [];
+  const safeOrders = Array.isArray(orders) ? orders : [];
+
   // Summary Metrics
-  const totalItems = kitchenMenuItems.length;
-  const foodCount = kitchenMenuItems.filter((i) => i.category.toLowerCase().includes('food') || i.category.toLowerCase().includes('snack')).length;
-  const drinksCount = kitchenMenuItems.filter((i) => i.category.toLowerCase().includes('drink') || i.category.toLowerCase().includes('beverage')).length;
-  const pendingOrdersCount = orders.filter((o) => o.status !== 'SERVED').length;
+  const totalItems = safeMenuItems.length;
+  const foodCount = safeMenuItems.filter((i) => (i?.category || '').toLowerCase().includes('food') || (i?.category || '').toLowerCase().includes('snack')).length;
+  const drinksCount = safeMenuItems.filter((i) => (i?.category || '').toLowerCase().includes('drink') || (i?.category || '').toLowerCase().includes('beverage')).length;
+  const pendingOrdersCount = safeOrders.filter((o) => o?.status !== 'SERVED').length;
 
   // Add Item Handler
   const handleAddNewItem = (e: React.FormEvent) => {
@@ -219,9 +222,9 @@ export const KitchenKanban: React.FC = () => {
     deleteItemMutation.mutate(item.id);
   };
 
-  const queuedOrders = orders.filter((o) => o.status === 'QUEUED');
-  const preparingOrders = orders.filter((o) => o.status === 'PREPARING');
-  const servedOrders = orders.filter((o) => o.status === 'SERVED');
+  const queuedOrders = safeOrders.filter((o) => o?.status === 'QUEUED');
+  const preparingOrders = safeOrders.filter((o) => o?.status === 'PREPARING');
+  const servedOrders = safeOrders.filter((o) => o?.status === 'SERVED');
 
   const swimlanes = [
     {
@@ -509,17 +512,17 @@ export const KitchenKanban: React.FC = () => {
                         >
                           <div className="flex items-center justify-between text-xs font-mono-code">
                             <span className="font-bold text-cyan-400">
-                              Desk / Ticket #{order.id.substring(0, 6)}
+                              Desk / Ticket #{(order?.id || 'ORD').substring(0, 6)}
                             </span>
                             <div className="flex items-center gap-1 text-slate-400 text-[11px]">
                               <Clock className="w-3 h-3" />
-                              <span>{getElapsedTime(order.created_at)}</span>
+                              <span>{getElapsedTime(order?.created_at || new Date().toISOString())}</span>
                             </div>
                           </div>
 
                           {/* Items Breakdown */}
                           <div className="space-y-1.5 border-y border-slate-800/80 py-2">
-                            {order.items.map((it) => (
+                            {(Array.isArray(order?.items) ? order.items : []).map((it) => (
                               <div
                                 key={it.id}
                                 className="flex items-center justify-between text-xs text-slate-200"
@@ -531,7 +534,7 @@ export const KitchenKanban: React.FC = () => {
                                   <span className="font-semibold">{it.menu_item_name}</span>
                                 </div>
                                 <span className="text-[11px] font-mono-code text-slate-400">
-                                  ₹{Number(it.subtotal).toFixed(0)}
+                                  ₹{Number(it.subtotal || 0).toFixed(0)}
                                 </span>
                               </div>
                             ))}
@@ -540,7 +543,7 @@ export const KitchenKanban: React.FC = () => {
                           {/* Status Progression Button */}
                           <div className="flex items-center justify-between pt-1">
                             <div className="text-[11px] font-mono-code text-slate-400">
-                              Total: <span className="text-white font-bold">₹{Number(order.total_amount).toFixed(2)}</span>
+                              Total: <span className="text-white font-bold">₹{Number(order?.total_amount || 0).toFixed(2)}</span>
                             </div>
 
                             {lane.status !== 'SERVED' && (

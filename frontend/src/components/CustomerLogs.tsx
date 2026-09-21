@@ -21,18 +21,23 @@ export const CustomerLogs: React.FC = () => {
 
   // Filter & Sort
   const filteredLogs = useMemo(() => {
-    return customerLogs
+    const logs = Array.isArray(customerLogs) ? customerLogs : [];
+    return logs
       .filter((c) => {
-        const q = searchQuery.toLowerCase();
-        return (
-          c.name.toLowerCase().includes(q) ||
-          c.phone.includes(q) ||
-          (c.notes && c.notes.toLowerCase().includes(q))
-        );
+        const q = searchQuery.toLowerCase().trim();
+        if (!q) return true;
+        const name = (c?.name || '').toLowerCase();
+        const phone = (c?.phone || '').toString();
+        const notes = (c?.notes || '').toLowerCase();
+        return name.includes(q) || phone.includes(q) || notes.includes(q);
       })
       .sort((a, b) => {
-        if (sortBy === 'visits') return b.visit_count - a.visit_count;
-        if (sortBy === 'spent') return b.total_spent - a.total_spent;
+        const aVisits = Number(a?.visit_count || 0);
+        const bVisits = Number(b?.visit_count || 0);
+        const aSpent = Number(a?.total_spent || 0);
+        const bSpent = Number(b?.total_spent || 0);
+        if (sortBy === 'visits') return bVisits - aVisits;
+        if (sortBy === 'spent') return bSpent - aSpent;
         return 0; // default order
       });
   }, [customerLogs, searchQuery, sortBy]);
@@ -97,13 +102,13 @@ export const CustomerLogs: React.FC = () => {
                     <td className="py-3.5 px-4 sm:px-6">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-cyan-500/20 to-blue-600/20 border border-cyan-500/30 flex items-center justify-center font-bold text-cyan-300">
-                          {cust.name.charAt(0).toUpperCase()}
+                          {((cust?.name || '?').trim().charAt(0) || '?').toUpperCase()}
                         </div>
                         <div>
                           <span className="font-bold text-white block text-sm">
-                            {cust.name}
+                            {cust?.name || 'Anonymous Customer'}
                           </span>
-                          {cust.notes && (
+                          {cust?.notes && (
                             <span className="text-[10px] text-slate-400">
                               {cust.notes}
                             </span>
@@ -116,7 +121,7 @@ export const CustomerLogs: React.FC = () => {
                     <td className="py-3.5 px-4">
                       <span className="font-mono-code text-slate-300 flex items-center gap-1.5">
                         <Phone className="w-3 h-3 text-slate-500" />
-                        <span>{cust.phone}</span>
+                        <span>{cust?.phone || 'N/A'}</span>
                       </span>
                     </td>
 
@@ -124,15 +129,15 @@ export const CustomerLogs: React.FC = () => {
                     <td className="py-3.5 px-4 text-center">
                       <span
                         className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-mono-code text-[11px] font-bold ${
-                          cust.visit_count >= 10
+                          (cust?.visit_count ?? 0) >= 10
                             ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
-                            : cust.visit_count >= 5
+                            : (cust?.visit_count ?? 0) >= 5
                             ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30'
                             : 'bg-slate-800 text-slate-300'
                         }`}
                       >
-                        {cust.visit_count >= 10 && <Trophy className="w-3 h-3 text-amber-400" />}
-                        <span>{cust.visit_count} Visit{cust.visit_count === 1 ? '' : 's'}</span>
+                        {(cust?.visit_count ?? 0) >= 10 && <Trophy className="w-3 h-3 text-amber-400" />}
+                        <span>{cust?.visit_count ?? 0} Visit{(cust?.visit_count ?? 0) === 1 ? '' : 's'}</span>
                       </span>
                     </td>
 
@@ -140,14 +145,14 @@ export const CustomerLogs: React.FC = () => {
                     <td className="py-3.5 px-4">
                       <span className="text-slate-300 text-xs flex items-center gap-1.5">
                         <Clock className="w-3 h-3 text-slate-500" />
-                        <span>{cust.last_visit}</span>
+                        <span>{cust?.last_visit || 'Recent'}</span>
                       </span>
                     </td>
 
                     {/* Total Spent */}
                     <td className="py-3.5 px-4 text-right">
                       <span className="font-mono-code text-emerald-400 font-bold text-sm">
-                        ₹{Number(cust.total_spent).toFixed(2)}
+                        ₹{Number(cust?.total_spent || 0).toFixed(2)}
                       </span>
                     </td>
 

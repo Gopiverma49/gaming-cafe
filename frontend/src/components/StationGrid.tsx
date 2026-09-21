@@ -62,10 +62,17 @@ export const StationGrid: React.FC = () => {
     refetchInterval: 6000,
   });
 
+  // Safe Array fallback
+  const safeStations = Array.isArray(stations) ? stations : [];
+
   // Transfer Mutation
   const transferMutation = useMutation({
-    mutationFn: () =>
-      transferStation(transferStationTarget!.active_session_id!, targetStationId),
+    mutationFn: () => {
+      if (!transferStationTarget?.active_session_id || !targetStationId) {
+        throw new Error('Invalid transfer parameters: session or target station missing.');
+      }
+      return transferStation(transferStationTarget.active_session_id, targetStationId);
+    },
     onSuccess: async () => {
       await queryClient.refetchQueries({ queryKey: ['stations-live'] });
       setTransferStationTarget(null);
@@ -81,7 +88,7 @@ export const StationGrid: React.FC = () => {
     addNotification(
       'SYSTEM',
       '⏱️ Session Extended',
-      `Extended ${station.name} by +${minutes} minutes.`
+      `Extended ${station?.name || 'Station'} by +${minutes} minutes.`
     );
   };
 
@@ -111,8 +118,8 @@ export const StationGrid: React.FC = () => {
     }
   };
 
-  const availableStationsForTransfer = stations.filter(
-    (s) => s.status === 'AVAILABLE' && s.id !== transferStationTarget?.id
+  const availableStationsForTransfer = safeStations.filter(
+    (s) => s?.status === 'AVAILABLE' && s?.id !== transferStationTarget?.id
   );
 
   return (
@@ -203,7 +210,7 @@ export const StationGrid: React.FC = () => {
             <div className="flex items-center justify-center p-16 bg-slate-900/50 rounded-3xl border border-slate-800">
               <div className="w-8 h-8 rounded-full border-2 border-emerald-400 border-t-transparent animate-spin" />
             </div>
-          ) : stations.length === 0 ? (
+          ) : safeStations.length === 0 ? (
             <div className="p-12 text-center bg-slate-900/50 rounded-3xl border border-dashed border-slate-800 space-y-2">
               <Monitor className="w-10 h-10 text-slate-600 mx-auto" />
               <p className="text-sm text-slate-400">No stations configured yet.</p>
@@ -216,7 +223,7 @@ export const StationGrid: React.FC = () => {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
-              {stations.map((station) => (
+              {safeStations.map((station) => (
                 <StationCard
                   key={station.id}
                   station={station}

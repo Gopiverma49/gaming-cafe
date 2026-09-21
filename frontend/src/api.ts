@@ -11,20 +11,85 @@ import {
   CustomerRecord,
 } from './types';
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ? import.meta.env.VITE_API_BASE_URL.replace(/\/+$/, '') : '') + '/api/v1';
+const RAW_BASE = import.meta.env.VITE_API_BASE_URL
+  ? String(import.meta.env.VITE_API_BASE_URL).replace(/\/+$/, '')
+  : '';
 
-async function handleResponse<T>(res: Response): Promise<T> {
+export const API_BASE = `${RAW_BASE}/api/v1`;
+
+const DEFAULT_TIMEOUT_MS = 12000;
+
+/**
+ * Resilient fetch wrapper with network timeout, connection abort safety,
+ * and comprehensive error diagnostics.
+ */
+async function safeFetch(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number = DEFAULT_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  const mergedSignal = options.signal
+    ? options.signal
+    : controller.signal;
+
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: mergedSignal,
+    });
+    return res;
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error(`Request timed out after ${timeoutMs / 1000}s. Please check backend server status.`);
+    }
+    if (err instanceof TypeError && err.message.toLowerCase().includes('failed to fetch')) {
+      throw new Error('Unable to connect to backend server. Please verify the API is running on localhost:8000.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function handleResponse<T>(res: Response, fallbackValue?: T): Promise<T> {
+  // Handle 204 No Content
+  if (res.status === 204) {
+    return (fallbackValue !== undefined ? fallbackValue : ({} as T));
+  }
+
   if (!res.ok) {
-    let errorDetail = 'Network request failed';
+    let errorDetail = `Request failed with status ${res.status} (${res.statusText || 'Error'})`;
     try {
-      const errJson = await res.json();
-      errorDetail = errJson.detail || errJson.message || JSON.stringify(errJson);
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const errJson = await res.json();
+        errorDetail = errJson.detail || errJson.message || JSON.stringify(errJson);
+      } else {
+        const text = await res.text();
+        if (text && text.length < 200) {
+          errorDetail = text;
+        }
+      }
     } catch {
-      errorDetail = await res.text();
+      // Keep default errorDetail if response body cannot be parsed
     }
     throw new Error(errorDetail);
   }
-  return res.json();
+
+  try {
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await res.json();
+      return (data !== null && data !== undefined) ? data : (fallbackValue as T);
+    }
+    const text = await res.text();
+    return (text ? JSON.parse(text) : fallbackValue) as T;
+  } catch {
+    return (fallbackValue !== undefined ? fallbackValue : ({} as T));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -35,7 +100,7 @@ export async function registerCustomerApi(data: {
   phone: string;
   password: string;
 }): Promise<AuthTokenResponse> {
-  const res = await fetch(`${API_BASE}/auth/register`, {
+  const res = await safeFetch(`${API_BASE}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -47,7 +112,7 @@ export async function loginUserApi(data: {
   identifier: string;
   password: string;
 }): Promise<AuthTokenResponse> {
-  const res = await fetch(`${API_BASE}/auth/login`, {
+  const res = await safeFetch(`${API_BASE}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -56,7 +121,7 @@ export async function loginUserApi(data: {
 }
 
 export async function fetchCurrentUserApi(token: string): Promise<AuthUser> {
-  const res = await fetch(`${API_BASE}/auth/me`, {
+  const res = await safeFetch(`${API_BASE}/auth/me`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   return handleResponse<AuthUser>(res);
@@ -64,7 +129,7 @@ export async function fetchCurrentUserApi(token: string): Promise<AuthUser> {
 
 // Admin API
 export async function loginAdminApi(username: string, password: string): Promise<{ access_token: string }> {
-  const res = await fetch(`${API_BASE}/admin/auth/login`, {
+  const res = await safeFetch(`${API_BASE}/admin/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),
@@ -73,8 +138,9 @@ export async function loginAdminApi(username: string, password: string): Promise
 }
 
 export async function fetchLiveStations(): Promise<StationLive[]> {
-  const res = await fetch(`${API_BASE}/admin/stations/live`);
-  return handleResponse<StationLive[]>(res);
+  const res = await safeFetch(`${API_BASE}/admin/stations/live`);
+  const data = await handleResponse<StationLive[]>(res, []);
+  return Array.isArray(data) ? data : [];
 }
 
 export async function checkInStation(
@@ -84,7 +150,7 @@ export async function checkInStation(
   customerPhone?: string,
   userId?: string
 ) {
-  const res = await fetch(`${API_BASE}/admin/sessions/check-in`, {
+  const res = await safeFetch(`${API_BASE}/admin/sessions/check-in`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -99,7 +165,7 @@ export async function checkInStation(
 }
 
 export async function transferStation(sessionId: string, targetStationId: string) {
-  const res = await fetch(`${API_BASE}/admin/sessions/transfer`, {
+  const res = await safeFetch(`${API_BASE}/admin/sessions/transfer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -117,7 +183,7 @@ export async function createStation(data: {
   default_hourly_rate?: number;
   pricing_tiers?: PricingTier[];
 }) {
-  const res = await fetch(`${API_BASE}/admin/stations`, {
+  const res = await safeFetch(`${API_BASE}/admin/stations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -136,7 +202,7 @@ export async function updateStation(
     status?: string;
   }
 ) {
-  const res = await fetch(`${API_BASE}/admin/stations/${stationId}`, {
+  const res = await safeFetch(`${API_BASE}/admin/stations/${stationId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -145,7 +211,7 @@ export async function updateStation(
 }
 
 export async function deleteStation(stationId: string) {
-  const res = await fetch(`${API_BASE}/admin/stations/${stationId}`, {
+  const res = await safeFetch(`${API_BASE}/admin/stations/${stationId}`, {
     method: 'DELETE',
   });
   if (res.status === 204) return;
@@ -154,7 +220,7 @@ export async function deleteStation(stationId: string) {
 
 export async function checkoutSession(sessionId: string, paymentMethod: 'CASH' | 'UPI'): Promise<CheckoutResult> {
   const idempotencyKey = `chk-${sessionId}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-  const res = await fetch(`${API_BASE}/admin/sessions/checkout`, {
+  const res = await safeFetch(`${API_BASE}/admin/sessions/checkout`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -169,12 +235,13 @@ export async function checkoutSession(sessionId: string, paymentMethod: 'CASH' |
 }
 
 export async function fetchKitchenOrders(): Promise<Order[]> {
-  const res = await fetch(`${API_BASE}/admin/kitchen/orders`);
-  return handleResponse<Order[]>(res);
+  const res = await safeFetch(`${API_BASE}/admin/kitchen/orders`);
+  const data = await handleResponse<Order[]>(res, []);
+  return Array.isArray(data) ? data : [];
 }
 
 export async function updateKitchenOrderStatus(orderId: string, status: OrderStatus): Promise<Order> {
-  const res = await fetch(`${API_BASE}/admin/kitchen/orders/${orderId}/status`, {
+  const res = await safeFetch(`${API_BASE}/admin/kitchen/orders/${orderId}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
@@ -184,12 +251,13 @@ export async function updateKitchenOrderStatus(orderId: string, status: OrderSta
 
 // Customer API
 export async function fetchMenuItems(): Promise<MenuItem[]> {
-  const res = await fetch(`${API_BASE}/customer/menu`);
-  return handleResponse<MenuItem[]>(res);
+  const res = await safeFetch(`${API_BASE}/customer/menu`);
+  const data = await handleResponse<MenuItem[]>(res, []);
+  return Array.isArray(data) ? data : [];
 }
 
 export async function getCustomerToken(deskId: string, sessionId: string): Promise<{ access_token: string }> {
-  const res = await fetch(`${API_BASE}/customer/auth/token`, {
+  const res = await safeFetch(`${API_BASE}/customer/auth/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -201,7 +269,7 @@ export async function getCustomerToken(deskId: string, sessionId: string): Promi
 }
 
 export async function fetchDeskSession(token: string): Promise<CustomerDeskSession> {
-  const res = await fetch(`${API_BASE}/customer/desk/session`, {
+  const res = await safeFetch(`${API_BASE}/customer/desk/session`, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -214,7 +282,7 @@ export async function placeCustomerOrder(
   items: { menu_item_id: string; quantity: number }[]
 ): Promise<Order> {
   const idempotencyKey = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-  const res = await fetch(`${API_BASE}/customer/order`, {
+  const res = await safeFetch(`${API_BASE}/customer/order`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -230,8 +298,9 @@ export async function placeCustomerOrder(
 // Menu & Inventory Management (Database-Backed)
 // ---------------------------------------------------------------------------
 export async function fetchAdminMenuItems(): Promise<MenuItem[]> {
-  const res = await fetch(`${API_BASE}/admin/menu`);
-  return handleResponse<MenuItem[]>(res);
+  const res = await safeFetch(`${API_BASE}/admin/menu`);
+  const data = await handleResponse<MenuItem[]>(res, []);
+  return Array.isArray(data) ? data : [];
 }
 
 export async function createMenuItemApi(data: {
@@ -242,7 +311,7 @@ export async function createMenuItemApi(data: {
   min_stock_alert?: number;
   is_available?: boolean;
 }): Promise<MenuItem> {
-  const res = await fetch(`${API_BASE}/admin/menu`, {
+  const res = await safeFetch(`${API_BASE}/admin/menu`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -261,7 +330,7 @@ export async function updateMenuItemApi(
     is_available?: boolean;
   }
 ): Promise<MenuItem> {
-  const res = await fetch(`${API_BASE}/admin/menu/${itemId}`, {
+  const res = await safeFetch(`${API_BASE}/admin/menu/${itemId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -270,7 +339,7 @@ export async function updateMenuItemApi(
 }
 
 export async function deleteMenuItemApi(itemId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/admin/menu/${itemId}`, {
+  const res = await safeFetch(`${API_BASE}/admin/menu/${itemId}`, {
     method: 'DELETE',
   });
   if (res.status === 204) return;
@@ -278,7 +347,7 @@ export async function deleteMenuItemApi(itemId: string): Promise<void> {
 }
 
 export async function restockMenuItemApi(itemId: string, amount: number): Promise<MenuItem> {
-  const res = await fetch(`${API_BASE}/admin/inventory/restock`, {
+  const res = await safeFetch(`${API_BASE}/admin/inventory/restock`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ item_id: itemId, amount }),
@@ -294,7 +363,7 @@ export async function placeStationOrderApi(data: {
   items: { menu_item_id: string; quantity: number }[];
   customer_name?: string;
 }): Promise<Order> {
-  const res = await fetch(`${API_BASE}/admin/orders/station-order`, {
+  const res = await safeFetch(`${API_BASE}/admin/orders/station-order`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -306,6 +375,7 @@ export async function placeStationOrderApi(data: {
 // Customer Directory & Footfall Logs (Database-Backed)
 // ---------------------------------------------------------------------------
 export async function fetchAdminCustomers(): Promise<CustomerRecord[]> {
-  const res = await fetch(`${API_BASE}/admin/customers`);
-  return handleResponse<CustomerRecord[]>(res);
+  const res = await safeFetch(`${API_BASE}/admin/customers`);
+  const data = await handleResponse<CustomerRecord[]>(res, []);
+  return Array.isArray(data) ? data : [];
 }

@@ -8,6 +8,7 @@ import {
   X,
   Utensils,
   Sparkles,
+  Gamepad2,
 } from 'lucide-react';
 import { StationGrid } from './components/StationGrid';
 import { KitchenKanban } from './components/KitchenKanban';
@@ -15,6 +16,7 @@ import { CustomerPortal } from './components/CustomerPortal';
 import { AdminShopManager } from './components/AdminShopManager';
 import { LoginPage } from './components/LoginPage';
 import { GamingCafeCanvas } from './components/GamingCafeCanvas';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { useAuthStore } from './store/authStore';
 import { useNotificationStore } from './store/notificationStore';
 import { useCafeWebSocket } from './hooks/useCafeWebSocket';
@@ -27,6 +29,7 @@ const queryClient = new QueryClient({
     queries: {
       refetchOnWindowFocus: false,
       staleTime: 5000,
+      retry: 1,
     },
   },
 });
@@ -34,7 +37,7 @@ const queryClient = new QueryClient({
 type ActiveTab = 'matrix' | 'shop' | 'kitchen';
 
 function MainDashboard() {
-  const { currentPortal, adminUser, customerUser, logout, setPortal } = useAuthStore();
+  const { currentPortal, adminUser, customerUser, logout } = useAuthStore();
   const {
     activeToast,
     dismissToast,
@@ -43,6 +46,17 @@ function MainDashboard() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('matrix');
   useEffect(() => {
     document.documentElement.classList.add('dark');
+
+    // Prevent unhandled promise rejections from causing blank page halts
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      console.warn('[Global Unhandled Rejection Caught]:', event.reason);
+      event.preventDefault();
+    };
+
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+    return () => {
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    };
   }, []);
 
   const isAdminPortal = currentPortal === 'admin';
@@ -61,10 +75,15 @@ function MainDashboard() {
 
   // If user is not authenticated for this portal, show the portal-specific Login Page
   if (!activeUser) {
-    return <LoginPage />;
+    return (
+      <ErrorBoundary level="view" fallbackTitle="Login Screen Interrupted">
+        <LoginPage />
+      </ErrorBoundary>
+    );
   }
 
-  const pendingOrdersCount = kitchenOrders.filter((o) => o.status !== 'SERVED').length;
+  const safeKitchenOrders = Array.isArray(kitchenOrders) ? kitchenOrders : [];
+  const pendingOrdersCount = safeKitchenOrders.filter((o) => o?.status !== 'SERVED').length;
 
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col selection:bg-blue-600 selection:text-white relative transition-colors duration-300">
@@ -184,12 +203,11 @@ function MainDashboard() {
             </nav>
           )}
 
-          {/* Header Actions: Sign Out only */}
+          {/* Header Actions: Sign Out */}
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Sign Out Button */}
             <button
               onClick={logout}
-              className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-rose-50 dark:bg-slate-900 dark:hover:bg-rose-950/70 text-slate-600 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-300 transition-all border border-slate-200 dark:border-slate-800 text-xs font-semibold shadow-sm"
+              className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-rose-50 dark:bg-slate-900 dark:hover:bg-rose-950/70 text-slate-600 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-300 transition-all border border-slate-200 dark:border-slate-800 text-xs font-semibold shadow-sm cursor-pointer"
               title="Sign Out"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -204,15 +222,29 @@ function MainDashboard() {
         {isAdminPortal ? (
           /* ADMIN VIEW */
           <>
-            {activeTab === 'matrix' && <StationGrid />}
+            {activeTab === 'matrix' && (
+              <ErrorBoundary level="view" fallbackTitle="Stations Fleet Encountered an Issue">
+                <StationGrid />
+              </ErrorBoundary>
+            )}
 
-            {activeTab === 'shop' && <AdminShopManager />}
+            {activeTab === 'shop' && (
+              <ErrorBoundary level="view" fallbackTitle="Inventory Panel Encountered an Issue">
+                <AdminShopManager />
+              </ErrorBoundary>
+            )}
 
-            {activeTab === 'kitchen' && <KitchenKanban />}
+            {activeTab === 'kitchen' && (
+              <ErrorBoundary level="view" fallbackTitle="Kitchen Kanban Encountered an Issue">
+                <KitchenKanban />
+              </ErrorBoundary>
+            )}
           </>
         ) : (
           /* CUSTOMER VIEW */
-          <CustomerPortal />
+          <ErrorBoundary level="view" fallbackTitle="Customer Lounge Encountered an Issue">
+            <CustomerPortal />
+          </ErrorBoundary>
         )}
       </main>
 
@@ -268,7 +300,9 @@ function MainDashboard() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <MainDashboard />
+      <ErrorBoundary level="root" fallbackTitle="Application Failed to Render">
+        <MainDashboard />
+      </ErrorBoundary>
     </QueryClientProvider>
   );
 }

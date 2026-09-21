@@ -50,15 +50,17 @@ export const StationCard: React.FC<StationCardProps> = ({
   const isExpired = isOccupied && remaining <= 0;
 
   // Platform Tier Visuals & Specs
-  const tierVisual = getStationTierVisuals(station.tier);
+  const tierVisual = getStationTierVisuals(station?.tier);
   const tierIcon =
-    station.tier === 'CONSOLE' ? (
+    station?.tier === 'CONSOLE' ? (
       <Gamepad2 className="w-4 h-4 text-blue-400" />
-    ) : station.tier === 'SIMULATOR' || station.tier === 'VIP' ? (
+    ) : station?.tier === 'SIMULATOR' || station?.tier === 'VIP' ? (
       <Sparkles className={`w-4 h-4 ${tierVisual.accentColor}`} />
     ) : (
       <Cpu className="w-4 h-4 text-cyan-400" />
     );
+
+  const pricingTiers = Array.isArray(station?.pricing_tiers) ? station.pricing_tiers : [];
 
   return (
     <div
@@ -106,7 +108,7 @@ export const StationCard: React.FC<StationCardProps> = ({
         <div className="mb-3.5">
           <div className="flex items-center justify-between">
             <h4 className="text-xl font-black text-white font-display tracking-wide">
-              {station.name}
+              {station?.name || 'Station'}
             </h4>
             <span className="text-xs text-slate-400 font-sans">{tierVisual.display}</span>
           </div>
@@ -114,18 +116,18 @@ export const StationCard: React.FC<StationCardProps> = ({
           <div className="flex items-center justify-between mt-1 flex-wrap gap-2">
             <div className="flex items-baseline gap-1">
               <span className="text-2xl font-black font-mono-code text-blue-400">
-                ₹{Number(station.default_hourly_rate || station.hourly_rate).toFixed(0)}
+                ₹{Number(station?.default_hourly_rate || station?.hourly_rate || 0).toFixed(0)}
               </span>
               <span className="text-xs text-slate-400 font-medium">/ hour</span>
             </div>
-            {station.pricing_tiers && station.pricing_tiers.length > 0 && (
+            {pricingTiers.length > 0 && (
               <div className="flex items-center gap-1 flex-wrap">
-                {station.pricing_tiers.map((pt, i) => (
+                {pricingTiers.map((pt, i) => (
                   <span
                     key={i}
                     className="text-[10px] font-mono-code px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold"
                   >
-                    {pt.label || `${pt.duration_min}m`}: ₹{pt.price}
+                    {pt?.label || `${pt?.duration_min ?? 0}m`}: ₹{pt?.price ?? 0}
                   </span>
                 ))}
               </div>

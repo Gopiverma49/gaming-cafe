@@ -90,13 +90,17 @@ export const AdminShopManager: React.FC = () => {
   const [editStock, setEditStock] = useState('20');
   const [editAvailable, setEditAvailable] = useState(true);
 
-  const filteredItems = menuItems.filter((item) => {
-    const st = item.stock ?? 0;
+  const safeMenuItems = Array.isArray(menuItems) ? menuItems : [];
+
+  const filteredItems = safeMenuItems.filter((item) => {
+    const st = item?.stock ?? 0;
     const status = evaluateStockStatus(st).status;
     if (statusFilter !== 'ALL' && status !== statusFilter) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      return item.name.toLowerCase().includes(q) || item.category.toLowerCase().includes(q);
+      const name = (item?.name || '').toLowerCase();
+      const cat = (item?.category || '').toLowerCase();
+      return name.includes(q) || cat.includes(q);
     }
     return true;
   });
@@ -726,31 +730,39 @@ export const AdminShopManager: React.FC = () => {
             </h4>
 
             <div className="space-y-2.5 pt-2">
-              {revenueData.chartData.map((d) => {
-                const maxVal = Math.max(...revenueData.chartData.map((c) => c.total), 1000);
-                const pct = Math.min(100, Math.max(8, (d.total / maxVal) * 100));
+              {(() => {
+                const chartData = Array.isArray(revenueData?.chartData) ? revenueData.chartData : [];
+                const totals = chartData.map((c) => Number(c?.total || 0));
+                const maxVal = totals.length > 0 ? Math.max(...totals, 1000) : 1000;
 
-                return (
-                  <div key={d.label} className="space-y-1">
-                    <div className="flex justify-between text-xs font-mono-code">
-                      <span className="text-slate-300 font-semibold">{d.label}</span>
-                      <span className="text-white font-bold">₹{d.total.toFixed(2)}</span>
+                return chartData.map((d) => {
+                  const safeTotal = Number(d?.total || 0);
+                  const safeGaming = Number(d?.gaming || 0);
+                  const safeFood = Number(d?.food || 0);
+                  const pct = Math.min(100, Math.max(8, (safeTotal / maxVal) * 100));
+
+                  return (
+                    <div key={d?.label || Math.random()} className="space-y-1">
+                      <div className="flex justify-between text-xs font-mono-code">
+                        <span className="text-slate-300 font-semibold">{d?.label || 'Period'}</span>
+                        <span className="text-white font-bold">₹{safeTotal.toFixed(2)}</span>
+                      </div>
+                      <div className="w-full bg-slate-900 rounded-full h-3 flex overflow-hidden">
+                        <div
+                          className="bg-emerald-500 h-full transition-all duration-500"
+                          style={{ width: `${safeTotal > 0 ? (safeGaming / safeTotal) * pct : 0}%` }}
+                          title={`Gaming: ₹${safeGaming}`}
+                        />
+                        <div
+                          className="bg-amber-500 h-full transition-all duration-500"
+                          style={{ width: `${safeTotal > 0 ? (safeFood / safeTotal) * pct : 0}%` }}
+                          title={`Food: ₹${safeFood}`}
+                        />
+                      </div>
                     </div>
-                    <div className="w-full bg-slate-900 rounded-full h-3 flex overflow-hidden">
-                      <div
-                        className="bg-emerald-500 h-full transition-all duration-500"
-                        style={{ width: `${d.total > 0 ? (d.gaming / d.total) * pct : 0}%` }}
-                        title={`Gaming: ₹${d.gaming}`}
-                      />
-                      <div
-                        className="bg-amber-500 h-full transition-all duration-500"
-                        style={{ width: `${d.total > 0 ? (d.food / d.total) * pct : 0}%` }}
-                        title={`Food: ₹${d.food}`}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
           </div>
         </div>

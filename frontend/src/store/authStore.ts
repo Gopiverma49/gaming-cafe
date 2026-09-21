@@ -21,7 +21,7 @@ function loadStoredUser(sessionKey: string, localKey: string): AuthUser | null {
     const raw = sessionStorage.getItem(sessionKey) || localStorage.getItem(localKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (parsed && parsed.role) {
+    if (parsed && typeof parsed.role === 'string') {
       parsed.role = parsed.role.toLowerCase();
     }
     return parsed;
@@ -111,7 +111,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   setAuth: (user: AuthUser, token: string, targetPortal?: PortalType) => {
-    const role = (user.role?.toLowerCase() as 'admin' | 'customer') || 'customer';
+    const role = (typeof user?.role === 'string' ? user.role.toLowerCase() : 'customer') as 'admin' | 'customer';
     const normalizedUser: AuthUser = {
       ...user,
       role,

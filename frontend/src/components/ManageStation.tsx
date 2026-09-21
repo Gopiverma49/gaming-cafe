@@ -35,6 +35,8 @@ export const ManageStation: React.FC = () => {
     refetchInterval: POLL_INTERVALS.STATIONS,
   });
 
+  const safeStations = Array.isArray(stations) ? stations : [];
+
   // Action Error Banner
   const [actionError, setActionError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -149,8 +151,8 @@ export const ManageStation: React.FC = () => {
     onError: (err: any) => setActionError(err.message || 'Failed to delete station'),
   });
 
-  const availableStations = stations.filter((s) => s.status === 'AVAILABLE');
-  const occupiedStations = stations.filter((s) => s.status === 'OCCUPIED');
+  const availableStations = safeStations.filter((s) => s?.status === 'AVAILABLE');
+  const occupiedStations = safeStations.filter((s) => s?.status === 'OCCUPIED');
 
   return (
     <div className="space-y-6">
@@ -256,7 +258,7 @@ export const ManageStation: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
-                {stations.map((st) => (
+                {safeStations.map((st) => (
                   <tr
                     key={st.id}
                     className="hover:bg-slate-800/30 transition-colors group"
@@ -269,10 +271,10 @@ export const ManageStation: React.FC = () => {
                         </div>
                         <div>
                           <span className="font-bold text-white text-sm block">
-                            {st.name}
+                            {st?.name || 'Station'}
                           </span>
                           <span className="text-[10px] text-slate-400 font-mono-code">
-                            ID: {st.id.substring(0, 8)}
+                            ID: {(st?.id || 'STN').substring(0, 8)}
                           </span>
                         </div>
                       </div>
@@ -280,20 +282,20 @@ export const ManageStation: React.FC = () => {
 
                     {/* Pricing Tiers: Chips/Badges */}
                     <td className="py-3.5 px-4">
-                      {st.pricing_tiers && st.pricing_tiers.length > 0 ? (
+                      {Array.isArray(st?.pricing_tiers) && st.pricing_tiers.length > 0 ? (
                         <div className="flex flex-wrap items-center gap-1.5 max-w-sm">
                           {st.pricing_tiers.map((pt, idx) => (
                             <span
                               key={idx}
                               className="inline-flex items-center px-2 py-0.5 rounded-lg bg-emerald-950/60 border border-emerald-600/40 text-emerald-300 font-mono-code text-[11px] font-bold shadow-sm"
                             >
-                              {pt.label || `${pt.duration_min}m`}: ₹{pt.price}
+                              {pt?.label || `${pt?.duration_min ?? 0}m`}: ₹{pt?.price ?? 0}
                             </span>
                           ))}
                         </div>
                       ) : (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-lg bg-slate-800 text-slate-300 font-mono-code text-[11px]">
-                          1h: ₹{Number(st.hourly_rate).toFixed(0)}
+                          1h: ₹{Number(st?.hourly_rate || 0).toFixed(0)}
                         </span>
                       )}
                     </td>
@@ -305,15 +307,15 @@ export const ManageStation: React.FC = () => {
                         <button
                           onClick={() => {
                             setEditingStation(st);
-                            setEditName(st.name);
-                            setEditTier(st.tier as StationTier);
-                            setEditRate(String(st.default_hourly_rate || st.hourly_rate));
-                            const existingTiers = (st.pricing_tiers && st.pricing_tiers.length > 0)
+                            setEditName(st?.name || '');
+                            setEditTier((st?.tier as StationTier) || 'CONSOLE');
+                            setEditRate(String(st?.default_hourly_rate || st?.hourly_rate || 180));
+                            const existingTiers = (Array.isArray(st?.pricing_tiers) && st.pricing_tiers.length > 0)
                               ? st.pricing_tiers.map((t) => ({ ...t }))
                               : [
-                                  { duration_min: 30, price: Math.round(Number(st.hourly_rate) * 0.6), label: '30 mins' },
-                                  { duration_min: 60, price: Number(st.hourly_rate), label: '1 hr' },
-                                  { duration_min: 120, price: Math.round(Number(st.hourly_rate) * 1.8), label: '2 hrs' },
+                                  { duration_min: 30, price: Math.round(Number(st?.hourly_rate || 180) * 0.6), label: '30 mins' },
+                                  { duration_min: 60, price: Number(st?.hourly_rate || 180), label: '1 hr' },
+                                  { duration_min: 120, price: Math.round(Number(st?.hourly_rate || 180) * 1.8), label: '2 hrs' },
                                 ];
                             setEditTiers(existingTiers);
                           }}
@@ -780,7 +782,7 @@ export const ManageStation: React.FC = () => {
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
                   To (Available Destination Station) *
                 </label>
-                {availableStations.filter((s) => s.id !== transferSource.id).length === 0 ? (
+                {availableStations.filter((s) => s?.id !== transferSource?.id).length === 0 ? (
                   <p className="text-xs text-rose-400 bg-rose-950/40 p-3 rounded-xl border border-rose-900/50">
                     No available stations free to receive transfer right now.
                   </p>
@@ -793,10 +795,10 @@ export const ManageStation: React.FC = () => {
                   >
                     <option value="">-- Select Destination Station --</option>
                     {availableStations
-                      .filter((s) => s.id !== transferSource.id)
+                      .filter((s) => s?.id !== transferSource?.id)
                       .map((st) => (
                         <option key={st.id} value={st.id}>
-                          {st.name} ({st.tier} - Rate: {Number(st.hourly_rate).toFixed(0)})
+                          {st?.name || 'Station'} ({st?.tier || 'CONSOLE'} - Rate: ₹{Number(st?.hourly_rate || 0).toFixed(0)})
                         </option>
                       ))}
                   </select>

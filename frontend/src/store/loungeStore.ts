@@ -122,10 +122,11 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
   stationFoodOrders: loadStored<Record<string, OrderedFoodItem[]>>(STORAGE_KEY_ORDERS, {}),
 
   addStationFoodOrder: (stationName, items) => {
-    const currentOrders = get().stationFoodOrders[stationName] || [];
+    const rawOrders = get().stationFoodOrders[stationName];
+    const currentOrders = Array.isArray(rawOrders) ? rawOrders : [];
     const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    const newItems: OrderedFoodItem[] = items.map((i) => ({
+    const newItems: OrderedFoodItem[] = (Array.isArray(items) ? items : []).map((i) => ({
       id: `ord_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
       name: i.name,
       category: i.category,
@@ -139,12 +140,17 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
       ...get().stationFoodOrders,
       [stationName]: [...currentOrders, ...newItems],
     };
-    localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(updated));
+    try {
+      localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(updated));
+    } catch (e) {
+      console.warn('Storage quota exceeded or unavailable', e);
+    }
     set({ stationFoodOrders: updated });
   },
 
   getStationFoodOrders: (stationName) => {
-    return get().stationFoodOrders[stationName] || [];
+    const orders = get().stationFoodOrders[stationName];
+    return Array.isArray(orders) ? orders : [];
   },
 
   clearStationFoodOrders: (stationName) => {
@@ -172,15 +178,25 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
       id: `BK-${Date.now().toString().slice(-6)}`,
       createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
-    const updated = [newBooking, ...get().bookings];
-    localStorage.setItem(STORAGE_KEY_BOOKINGS, JSON.stringify(updated));
+    const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
+    const updated = [newBooking, ...currentBookings];
+    try {
+      localStorage.setItem(STORAGE_KEY_BOOKINGS, JSON.stringify(updated));
+    } catch (e) {
+      console.warn('Storage error', e);
+    }
     set({ bookings: updated });
     return newBooking;
   },
 
   cancelBooking: (id) => {
-    const updated = get().bookings.filter((b) => b.id !== id);
-    localStorage.setItem(STORAGE_KEY_BOOKINGS, JSON.stringify(updated));
+    const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
+    const updated = currentBookings.filter((b) => b?.id !== id);
+    try {
+      localStorage.setItem(STORAGE_KEY_BOOKINGS, JSON.stringify(updated));
+    } catch (e) {
+      console.warn('Storage error', e);
+    }
     set({ bookings: updated });
   },
 
@@ -196,14 +212,20 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
       dateStr: now.toISOString().split('T')[0],
     };
 
-    const updated = [newRecord, ...get().financialRecords];
-    localStorage.setItem(STORAGE_KEY_FINANCE, JSON.stringify(updated));
+    const currentRecords = Array.isArray(get().financialRecords) ? get().financialRecords : [];
+    const updated = [newRecord, ...currentRecords];
+    try {
+      localStorage.setItem(STORAGE_KEY_FINANCE, JSON.stringify(updated));
+    } catch (e) {
+      console.warn('Storage error', e);
+    }
     set({ financialRecords: updated });
     return newRecord;
   },
 
   getRevenueSummary: (period) => {
-    const records = get().financialRecords;
+    const rawRecords = get().financialRecords;
+    const records = Array.isArray(rawRecords) ? rawRecords : [];
     const now = new Date();
     const todayStr = now.toISOString().split('T')[0];
 

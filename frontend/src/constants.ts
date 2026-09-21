@@ -28,8 +28,9 @@ export interface StockStatusInfo {
   status: StockStatusType;
 }
 
-export function evaluateStockStatus(stock: number): StockStatusInfo {
-  if (stock <= STOCK_LEVEL.CRITICAL) {
+export function evaluateStockStatus(stock: number | null | undefined): StockStatusInfo {
+  const safeStock = typeof stock === 'number' && !isNaN(stock) ? stock : 0;
+  if (safeStock <= STOCK_LEVEL.CRITICAL) {
     return {
       label: 'Critical',
       color: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
@@ -37,7 +38,7 @@ export function evaluateStockStatus(stock: number): StockStatusInfo {
       status: 'CRITICAL',
     };
   }
-  if (stock <= STOCK_LEVEL.MODERATE) {
+  if (safeStock <= STOCK_LEVEL.MODERATE) {
     return {
       label: 'Moderate',
       color: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
@@ -72,8 +73,9 @@ export interface TierVisualInfo {
   accentColor: string;
 }
 
-export function getStationTierVisuals(tier: string): TierVisualInfo {
-  switch (tier.toUpperCase()) {
+export function getStationTierVisuals(tier?: string | null): TierVisualInfo {
+  const safeTier = (tier || 'CONSOLE').toString().toUpperCase();
+  switch (safeTier) {
     case 'CONSOLE':
       return {
         label: 'PS5 Console',

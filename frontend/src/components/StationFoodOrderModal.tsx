@@ -78,24 +78,26 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
     }
   }, [isOpen]);
 
+  const safeMenuItems = Array.isArray(menuItems) ? menuItems : [];
+
   const availableItems = useMemo(() => {
-    return menuItems.filter((item) => {
+    return safeMenuItems.filter((item) => {
       const matchCat =
         selectedCategory === 'ALL'
           ? true
-          : item.category.toLowerCase() === selectedCategory.toLowerCase();
+          : (item?.category || '').toLowerCase() === selectedCategory.toLowerCase();
       const matchSearch =
-        item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.category.toLowerCase().includes(searchQuery.toLowerCase());
-      const isAvailable = item.is_available !== false && (item.stock ?? 1) > 0;
+        (item?.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (item?.category || '').toLowerCase().includes(searchQuery.toLowerCase());
+      const isAvailable = item?.is_available !== false && (item?.stock ?? 1) > 0;
       return matchCat && matchSearch && isAvailable;
     });
-  }, [menuItems, selectedCategory, searchQuery]);
+  }, [safeMenuItems, selectedCategory, searchQuery]);
 
   if (!isOpen || !station) return null;
 
   const handleUpdateQuantity = (itemId: string, delta: number) => {
-    const itemObj = menuItems.find((m) => m.id === itemId);
+    const itemObj = safeMenuItems.find((m) => m?.id === itemId);
     const maxStock = itemObj?.stock ?? 999;
 
     setCart((prev) => {
@@ -112,7 +114,7 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
 
   const selectedItemsList = Object.entries(cart)
     .map(([id, quantity]) => {
-      const found = menuItems.find((m) => m.id === id);
+      const found = safeMenuItems.find((m) => m?.id === id);
       return {
         id,
         name: found?.name || 'Food Item',
@@ -127,7 +129,8 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
   const totalCost = selectedItemsList.reduce((sum, i) => sum + i.quantity * i.price, 0);
 
   const handleConfirmOrder = () => {
-    if (selectedItemsList.length === 0) {
+    try {
+      if (selectedItemsList.length === 0) {
       setError('Please add at least one item to order.');
       return;
     }
@@ -144,7 +147,10 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
 
     // Also update lounge store for immediate UI feedback
     addStationFoodOrder(station.name, selectedItemsList);
-  };
+  } catch (err: any) {
+    setError(err?.message || 'Failed to place order.');
+  }
+};
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">

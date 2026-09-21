@@ -47,11 +47,11 @@ export const StationBookingModal: React.FC<StationBookingModalProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   // Derive active tiers with strictly parsed numbers
-  const activeTiers = station?.pricing_tiers && station.pricing_tiers.length > 0
+  const activeTiers = Array.isArray(station?.pricing_tiers) && station.pricing_tiers.length > 0
     ? station.pricing_tiers.map((t) => ({
-        duration_min: Number(t.duration_min),
-        price: Number(t.price),
-        label: t.label || `${t.duration_min} mins`,
+        duration_min: Number(t?.duration_min || 60),
+        price: Number(t?.price || 180),
+        label: t?.label || `${t?.duration_min || 60} mins`,
       }))
     : [
         { duration_min: 30, price: Math.round(Number(station?.hourly_rate || 180) * 0.5), label: '30 mins' },
@@ -200,7 +200,7 @@ export const StationBookingModal: React.FC<StationBookingModalProps> = ({
                 ₹{defaultHourlyRate.toFixed(0)} / hr
               </span>
             </div>
-            {station.pricing_tiers && station.pricing_tiers.length > 0 && (
+            {Array.isArray(station?.pricing_tiers) && station.pricing_tiers.length > 0 && (
               <div className="pt-1 border-t border-slate-800/80 flex items-center justify-between">
                 <span className="text-[11px] text-slate-400">Configured Slabs:</span>
                 <div className="flex flex-wrap gap-1 justify-end">
@@ -209,7 +209,7 @@ export const StationBookingModal: React.FC<StationBookingModalProps> = ({
                       key={i}
                       className="px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-600/30 text-[10px] font-mono-code font-bold"
                     >
-                      {pt.label || `${pt.duration_min}m`}: ₹{Number(pt.price).toFixed(0)}
+                      {pt?.label || `${pt?.duration_min ?? 0}m`}: ₹{Number(pt?.price ?? 0).toFixed(0)}
                     </span>
                   ))}
                 </div>
