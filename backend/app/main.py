@@ -289,7 +289,7 @@ _TUNNEL_ORIGIN_PATTERNS = re.compile(
     r")$"
 )
 
-_CORS_ALLOW_HEADERS = "Authorization, Content-Type, X-Idempotency-Key, Accept"
+_CORS_ALLOW_HEADERS = "Authorization, Content-Type, Idempotency-Key, X-Idempotency-Key, Accept, Origin, X-Requested-With"
 _CORS_ALLOW_METHODS = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
 
 
@@ -316,13 +316,15 @@ class TunnelAwareCORSMiddleware(BaseHTTPMiddleware):
 
         # Handle pre-flight OPTIONS immediately — FastAPI never sees it
         if request.method == "OPTIONS" and allowed:
+            req_headers = request.headers.get("access-control-request-headers")
+            allow_headers = req_headers if req_headers else _CORS_ALLOW_HEADERS
             return Response(
                 status_code=204,
                 headers={
                     "Access-Control-Allow-Origin": origin,
                     "Access-Control-Allow-Credentials": "true",
                     "Access-Control-Allow-Methods": _CORS_ALLOW_METHODS,
-                    "Access-Control-Allow-Headers": _CORS_ALLOW_HEADERS,
+                    "Access-Control-Allow-Headers": allow_headers,
                     "Access-Control-Max-Age": "86400",
                 },
             )
@@ -330,10 +332,12 @@ class TunnelAwareCORSMiddleware(BaseHTTPMiddleware):
         response: Response = await call_next(request)
 
         if allowed:
+            req_headers = request.headers.get("access-control-request-headers")
+            allow_headers = req_headers if req_headers else _CORS_ALLOW_HEADERS
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Credentials"] = "true"
             response.headers["Access-Control-Allow-Methods"] = _CORS_ALLOW_METHODS
-            response.headers["Access-Control-Allow-Headers"] = _CORS_ALLOW_HEADERS
+            response.headers["Access-Control-Allow-Headers"] = allow_headers
 
         return response
 

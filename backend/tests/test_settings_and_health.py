@@ -1,3 +1,4 @@
+import pytest
 from app.core.config import Settings
 
 
@@ -30,3 +31,24 @@ def test_admin_configurable_credentials():
     s = Settings(ADMIN_USERNAME="superowner", ADMIN_PASSWORD="securepassword99")
     assert s.ADMIN_USERNAME == "superowner"
     assert s.ADMIN_PASSWORD == "securepassword99"
+
+
+@pytest.mark.asyncio
+async def test_cors_preflight_idempotency_key_allowed():
+    from httpx import AsyncClient, ASGITransport
+    from app.main import app
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.options(
+            "/api/v1/admin/sessions/checkout",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization, content-type, idempotency-key",
+            },
+        )
+        assert res.status_code == 204
+        allowed_headers = res.headers.get("access-control-allow-headers", "").lower()
+        assert "idempotency-key" in allowed_headers
+
