@@ -59,10 +59,12 @@ async function fetchAdminToken(): Promise<{ user: AuthUser; token: string } | nu
     const rawBase = import.meta.env.VITE_API_BASE_URL
       ? String(import.meta.env.VITE_API_BASE_URL).replace(/\/+$/, '')
       : '';
+    const identifier = (import.meta.env.VITE_ADMIN_USERNAME as string) || 'admin';
+    const password = (import.meta.env.VITE_ADMIN_PASSWORD as string) || 'admin123';
     const res = await fetch(`${rawBase}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ identifier: 'admin', password: 'admin123' }),
+      body: JSON.stringify({ identifier, password }),
     });
     if (!res.ok) return null;
     const data = await res.json();

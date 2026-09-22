@@ -4,7 +4,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -288,7 +288,6 @@ async def get_customer_sessions(
             pass
 
     if conditions:
-        from sqlalchemy import or_
         stmt = stmt.where(or_(*conditions))
 
     result = await db.execute(stmt)

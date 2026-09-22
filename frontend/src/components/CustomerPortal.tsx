@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Gamepad2 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
@@ -46,18 +46,20 @@ export const CustomerPortal: React.FC = () => {
   const safeCategories = Array.isArray(categories) ? categories : [];
 
   // Filter authenticated user's active session(s) strictly for the currently logged-in user
-  const myActiveStations = safeStations.filter((s) => {
-    if (!user) return false;
-    if (!s.is_occupied && s.status !== 'OCCUPIED') return false;
+  const myActiveStations = useMemo(() => {
+    return safeStations.filter((s) => {
+      if (!user) return false;
+      if (!s.is_occupied && s.status !== 'OCCUPIED') return false;
 
-    const matchesUserId = Boolean(user.id && s.user_id && String(s.user_id) === String(user.id));
-    const matchesPhone = Boolean(
-      user.phone && s.customer_phone && user.phone.trim() && s.customer_phone.trim() === user.phone.trim()
-    );
-    const isVerifiedMySession = Boolean(s.is_my_session) && user.role !== 'admin';
+      const matchesUserId = Boolean(user.id && s.user_id && String(s.user_id) === String(user.id));
+      const matchesPhone = Boolean(
+        user.phone && s.customer_phone && user.phone.trim() && s.customer_phone.trim() === user.phone.trim()
+      );
+      const isVerifiedMySession = Boolean(s.is_my_session) && user.role !== 'admin';
 
-    return matchesUserId || matchesPhone || isVerifiedMySession;
-  });
+      return matchesUserId || matchesPhone || isVerifiedMySession;
+    });
+  }, [safeStations, user]);
 
   return (
     <div className="space-y-6 sm:space-y-8 relative z-10">

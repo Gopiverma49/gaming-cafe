@@ -1,20 +1,27 @@
 from contextlib import asynccontextmanager
 from decimal import Decimal
 import logging
+import re
+from typing import List, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, status
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import engine, Base, async_session_factory
 from app.core.security import get_password_hash
-from app.models.entities import Station, MenuItem, Session, User, PhysicalDevice
+from app.models.entities import Station, Session, User, PhysicalDevice
 from app.models.enums import StationStatus, SessionStatus
-from app.api.deps import IdempotencyMiddleware
+from app.api.deps import IdempotencyMiddleware, get_db, get_optional_auth_user
 from app.api.v1.admin_routes import router as admin_router
 from app.api.v1.customer_routes import router as customer_router
 from app.api.v1.auth_routes import router as auth_router
+from app.schemas.api_schemas import CategoryAvailabilityResponse, SessionStartRequest, SessionResponse
+from app.services.session_service import get_fleet_categories, start_category_session
 from app.services.ws_notifier import manager
 
 # Configure logging
@@ -49,8 +56,9 @@ async def run_schema_migrations():
             try:
                 await db.execute(text(stmt_str))
                 await db.commit()
-            except Exception:
+            except Exception as exc:
                 await db.rollback()
+                logger.debug(f"Migration statement skipped or already applied: {stmt_str} ({exc})")
 
 
 async def ensure_canonical_domain_hierarchy():
@@ -257,15 +265,80 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Cross-Origin Resource Sharing
-cors_origins = settings.cors_origin_list
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials=True if cors_origins != ["*"] else False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+# ─────────────────────────────────────────────────────────────────────────────
+# Regex-aware CORS middleware
+# Allows:
+#   • Any *.trycloudflare.com  (Cloudflare Quick Tunnels)
+#   • Any *.ngrok-free.app     (ngrok free tier)
+#   • Any *.ngrok.io            (ngrok paid)
+#   • http(s)://localhost:*     (local dev)
+#   • http(s)://127.0.0.1:*    (local dev)
+#   • http(s)://172.16.*.*:*   (LAN Wi-Fi)
+#   • Plus any explicit origins from CORS_ORIGINS env var
+# ─────────────────────────────────────────────────────────────────────────────
+_TUNNEL_ORIGIN_PATTERNS = re.compile(
+    r"^https?://"
+    r"("  
+    r"[a-zA-Z0-9-]+\.trycloudflare\.com"         # Cloudflare quick tunnels
+    r"|[a-zA-Z0-9-]+\.ngrok-free\.app"            # ngrok free
+    r"|[a-zA-Z0-9-]+\.ngrok\.io"                  # ngrok paid
+    r"|localhost(:[0-9]+)?"                        # localhost any port
+    r"|127\.0\.0\.1(:[0-9]+)?"                    # loopback
+    r"|172\.16\.[0-9]+\.[0-9]+(:[0-9]+)?"         # LAN 172.16.x.x
+    r"|192\.168\.[0-9]+\.[0-9]+(:[0-9]+)?"        # LAN 192.168.x.x
+    r")$"
 )
+
+_CORS_ALLOW_HEADERS = "Authorization, Content-Type, X-Idempotency-Key, Accept"
+_CORS_ALLOW_METHODS = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+
+
+class TunnelAwareCORSMiddleware(BaseHTTPMiddleware):
+    """CORS middleware that accepts wildcard tunnel origins (trycloudflare.com, ngrok)
+    as well as any explicit origins listed in CORS_ORIGINS env var."""
+
+    def __init__(self, app, explicit_origins: list[str]):
+        super().__init__(app)
+        # Pre-build a set for O(1) exact-match lookups (e.g. when operator sets specific domains)
+        self._explicit = set(o.strip().rstrip("/") for o in explicit_origins if o != "*")
+        self._allow_all = "*" in explicit_origins
+
+    def _is_allowed(self, origin: str) -> bool:
+        if self._allow_all:
+            return True
+        if origin in self._explicit:
+            return True
+        return bool(_TUNNEL_ORIGIN_PATTERNS.match(origin))
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        origin = request.headers.get("origin", "")
+        allowed = self._is_allowed(origin) if origin else False
+
+        # Handle pre-flight OPTIONS immediately — FastAPI never sees it
+        if request.method == "OPTIONS" and allowed:
+            return Response(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin": origin,
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Methods": _CORS_ALLOW_METHODS,
+                    "Access-Control-Allow-Headers": _CORS_ALLOW_HEADERS,
+                    "Access-Control-Max-Age": "86400",
+                },
+            )
+
+        response: Response = await call_next(request)
+
+        if allowed:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = _CORS_ALLOW_METHODS
+            response.headers["Access-Control-Allow-Headers"] = _CORS_ALLOW_HEADERS
+
+        return response
+
+
+app.add_middleware(TunnelAwareCORSMiddleware, explicit_origins=settings.cors_origin_list)
 
 # Idempotency Middleware for POST and PATCH
 app.add_middleware(IdempotencyMiddleware)
@@ -274,14 +347,6 @@ app.add_middleware(IdempotencyMiddleware)
 app.include_router(auth_router, prefix=settings.API_V1_STR)
 app.include_router(admin_router, prefix=settings.API_V1_STR)
 app.include_router(customer_router, prefix=settings.API_V1_STR)
-
-
-from typing import List, Optional
-from fastapi import Depends, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.api.deps import get_db, get_optional_auth_user
-from app.schemas.api_schemas import CategoryAvailabilityResponse, SessionStartRequest, SessionResponse
-from app.services.session_service import get_fleet_categories, start_category_session
 
 
 @app.get("/api/fleet/categories", response_model=List[CategoryAvailabilityResponse], tags=["Fleet Categories"])

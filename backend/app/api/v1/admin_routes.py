@@ -711,9 +711,14 @@ async def place_station_food_order(
     db.add(order)
     await db.flush()
 
-    # 2. Deduct stock atomically and build order items
+    # 2. Batch fetch menu items to eliminate N+1 queries
+    item_ids = [itm.menu_item_id for itm in payload.items]
+    items_stmt = select(MenuItem).where(MenuItem.id.in_(item_ids))
+    menu_map = {m.id: m for m in (await db.execute(items_stmt)).scalars().all()}
+
+    order_items_to_add: List[OrderItem] = []
     for itm in payload.items:
-        menu_item = await db.get(MenuItem, itm.menu_item_id)
+        menu_item = menu_map.get(itm.menu_item_id)
         if not menu_item:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -726,14 +731,16 @@ async def place_station_food_order(
             )
 
         menu_item.stock -= itm.quantity
-        order_item = OrderItem(
-            order_id=order.id,
-            menu_item_id=menu_item.id,
-            quantity=itm.quantity,
-            unit_price=menu_item.price,
+        order_items_to_add.append(
+            OrderItem(
+                order_id=order.id,
+                menu_item_id=menu_item.id,
+                quantity=itm.quantity,
+                unit_price=menu_item.price,
+            )
         )
-        db.add(order_item)
 
+    db.add_all(order_items_to_add)
     await db.flush()
 
     # 3. Broadcast WebSocket event to kitchen

@@ -171,6 +171,9 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
       if (socketRef.current) {
         socketRef.current.close();
       }
