@@ -156,10 +156,10 @@ async def test_full_cafe_lifecycle_flow(test_db):
         assert checkout_info["payment_method"] == "UPI"
         assert "upi://pay?" in checkout_info["upi_qr_string"]
 
-        # 2 items * 100 = 200.00 food + minimum 0.5hr * 150 = 75.00 time -> 275.00
+        # 2 items * 100 = 200.00 food + 1hr allocated session * 200 = 200.00 time -> 400.00
         assert Decimal(str(checkout_info["orders_charge"])) == Decimal("200.00")
-        assert Decimal(str(checkout_info["station_charge"])) == Decimal("75.00")
-        assert Decimal(str(checkout_info["total_amount"])) == Decimal("275.00")
+        assert Decimal(str(checkout_info["station_charge"])) == Decimal("200.00")
+        assert Decimal(str(checkout_info["total_amount"])) == Decimal("400.00")
 
 
 @pytest.mark.asyncio
@@ -274,5 +274,203 @@ async def test_station_pricing_tiers(test_db):
 
         # Cleanup
         await client.delete(f"/api/v1/admin/stations/{station_id}")
+
+
+@pytest.mark.asyncio
+async def test_shared_hardware_allocation_and_conflict_rejection(test_db):
+    """
+    Validates:
+    1. Categories map correctly to physical assets (PS1, PS2, PS3, VR1).
+    2. Booking PS3 under Solo globally locks PS3 for CAR Simulator and Multiplayer.
+    3. Next customer attempting to book CAR Simulator or Multiplayer on PS3 receives HTTP 409 Conflict.
+    4. Next customer can still book Multiplayer or Solo on available PS1 or PS2.
+    5. VR Simulator (VR1) functions completely independently.
+    6. GET /api/fleet/categories accurately aggregates available units in real-time.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Seed the 4 hardware units
+        for name, tier, rate in [("PS1", "CONSOLE", 180.0), ("PS2", "CONSOLE", 180.0), ("PS3", "CONSOLE", 180.0), ("VR1", "VR", 250.0)]:
+            await client.post(
+                "/api/v1/admin/stations",
+                json={"name": name, "tier": tier, "hourly_rate": rate},
+            )
+
+        # 1. Check initial fleet categories availability (all free)
+        cat_res = await client.get("/api/fleet/categories")
+        assert cat_res.status_code == 200
+        cats = {c["id"]: c for c in cat_res.json()}
+
+        assert cats["solo"]["available_units"] == 3
+        assert cats["solo"]["total_units"] == 3
+        assert cats["solo"]["is_available"] is True
+
+        assert cats["multiplayer"]["available_units"] == 3
+        assert cats["multiplayer"]["total_units"] == 3
+        assert cats["multiplayer"]["is_available"] is True
+
+        assert cats["car_sim"]["available_units"] == 1
+        assert cats["car_sim"]["total_units"] == 1
+        assert cats["car_sim"]["is_available"] is True
+
+        assert cats["vr_sim"]["available_units"] == 1
+        assert cats["vr_sim"]["total_units"] == 1
+        assert cats["vr_sim"]["is_available"] is True
+
+        # 2. Customer A books PS3 under Solo Experience
+        book_res1 = await client.post(
+            "/api/sessions/start",
+            json={
+                "category_id": "solo",
+                "device_id": "PS3",
+                "duration_minutes": 60,
+                "customer_name": "Arjun",
+            },
+        )
+        assert book_res1.status_code == 201
+        sess1 = book_res1.json()
+        assert sess1["category_id"] == "solo"
+        assert sess1["device_name"] == "PS3"
+
+        # 3. Check categories: CAR Simulator MUST now be BUSY because PS3 is occupied!
+        cat_res2 = await client.get("/api/fleet/categories")
+        cats2 = {c["id"]: c for c in cat_res2.json()}
+
+        assert cats2["solo"]["available_units"] == 2  # PS1, PS2
+        assert cats2["multiplayer"]["available_units"] == 2  # PS1, PS2
+        assert cats2["car_sim"]["available_units"] == 0  # PS3 is busy!
+        assert cats2["car_sim"]["is_available"] is False
+        assert cats2["vr_sim"]["available_units"] == 1  # VR1 unaffected
+
+        # 4. Customer B attempts to book CAR Simulator -> MUST REJECT WITH 409 CONFLICT
+        car_fail = await client.post(
+            "/api/sessions/start",
+            json={
+                "category_id": "car_sim",
+                "duration_minutes": 60,
+                "customer_name": "Vikram",
+            },
+        )
+        assert car_fail.status_code == 409
+        assert "Device 'PS3' currently in use" in car_fail.json()["detail"]
+
+        # 5. Customer B attempts to book Multiplayer on PS3 -> MUST REJECT WITH 409 CONFLICT
+        mp_fail = await client.post(
+            "/api/sessions/start",
+            json={
+                "category_id": "multiplayer",
+                "device_id": "PS3",
+                "duration_minutes": 60,
+                "customer_name": "Vikram",
+            },
+        )
+        assert mp_fail.status_code == 409
+        assert "Device 'PS3' currently in use" in mp_fail.json()["detail"]
+
+        # 6. Customer B books Multiplayer on available PS1 -> MUST SUCCEED (201)
+        mp_ok = await client.post(
+            "/api/sessions/start",
+            json={
+                "category_id": "multiplayer",
+                "device_id": "PS1",
+                "duration_minutes": 60,
+                "customer_name": "Vikram",
+            },
+        )
+        assert mp_ok.status_code == 201
+        assert mp_ok.json()["device_name"] == "PS1"
+
+        # 7. Customer C books VR Simulator (VR1) -> MUST SUCCEED (201)
+        vr_ok = await client.post(
+            "/api/sessions/start",
+            json={
+                "category_id": "vr_sim",
+                "duration_minutes": 60,
+                "customer_name": "Neha",
+            },
+        )
+        assert vr_ok.status_code == 201
+        assert vr_ok.json()["device_name"] == "VR1"
+
+        # 8. Check categories: VR1 is now also occupied
+        cat_res3 = await client.get("/api/fleet/categories")
+        cats3 = {c["id"]: c for c in cat_res3.json()}
+        assert cats3["vr_sim"]["available_units"] == 0
+        assert cats3["vr_sim"]["is_available"] is False
+
+        # Attempting second VR booking fails with 409
+        vr_fail = await client.post(
+            "/api/sessions/start",
+            json={
+                "category_id": "vr_sim",
+                "duration_minutes": 60,
+                "customer_name": "Ravi",
+            },
+        )
+        assert vr_fail.status_code == 409
+        assert "Device 'VR1' currently in use" in vr_fail.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_canonical_station_and_console_room_hierarchy(test_db):
+    """
+    Validates:
+    1. Primary Stations are Solo, Multiplayer, Car Simulator, VR.
+    2. Consoles PS1, PS2, PS3 are registered physical rooms and can be allocated.
+    3. Session schema tracks station ('Solo') and console/room ('PS1').
+    4. Selecting PS1 validates against registered consoles and does not throw 'not found in registry'.
+    5. Concurrent bookings on different consoles under Solo/Multiplayer succeed.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Book Solo on PS1
+        res1 = await client.post(
+            "/api/sessions/start",
+            json={"category_id": "solo", "device_id": "PS1", "customer_name": "Alice"},
+        )
+        assert res1.status_code == 201
+        data1 = res1.json()
+        assert data1["station"] == "Solo"
+        assert data1["console"] == "PS1"
+        assert data1["room"] == "PS1"
+
+        # Book Multiplayer on PS2 concurrently -> Must SUCCEED
+        res2 = await client.post(
+            "/api/sessions/start",
+            json={"category_id": "multiplayer", "device_id": "PS2", "customer_name": "Bob"},
+        )
+        assert res2.status_code == 201
+        data2 = res2.json()
+        assert data2["station"] == "Multiplayer"
+        assert data2["console"] == "PS2"
+        assert data2["room"] == "PS2"
+
+        # Book Car Simulator (locks PS3) -> Must SUCCEED
+        res3 = await client.post(
+            "/api/sessions/start",
+            json={"category_id": "car_sim", "customer_name": "Charlie"},
+        )
+        assert res3.status_code == 201
+        data3 = res3.json()
+        assert data3["station"] == "Car Simulator"
+        assert data3["console"] == "PS3"
+
+        # Book VR (locks VR1) -> Must SUCCEED
+        res4 = await client.post(
+            "/api/sessions/start",
+            json={"category_id": "vr_sim", "customer_name": "Dave"},
+        )
+        assert res4.status_code == 201
+        data4 = res4.json()
+        assert data4["station"] == "VR"
+        assert data4["console"] == "VR1"
+
+        # Attempt to book Solo on occupied PS1 -> 409 Conflict
+        res_fail = await client.post(
+            "/api/sessions/start",
+            json={"category_id": "solo", "device_id": "PS1", "customer_name": "Eve"},
+        )
+        assert res_fail.status_code == 409
+
 
 

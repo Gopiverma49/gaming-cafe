@@ -15,6 +15,7 @@ import {
   Gamepad2,
 } from 'lucide-react';
 import { StationLive, CheckoutResult, PricingTier } from '../types';
+import { POLL_INTERVALS } from '../constants';
 import {
   fetchLiveStations,
   transferStation,
@@ -22,6 +23,7 @@ import {
 } from '../api';
 import { useLoungeStore } from '../store/loungeStore';
 import { useNotificationStore } from '../store/notificationStore';
+import { useAuthStore } from '../store/authStore';
 import { StationCard } from './StationCard';
 import { SessionUpsellDrawer } from './SessionUpsellDrawer';
 import { StationFoodOrderModal } from './StationFoodOrderModal';
@@ -43,28 +45,41 @@ export const StationGrid: React.FC = () => {
   const [bookingTier, setBookingTier] = useState<PricingTier | null>(null);
   const [foodOrderStation, setFoodOrderStation] = useState<StationLive | null>(null);
 
-  // Transfer Modal
+  // Transfer Station Modal
   const [transferStationTarget, setTransferStationTarget] = useState<StationLive | null>(null);
   const [targetStationId, setTargetStationId] = useState<string>('');
 
   // Checkout Modal
   const [checkoutStationTarget, setCheckoutStationTarget] = useState<StationLive | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'UPI'>('CASH');
   const [checkoutResult, setCheckoutResult] = useState<CheckoutResult | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'CASH'>('UPI');
   const [isCheckingOut, setIsCheckingOut] = useState(false);
 
   // Global Action Error
   const [actionError, setActionError] = useState<string | null>(null);
 
   // Live Stations Query
-  const { data: stations = [], isLoading } = useQuery<StationLive[]>({
+  const { data: stations = [], isLoading, refetch } = useQuery<StationLive[]>({
     queryKey: ['stations-live'],
     queryFn: fetchLiveStations,
-    refetchInterval: 6000,
+    refetchInterval: POLL_INTERVALS.STATIONS,
   });
 
   // Safe Array fallback
   const safeStations = Array.isArray(stations) ? stations : [];
+
+  // Self-healing check: if any station is occupied but active_session_id is missing,
+  // it indicates the query executed before admin auth token was injected. Re-acquire token and refetch.
+  React.useEffect(() => {
+    const hasSanitizedOccupied = safeStations.some(
+      (s) => (s.is_occupied || s.status === 'OCCUPIED') && !s.active_session_id
+    );
+    if (hasSanitizedOccupied) {
+      useAuthStore.getState().ensureAdminToken(true).then((tok: string | null) => {
+        if (tok) refetch();
+      });
+    }
+  }, [safeStations, refetch]);
 
   // Transfer Mutation
   const transferMutation = useMutation({
@@ -75,7 +90,11 @@ export const StationGrid: React.FC = () => {
       return transferStation(transferStationTarget.active_session_id, targetStationId);
     },
     onSuccess: async () => {
-      await queryClient.refetchQueries({ queryKey: ['stations-live'] });
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['stations-live'] }),
+        queryClient.refetchQueries({ queryKey: ['customer-sessions'] }),
+        queryClient.refetchQueries({ queryKey: ['kitchen-orders'] }),
+      ]);
       setTransferStationTarget(null);
       setTargetStationId('');
       setActionError(null);
@@ -99,17 +118,36 @@ export const StationGrid: React.FC = () => {
     setIsCheckingOut(true);
     setActionError(null);
     try {
-      if (!checkoutStationTarget.active_session_id) {
+      let targetSessionId = checkoutStationTarget.active_session_id;
+
+      if (!targetSessionId) {
+        // Attempt fresh token & station refetch before failing
+        const freshToken = await useAuthStore.getState().ensureAdminToken(true);
+        if (freshToken) {
+          const freshStations = await fetchLiveStations();
+          const refreshed = freshStations.find((s) => s.id === checkoutStationTarget.id || s.name === checkoutStationTarget.name);
+          if (refreshed?.active_session_id) {
+            targetSessionId = refreshed.active_session_id;
+          }
+        }
+      }
+
+      if (!targetSessionId) {
         setActionError('No active session found for this station.');
         return;
       }
 
       // Call backend — must succeed for station to actually close
-      const apiRes = await checkoutSession(checkoutStationTarget.active_session_id, paymentMethod);
+      const apiRes = await checkoutSession(targetSessionId, paymentMethod);
 
-      // Backend confirmed checkout: refresh station list from server
+      // Backend confirmed checkout: refresh station list from server immediately
       clearStationFoodOrders(checkoutStationTarget.name);
-      await queryClient.refetchQueries({ queryKey: ['stations-live'] });
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['stations-live'] }),
+        queryClient.refetchQueries({ queryKey: ['customer-sessions'] }),
+        queryClient.refetchQueries({ queryKey: ['kitchen-orders'] }),
+        queryClient.refetchQueries({ queryKey: ['admin-customers'] }),
+      ]);
 
       setCheckoutResult(apiRes);
     } catch (err: any) {

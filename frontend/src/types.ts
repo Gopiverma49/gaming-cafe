@@ -16,6 +16,9 @@ export interface StationLive {
   default_hourly_rate?: number;
   pricing_tiers?: PricingTier[];
   status: StationStatus;
+  is_occupied?: boolean;
+  is_my_session?: boolean;
+  user_id?: string | null;
   active_session_id?: string | null;
   started_at?: string | null;
   elapsed_minutes: number;
@@ -24,6 +27,10 @@ export interface StationLive {
   orders_charge: string | number;
   running_total: string | number;
   active_orders_count: number;
+  device_name?: string | null;
+  allocated_console?: string | null;
+  customer_phone?: string | null;
+  customer_name?: string | null;
 }
 
 export interface MenuItem {
@@ -121,7 +128,7 @@ export interface CustomerRecord {
 
 export interface WebSocketEvent {
   channel: string;
-  event_type: 'SESSION_UPDATED' | 'SESSION_STARTED' | 'SESSION_COMPLETED' | 'SESSION_TRANSFERRED' | 'ORDER_STATUS_CHANGED' | 'ORDER_CREATED' | 'STATION_LOCKED';
+  event_type: 'SESSION_UPDATED' | 'SESSION_STARTED' | 'SESSION_COMPLETED' | 'SESSION_TRANSFERRED' | 'SESSION_CANCELLED' | 'ORDER_STATUS_CHANGED' | 'ORDER_CREATED' | 'STATION_LOCKED';
   payload: any;
   timestamp: string;
 }
@@ -188,4 +195,53 @@ export interface InventoryItem {
   stockQuantity: number;
   unitPrice: number;
 }
+
+export interface DeviceAvailability {
+  id: string; // 'PS1' | 'PS2' | 'PS3' | 'VR1'
+  name: string;
+  is_occupied: boolean;
+  current_session_id?: string | null;
+  remaining_minutes?: number | null;
+}
+
+export interface CategoryAvailability {
+  id: 'solo' | 'multiplayer' | 'car_sim' | 'vr_sim' | string;
+  name: string;
+  tier: string;
+  supported_device_ids: string[];
+  devices: DeviceAvailability[];
+  total_units: number;
+  available_units: number;
+  is_available: boolean;
+  hourly_rate: number;
+  pricing_tiers?: PricingTier[];
+}
+
+export interface SessionStartPayload {
+  category_id: string;
+  device_id?: string;
+  duration_minutes: number;
+  customer_name?: string;
+  customer_phone?: string;
+  user_id?: string;
+  tier_price?: number;
+}
+
+export interface SessionResponse {
+  id: string;
+  station_id: string;
+  station_name?: string;
+  station?: 'Solo' | 'Multiplayer' | 'Car Simulator' | 'VR' | string;
+  console?: 'PS1' | 'PS2' | 'PS3' | 'VR1' | string;
+  room?: 'PS1' | 'PS2' | 'PS3' | 'VR1' | string;
+  started_at: string;
+  ended_at?: string | null;
+  status: string;
+  total_amount: number | string;
+  allocated_minutes?: number;
+  tier_price?: number | string;
+  category_id?: string;
+  device_name?: string;
+}
+
 

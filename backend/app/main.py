@@ -9,7 +9,8 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.database import engine, Base, async_session_factory
 from app.core.security import get_password_hash
-from app.models.entities import Station, MenuItem, Session, User
+from app.models.entities import Station, MenuItem, Session, User, PhysicalDevice
+from app.models.enums import StationStatus, SessionStatus
 from app.api.deps import IdempotencyMiddleware
 from app.api.v1.admin_routes import router as admin_router
 from app.api.v1.customer_routes import router as customer_router
@@ -24,11 +25,10 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 
-async def seed_initial_data():
-    """Seeds starter gaming stations, admin user, and menu items with inventory stock."""
+async def run_schema_migrations():
+    """Safe schema column additions for local SQLite / PostgreSQL without wiping or seeding."""
     async with async_session_factory() as db:
         from sqlalchemy import text
-        # Safe schema column additions for local SQLite / PostgreSQL
         migration_stmts = [
             "ALTER TABLE stations ADD COLUMN pricing_tiers JSON",
             "ALTER TABLE menu_items ADD COLUMN stock INTEGER DEFAULT 50",
@@ -36,7 +36,14 @@ async def seed_initial_data():
             "ALTER TABLE sessions ADD COLUMN customer_name VARCHAR(100)",
             "ALTER TABLE sessions ADD COLUMN customer_phone VARCHAR(20)",
             "ALTER TABLE sessions ADD COLUMN user_id VARCHAR(36)",
+            "ALTER TABLE sessions ADD COLUMN allocated_minutes INTEGER DEFAULT 60",
+            "ALTER TABLE sessions ADD COLUMN tier_price NUMERIC(10, 2)",
+            "ALTER TABLE sessions ADD COLUMN category_id VARCHAR(50)",
+            "ALTER TABLE sessions ADD COLUMN device_name VARCHAR(50)",
+            "ALTER TABLE sessions ADD COLUMN station_name VARCHAR(50)",
+            "ALTER TABLE sessions ADD COLUMN console_room VARCHAR(50)",
             "ALTER TABLE orders ADD COLUMN customer_name VARCHAR(100)",
+            "DROP INDEX IF EXISTS uq_active_station_session",
         ]
         for stmt_str in migration_stmts:
             try:
@@ -45,7 +52,177 @@ async def seed_initial_data():
             except Exception:
                 await db.rollback()
 
-        # Seed default Admin User if none exists
+
+async def ensure_canonical_domain_hierarchy():
+    """
+    Enforces the permanent, rock-solid domain hierarchy:
+    1. Top-Level Stations: Exactly four primary stations:
+       - 'Solo'
+       - 'Multiplayer'
+       - 'Car Simulator'
+       - 'VR'
+    2. Physical Console Rooms (Hardware Allocation):
+       - 'PS1'
+       - 'PS2'
+       - 'PS3'
+       - 'VR1'
+    Auto-heals rogue records (e.g. pseudo-station 'PS3' or misspelled 'multiplyer')
+    so that lookup errors never recur.
+    """
+    async with async_session_factory() as db:
+        logger.info("Verifying canonical domain hierarchy and physical device registry...")
+
+        # 1. Registered Physical Consoles
+        canonical_consoles = [
+            {"id": "PS1", "name": "PS1", "device_type": "CONSOLE"},
+            {"id": "PS2", "name": "PS2", "device_type": "CONSOLE"},
+            {"id": "PS3", "name": "PS3", "device_type": "CONSOLE"},
+            {"id": "VR1", "name": "VR1", "device_type": "VR"},
+        ]
+        for dev_data in canonical_consoles:
+            existing_dev = await db.get(PhysicalDevice, dev_data["id"])
+            if not existing_dev:
+                db.add(PhysicalDevice(**dev_data, status=StationStatus.AVAILABLE.value))
+
+        # 2. Canonical Top-Level Stations Specs
+        canonical_stations = [
+            {
+                "name": "Solo",
+                "tier": "CONSOLE",
+                "hourly_rate": Decimal("180.00"),
+                "pricing_tiers": [
+                    {"duration_min": 30, "price": 100, "label": "30 mins"},
+                    {"duration_min": 60, "price": 180, "label": "1 hr"},
+                    {"duration_min": 120, "price": 320, "label": "2 hrs"},
+                ],
+            },
+            {
+                "name": "Multiplayer",
+                "tier": "CONSOLE",
+                "hourly_rate": Decimal("220.00"),
+                "pricing_tiers": [
+                    {"duration_min": 30, "price": 120, "label": "30 mins"},
+                    {"duration_min": 60, "price": 220, "label": "1 hr"},
+                    {"duration_min": 120, "price": 390, "label": "2 hrs"},
+                ],
+            },
+            {
+                "name": "Car Simulator",
+                "tier": "SIMULATOR",
+                "hourly_rate": Decimal("250.00"),
+                "pricing_tiers": [
+                    {"duration_min": 30, "price": 140, "label": "30 mins"},
+                    {"duration_min": 60, "price": 250, "label": "1 hr"},
+                    {"duration_min": 120, "price": 450, "label": "2 hrs"},
+                ],
+            },
+            {
+                "name": "VR",
+                "tier": "VR",
+                "hourly_rate": Decimal("300.00"),
+                "pricing_tiers": [
+                    {"duration_min": 30, "price": 160, "label": "30 mins"},
+                    {"duration_min": 60, "price": 300, "label": "1 hr"},
+                    {"duration_min": 120, "price": 520, "label": "2 hrs"},
+                ],
+            },
+        ]
+
+        # Fetch all existing stations
+        all_stations_res = await db.execute(select(Station))
+        existing_stations = all_stations_res.scalars().all()
+        station_map = {st.name.lower(): st for st in existing_stations}
+
+        # Fix spelling / naming variations
+        for st in existing_stations:
+            if st.name.lower() in ("multiplyer", "multi-player"):
+                st.name = "Multiplayer"
+            elif st.name.lower() == "car simulator" and st.name != "Car Simulator":
+                st.name = "Car Simulator"
+            elif st.name.lower() in ("vr simulator", "vr-sim") and st.name != "VR":
+                st.name = "VR"
+
+        # Ensure all 4 canonical stations exist
+        created_or_found_canonical: dict[str, Station] = {}
+        for st_cfg in canonical_stations:
+            lower_name = st_cfg["name"].lower()
+            match = next((s for s in existing_stations if s.name.lower() == lower_name), None)
+            if not match:
+                new_st = Station(
+                    name=st_cfg["name"],
+                    tier=st_cfg["tier"],
+                    hourly_rate=st_cfg["hourly_rate"],
+                    pricing_tiers=st_cfg["pricing_tiers"],
+                    status=StationStatus.AVAILABLE.value,
+                )
+                db.add(new_st)
+                await db.flush()
+                created_or_found_canonical[st_cfg["name"]] = new_st
+            else:
+                created_or_found_canonical[st_cfg["name"]] = match
+
+        # Re-map sessions from rogue pseudo-stations (e.g. 'PS1', 'PS2', 'PS3', 'VR1')
+        rogue_names = {"ps1", "ps2", "ps3", "vr1"}
+        for st in existing_stations:
+            if st.name.lower() in rogue_names:
+                # Find all sessions linked to this pseudo-station
+                sess_res = await db.execute(select(Session).where(Session.station_id == st.id))
+                linked_sessions = sess_res.scalars().all()
+                for sess in linked_sessions:
+                    # Determine appropriate canonical station
+                    target_canonical_name = "Solo"
+                    if sess.category_id in ("car_sim", "car simulator") or st.name.upper() == "PS3":
+                        target_canonical_name = "Car Simulator"
+                    elif sess.category_id in ("vr_sim", "vr") or st.name.upper() == "VR1":
+                        target_canonical_name = "VR"
+                    elif sess.category_id == "multiplayer":
+                        target_canonical_name = "Multiplayer"
+
+                    canon_st = created_or_found_canonical.get(target_canonical_name)
+                    if canon_st:
+                        sess.station_id = canon_st.id
+                        sess.station_name = canon_st.name
+                        if not sess.device_name:
+                            sess.device_name = st.name.upper()
+                        if not sess.console_room:
+                            sess.console_room = st.name.upper()
+
+                # Clean up the rogue station row
+                await db.delete(st)
+
+        # Synchronize physical device occupancy and station status from active sessions
+        active_sess_res = await db.execute(select(Session).where(Session.status == SessionStatus.ACTIVE.value))
+        active_sessions = active_sess_res.scalars().all()
+        active_device_map = {s.device_name.upper(): s for s in active_sessions if s.device_name}
+        active_station_ids = {s.station_id for s in active_sessions}
+
+        for dev_id in ["PS1", "PS2", "PS3", "VR1"]:
+            pdev = await db.get(PhysicalDevice, dev_id)
+            if pdev:
+                active_s = active_device_map.get(dev_id)
+                if active_s:
+                    pdev.status = StationStatus.OCCUPIED.value
+                    pdev.current_session_id = active_s.id
+                else:
+                    pdev.status = StationStatus.AVAILABLE.value
+                    pdev.current_session_id = None
+
+        for canon_st in created_or_found_canonical.values():
+            if canon_st.id in active_station_ids:
+                canon_st.status = StationStatus.OCCUPIED.value
+            else:
+                canon_st.status = StationStatus.AVAILABLE.value
+
+        await db.commit()
+        logger.info("Canonical domain hierarchy & device registry successfully synchronized.")
+
+
+async def seed_initial_data():
+    """
+    Manual seeder function — ONLY executed when explicitly requested by user or tests.
+    Never run automatically on application startup.
+    """
+    async with async_session_factory() as db:
         admin_res = await db.execute(select(User).where(User.role == "ADMIN"))
         if not admin_res.scalar_one_or_none():
             logger.info("Seeding default Administrator account...")
@@ -58,57 +235,6 @@ async def seed_initial_data():
             db.add(admin_user)
             await db.commit()
 
-        stations_res = await db.execute(select(Station))
-        current_stations = stations_res.scalars().all()
-        station_names = {s.name for s in current_stations}
-
-        default_tiers = [
-            {"duration_min": 30, "price": 100, "label": "30 mins"},
-            {"duration_min": 60, "price": 180, "label": "1 hr"},
-            {"duration_min": 120, "price": 320, "label": "2 hrs"},
-        ]
-
-        # Only seed default stations if the DB has NO stations at all.
-        # NEVER wipe stations — user-created stations must be preserved.
-        if not current_stations:
-            logger.info("No stations found. Seeding default PS1, PS2, PS3 gaming stations...")
-            sample_stations = [
-                Station(name="PS1", tier="CONSOLE", hourly_rate=Decimal("180.00"), pricing_tiers=default_tiers, status="AVAILABLE"),
-                Station(name="PS2", tier="CONSOLE", hourly_rate=Decimal("180.00"), pricing_tiers=default_tiers, status="AVAILABLE"),
-                Station(name="PS3", tier="CONSOLE", hourly_rate=Decimal("180.00"), pricing_tiers=default_tiers, status="AVAILABLE"),
-            ]
-            db.add_all(sample_stations)
-            await db.commit()
-        else:
-            # Backfill pricing_tiers for any existing station that still lacks them
-
-            # Backfill pricing_tiers for any station that still lacks them
-            for s in current_stations:
-                if not s.pricing_tiers:
-                    s.pricing_tiers = [
-                        {"duration_min": 30, "price": round(float(s.hourly_rate) * 0.6, 2), "label": "30 mins"},
-                        {"duration_min": 60, "price": float(s.hourly_rate), "label": "1 hr"},
-                        {"duration_min": 120, "price": round(float(s.hourly_rate) * 1.8, 2), "label": "2 hrs"},
-                    ]
-            await db.commit()
-
-        menu_res = await db.execute(select(MenuItem))
-        if not menu_res.scalars().first():
-            logger.info("Seeding cafe menu items with stock levels...")
-            sample_menu = [
-                MenuItem(name="Monster Energy (Original)", category="Drinks", price=Decimal("140.00"), stock=30, min_stock_alert=5, is_available=True),
-                MenuItem(name="Red Bull Classic 250ml", category="Drinks", price=Decimal("160.00"), stock=25, min_stock_alert=5, is_available=True),
-                MenuItem(name="Cold Brew Iced Coffee", category="Drinks", price=Decimal("110.00"), stock=20, min_stock_alert=5, is_available=True),
-                MenuItem(name="Mountain Dew Game Fuel", category="Drinks", price=Decimal("80.00"), stock=40, min_stock_alert=8, is_available=True),
-                MenuItem(name="Crispy Peri-Peri Fries", category="Food", price=Decimal("150.00"), stock=25, min_stock_alert=5, is_available=True),
-                MenuItem(name="Double Smash Cheeseburger", category="Food", price=Decimal("280.00"), stock=15, min_stock_alert=3, is_available=True),
-                MenuItem(name="Classic Pepperoni Pizza Pocket", category="Food", price=Decimal("220.00"), stock=18, min_stock_alert=4, is_available=True),
-                MenuItem(name="Korean Spicy Chicken Wings", category="Food", price=Decimal("290.00"), stock=12, min_stock_alert=3, is_available=True),
-                MenuItem(name="Nacho Chips & Warm Cheese Dip", category="Food", price=Decimal("170.00"), stock=22, min_stock_alert=5, is_available=True),
-            ]
-            db.add_all(sample_menu)
-            await db.commit()
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -116,7 +242,10 @@ async def lifespan(app: FastAPI):
     # Initialize tables if running without migrations
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    await seed_initial_data()
+    # Run safe schema migrations (column additions).
+    await run_schema_migrations()
+    # Enforce canonical stations and device registry
+    await ensure_canonical_domain_hierarchy()
     yield
     logger.info("Shutting down Gaming Cafe Operations System...")
     await engine.dispose()
@@ -145,6 +274,43 @@ app.add_middleware(IdempotencyMiddleware)
 app.include_router(auth_router, prefix=settings.API_V1_STR)
 app.include_router(admin_router, prefix=settings.API_V1_STR)
 app.include_router(customer_router, prefix=settings.API_V1_STR)
+
+
+from typing import List, Optional
+from fastapi import Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.api.deps import get_db, get_optional_auth_user
+from app.schemas.api_schemas import CategoryAvailabilityResponse, SessionStartRequest, SessionResponse
+from app.services.session_service import get_fleet_categories, start_category_session
+
+
+@app.get("/api/fleet/categories", response_model=List[CategoryAvailabilityResponse], tags=["Fleet Categories"])
+@app.get("/api/v1/fleet/categories", response_model=List[CategoryAvailabilityResponse], tags=["Fleet Categories"])
+async def public_fleet_categories(db: AsyncSession = Depends(get_db)):
+    return await get_fleet_categories(db)
+
+
+@app.post("/api/sessions/start", response_model=SessionResponse, status_code=status.HTTP_201_CREATED, tags=["Fleet Categories"])
+@app.post("/api/v1/sessions/start", response_model=SessionResponse, status_code=status.HTTP_201_CREATED, tags=["Fleet Categories"])
+async def public_start_session(
+    payload: SessionStartRequest,
+    auth_user: Optional[User] = Depends(get_optional_auth_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = auth_user.id if auth_user else (payload.user_id or None)
+    customer_name = payload.customer_name or (auth_user.name if auth_user else "Gamer")
+    customer_phone = payload.customer_phone or (auth_user.phone if auth_user else None)
+
+    return await start_category_session(
+        db=db,
+        category_id=payload.category_id,
+        device_id=payload.device_id,
+        duration_minutes=payload.duration_minutes,
+        customer_name=customer_name,
+        customer_phone=customer_phone,
+        user_id=user_id,
+        tier_price=payload.tier_price,
+    )
 
 
 @app.get("/health", tags=["Health"])

@@ -5,11 +5,11 @@ from typing import List, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_db
+from app.api.deps import get_db, get_optional_auth_user, get_required_auth_user
 from app.core.config import settings
 from app.core.security import create_admin_token
 from app.models.entities import Station, Session, Order, OrderItem, MenuItem, User
@@ -33,13 +33,58 @@ from app.schemas.api_schemas import (
     InventoryRestockRequest,
     CustomerProfileResponse,
     StationOrderCreateRequest,
+    CategoryAvailabilityResponse,
+    SessionStartRequest,
+    SessionResponse,
 )
 from app.services.billing_engine import calculate_station_charge
 from app.services.order_service import serialize_order, ensure_utc, calculate_order_subtotals, CURRENCY_QUANTIZATION
-from app.services.session_service import check_in, transfer_station, settle_checkout
+from app.services.session_service import (
+    check_in,
+    transfer_station,
+    settle_checkout,
+    with_transaction_retry,
+    get_fleet_categories,
+    start_category_session,
+)
 from app.services.ws_notifier import buffer_ws_event
 
 router = APIRouter(prefix="/admin", tags=["Admin Operations"])
+
+
+@router.get("/fleet/categories", response_model=List[CategoryAvailabilityResponse])
+async def get_fleet_experience_categories(db: AsyncSession = Depends(get_db)):
+    """
+    Returns the 4 top-level Experience Categories (Solo, Multiplayer, CAR Simulator, VR Simulator)
+    with real-time aggregate device availability.
+    """
+    return await get_fleet_categories(db)
+
+
+@router.post("/sessions/start", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
+async def start_experience_session_endpoint(
+    payload: SessionStartRequest,
+    auth_user: Optional[User] = Depends(get_optional_auth_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Starts an experience session on a shared physical device.
+    Enforces atomic conflict rejection if device (e.g. PS3 across Solo/Multiplayer/CAR) is busy.
+    """
+    user_id = auth_user.id if auth_user else None
+    customer_name = payload.customer_name or (auth_user.name if auth_user else "Gamer")
+    customer_phone = payload.customer_phone or (auth_user.phone if auth_user else None)
+
+    return await start_category_session(
+        db=db,
+        category_id=payload.category_id,
+        device_id=payload.device_id,
+        duration_minutes=payload.duration_minutes,
+        customer_name=customer_name,
+        customer_phone=customer_phone,
+        user_id=user_id,
+        tier_price=payload.tier_price,
+    )
 
 
 @router.post("/auth/login", response_model=TokenResponse)
@@ -59,10 +104,12 @@ async def admin_login(creds: LoginRequest):
 
 @router.get("/stations/live", response_model=List[StationLiveResponse])
 async def get_live_stations(
+    auth_user: Optional[User] = Depends(get_optional_auth_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Live matrix showing station statuses, remaining times, and running totals.
+    Sanitizes private billing data for stations not owned by caller.
     """
     stmt = (
         select(Station)
@@ -79,9 +126,15 @@ async def get_live_stations(
 
     now = datetime.now(timezone.utc)
     live_data: List[StationLiveResponse] = []
+    is_admin = bool(auth_user and getattr(auth_user, "role", "").upper() == "ADMIN")
+
+    # If canonical stations exist, keep top-level fleet distinct by excluding physical console rooms
+    has_canonical = any(s.name.lower() in ("solo", "multiplayer", "car simulator", "vr") for s in stations)
+    if has_canonical:
+        stations = [s for s in stations if s.name.upper() not in ("PS1", "PS2", "PS3", "VR1")]
 
     for station in stations:
-        # Find active session
+        # Find active session (match by station_id or station_name)
         active_session: Optional[Session] = None
         for s in station.sessions:
             if s.status == SessionStatus.ACTIVE.value:
@@ -98,6 +151,9 @@ async def get_live_stations(
                     default_hourly_rate=station.hourly_rate,
                     pricing_tiers=station.pricing_tiers or [],
                     status=station.status,
+                    is_occupied=False,
+                    is_my_session=False,
+                    user_id=None,
                     active_session_id=None,
                     started_at=None,
                     elapsed_minutes=0,
@@ -106,51 +162,114 @@ async def get_live_stations(
                     orders_charge=Decimal("0.00"),
                     running_total=Decimal("0.00"),
                     active_orders_count=0,
+                    device_name=None,
+                    allocated_console=None,
                 )
             )
         else:
             started_at = ensure_utc(active_session.started_at)
             elapsed_sec = (now - started_at).total_seconds()
             elapsed_min = max(0, int(elapsed_sec // 60))
-            time_charge = calculate_station_charge(
-                started_at, now, station.hourly_rate
-            )
-
-            orders_charge = Decimal("0.00")
-            active_orders_count = 0
-            for o in active_session.orders:
-                if o.status != OrderStatus.CANCELLED.value:
-                    if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value):
-                        active_orders_count += 1
-                    subtotal, _ = calculate_order_subtotals(o.items)
-                    orders_charge += subtotal
-
-            allocated_mins = settings.DEFAULT_SESSION_DURATION_MINUTES
+            allocated_mins = active_session.allocated_minutes or settings.DEFAULT_SESSION_DURATION_MINUTES
             remaining_min = max(0, allocated_mins - elapsed_min)
 
-            running_total = (time_charge + orders_charge).quantize(
-                CURRENCY_QUANTIZATION
+            matches_user_id = bool(
+                auth_user is not None
+                and active_session.user_id is not None
+                and auth_user.id == active_session.user_id
             )
+            matches_phone = bool(
+                auth_user is not None
+                and auth_user.phone
+                and active_session.customer_phone
+                and auth_user.phone.strip() == active_session.customer_phone.strip()
+            )
+            is_my_session = is_admin or matches_user_id or matches_phone
 
-            live_data.append(
-                StationLiveResponse(
-                    id=station.id,
-                    name=station.name,
-                    tier=station.tier,
-                    hourly_rate=station.hourly_rate,
-                    default_hourly_rate=station.hourly_rate,
-                    pricing_tiers=station.pricing_tiers or [],
-                    status=station.status,
-                    active_session_id=active_session.id,
-                    started_at=active_session.started_at,
-                    elapsed_minutes=elapsed_min,
-                    remaining_minutes=remaining_min,
-                    time_charge=time_charge,
-                    orders_charge=orders_charge,
-                    running_total=running_total,
-                    active_orders_count=active_orders_count,
+            if not is_my_session:
+                # Sanitize response for non-owner: strip private billing details and session ID
+                live_data.append(
+                    StationLiveResponse(
+                        id=station.id,
+                        name=station.name,
+                        tier=station.tier,
+                        hourly_rate=station.hourly_rate,
+                        default_hourly_rate=station.hourly_rate,
+                        pricing_tiers=station.pricing_tiers or [],
+                        status=station.status,
+                        is_occupied=True,
+                        is_my_session=False,
+                        user_id=None,
+                        active_session_id=None,
+                        started_at=None,
+                        elapsed_minutes=0,
+                        remaining_minutes=remaining_min,
+                        time_charge=Decimal("0.00"),
+                        orders_charge=Decimal("0.00"),
+                        running_total=Decimal("0.00"),
+                        active_orders_count=0,
+                        device_name=active_session.device_name,
+                        allocated_console=active_session.device_name,
+                        customer_phone=None,
+                        customer_name=None,
+                    )
                 )
-            )
+            else:
+                if active_session.tier_price is not None:
+                    if elapsed_min > allocated_mins:
+                        overtime_min = elapsed_min - allocated_mins
+                        overtime_charge = (
+                            (Decimal(str(overtime_min)) / Decimal("60")) * station.hourly_rate
+                        ).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
+                        time_charge = (active_session.tier_price + overtime_charge).quantize(
+                            CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
+                        )
+                    else:
+                        time_charge = active_session.tier_price
+                else:
+                    time_charge = calculate_station_charge(
+                        started_at, now, station.hourly_rate
+                    )
+
+                orders_charge = Decimal("0.00")
+                active_orders_count = 0
+                for o in active_session.orders:
+                    if o.status != OrderStatus.CANCELLED.value:
+                        if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value):
+                            active_orders_count += 1
+                        subtotal, _ = calculate_order_subtotals(o.items)
+                        orders_charge += subtotal
+
+                running_total = (time_charge + orders_charge).quantize(
+                    CURRENCY_QUANTIZATION
+                )
+
+                live_data.append(
+                    StationLiveResponse(
+                        id=station.id,
+                        name=station.name,
+                        tier=station.tier,
+                        hourly_rate=station.hourly_rate,
+                        default_hourly_rate=station.hourly_rate,
+                        pricing_tiers=station.pricing_tiers or [],
+                        status=station.status,
+                        is_occupied=True,
+                        is_my_session=True,
+                        user_id=active_session.user_id,
+                        active_session_id=active_session.id,
+                        started_at=active_session.started_at,
+                        elapsed_minutes=elapsed_min,
+                        remaining_minutes=remaining_min,
+                        time_charge=time_charge,
+                        orders_charge=orders_charge,
+                        running_total=running_total,
+                        active_orders_count=active_orders_count,
+                        device_name=active_session.device_name,
+                        allocated_console=active_session.device_name,
+                        customer_phone=active_session.customer_phone,
+                        customer_name=active_session.customer_name,
+                    )
+                )
 
     return live_data
 
@@ -275,11 +394,16 @@ async def admin_check_in(
         customer_name=payload.customer_name,
         customer_phone=payload.customer_phone,
         user_id=payload.user_id,
+        tier_price=payload.tier_price,
+        device_id=payload.device_id,
     )
     return {
         "message": "Station checked in successfully",
         "session_id": str(session.id),
         "station_id": str(session.station_id),
+        "device_name": session.device_name,
+        "console": session.device_name,
+        "room": session.device_name,
     }
 
 
@@ -342,6 +466,7 @@ async def get_kitchen_orders(db: AsyncSession = Depends(get_db)):
 
 
 @router.patch("/kitchen/orders/{order_id}/status", response_model=OrderResponse)
+@with_transaction_retry()
 async def update_kitchen_order_status(
     order_id: uuid.UUID,
     payload: OrderStatusUpdateRequest,
@@ -358,7 +483,6 @@ async def update_kitchen_order_status(
             selectinload(Order.items).selectinload(OrderItem.menu_item),
             selectinload(Order.session).selectinload(Session.station),
         )
-        .with_for_update()
     )
     res = await db.execute(stmt)
     order = res.scalar_one_or_none()
@@ -392,7 +516,7 @@ async def update_kitchen_order_status(
         else f"Order {new_status}"
     )
 
-    # Buffer WebSocket event
+    # Buffer WebSocket event (ws_notifier automatically broadcasts to admin and customer)
     station_id = str(order.session.station_id) if order.session else None
     station_name = order.session.station.name if order.session and order.session.station else None
 
@@ -404,18 +528,6 @@ async def update_kitchen_order_status(
             "order_id": str(order.id),
             "status": order.status,
             "station_name": station_name,
-            "message": customer_message,
-        },
-    )
-    # Also notify general customer channel
-    buffer_ws_event(
-        db,
-        channel="customer",
-        event_type="ORDER_STATUS_CHANGED",
-        payload={
-            "order_id": str(order.id),
-            "status": order.status,
-            "station_id": station_id,
             "message": customer_message,
         },
     )
@@ -524,6 +636,8 @@ async def delete_menu_item(
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Menu item not found")
 
+    # Clean up any order items referencing this menu item to prevent FK violation
+    await db.execute(delete(OrderItem).where(OrderItem.menu_item_id == item_id))
     await db.delete(item)
     await db.commit()
 
@@ -553,11 +667,13 @@ async def restock_inventory_item(
 @router.post("/orders/station-order", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
 async def place_station_food_order(
     payload: StationOrderCreateRequest,
+    auth_user: Optional[User] = Depends(get_optional_auth_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Places food order from station, atomically deducts stock in DB,
     attaches to active session, and broadcasts ORDER_CREATED event to Kitchen Kanban.
+    Enforces server-side authorization: caller must be an admin or the session owner.
     """
     stmt = (
         select(Session)
@@ -570,6 +686,21 @@ async def place_station_food_order(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No active playing session on this station. Please start a session before ordering snacks.",
         )
+
+    # Authorization Check: Caller must be authenticated, and either ADMIN or session owner
+    if not auth_user:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Authentication required to order food for a station session.",
+        )
+
+    is_admin = bool(getattr(auth_user, "role", "").upper() == "ADMIN")
+    if not is_admin:
+        if cafe_session.user_id is None or cafe_session.user_id != auth_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: You cannot order food for a station session you do not own.",
+            )
 
     # 1. Create order
     order = Order(

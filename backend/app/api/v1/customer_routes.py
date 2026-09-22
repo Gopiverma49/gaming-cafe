@@ -84,11 +84,23 @@ async def get_desk_session(
     started_at = ensure_utc(cafe_session.started_at)
     elapsed_sec = (now - started_at).total_seconds()
     elapsed_min = max(0, int(elapsed_sec // 60))
-    allocated_mins = settings.DEFAULT_SESSION_DURATION_MINUTES
+    allocated_mins = cafe_session.allocated_minutes or settings.DEFAULT_SESSION_DURATION_MINUTES
     remaining_min = max(0, allocated_mins - elapsed_min)
 
     station = cafe_session.station
-    time_charge = calculate_station_charge(started_at, now, station.hourly_rate)
+    if cafe_session.tier_price is not None:
+        if elapsed_min > allocated_mins:
+            overtime_min = elapsed_min - allocated_mins
+            overtime_charge = (
+                (Decimal(str(overtime_min)) / Decimal("60")) * station.hourly_rate
+            ).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
+            time_charge = (cafe_session.tier_price + overtime_charge).quantize(
+                CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
+            )
+        else:
+            time_charge = cafe_session.tier_price
+    else:
+        time_charge = calculate_station_charge(started_at, now, station.hourly_rate)
 
     orders_charge = Decimal("0.00")
     orders_out: List[OrderResponse] = []
@@ -291,7 +303,16 @@ async def get_customer_sessions(
         hourly_rate = float(s.station.hourly_rate) if s.station else 180.0
 
         if s.status == SessionStatus.ACTIVE.value and s.station:
-            time_charge = float(calculate_station_charge(started_at, now, s.station.hourly_rate))
+            if s.tier_price is not None:
+                alloc = s.allocated_minutes or 60
+                if elapsed_min > alloc:
+                    extra = elapsed_min - alloc
+                    overtime = (Decimal(str(extra)) / Decimal("60")) * s.station.hourly_rate
+                    time_charge = float(s.tier_price + overtime)
+                else:
+                    time_charge = float(s.tier_price)
+            else:
+                time_charge = float(calculate_station_charge(started_at, now, s.station.hourly_rate))
         else:
             time_charge = float(s.total_amount or 0)
 

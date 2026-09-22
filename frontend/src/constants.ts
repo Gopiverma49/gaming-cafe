@@ -4,11 +4,11 @@ import { PricingTier } from './types';
 // Real-time Query Polling Intervals (in milliseconds)
 // ---------------------------------------------------------------------------
 export const POLL_INTERVALS = {
-  STATIONS: 6000,
-  ORDERS: 8000,
-  CUSTOMERS: 8000,
-  MENU: 8000,
-  KITCHEN_BADGE: 12000,
+  STATIONS: 4000,
+  ORDERS: 5000,
+  CUSTOMERS: 10000,
+  MENU: 15000,
+  KITCHEN_BADGE: 10000,
 } as const;
 
 // ---------------------------------------------------------------------------

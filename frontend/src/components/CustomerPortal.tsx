@@ -1,62 +1,63 @@
 import React, { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Gamepad2, CalendarCheck, Clock, Loader2 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Gamepad2 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
-import { fetchLiveStations, fetchCustomerSessions, cancelCustomerSessionApi } from '../api';
-import { StationLive, PricingTier, CustomerSessionRecord } from '../types';
-import { StationCard } from './StationCard';
+import { fetchLiveStations, fetchFleetCategories } from '../api';
+import { StationLive, PricingTier, CategoryAvailability } from '../types';
+import { POLL_INTERVALS } from '../constants';
+import { CategoryCard } from './CategoryCard';
+import { ActiveReservationsTray } from './ActiveReservationsTray';
 import { SessionUpsellDrawer } from './SessionUpsellDrawer';
 import { StationFoodOrderModal } from './StationFoodOrderModal';
 import { GameCatalogueCarousel } from './GameCatalogueCarousel';
 import { ErrorBoundary } from './ErrorBoundary';
 
 export const CustomerPortal: React.FC = () => {
-  const queryClient = useQueryClient();
   const { user } = useAuthStore();
 
   // Booking & Upsell drawer states
-  const [selectedStationForBooking, setSelectedStationForBooking] = useState<StationLive | null>(null);
+  const [selectedCategoryForBooking, setSelectedCategoryForBooking] = useState<CategoryAvailability | null>(null);
   const [selectedTierForBooking, setSelectedTierForBooking] = useState<PricingTier | null>(null);
 
   // Food order modal state
   const [selectedStationForFood, setSelectedStationForFood] = useState<StationLive | null>(null);
 
-  // Fetch live stations from backend database
-  const { data: stations = [], isLoading, isError, error, refetch } = useQuery<StationLive[]>({
+  // Fetch live stations from backend database to identify user's personal active session
+  const { data: stations = [] } = useQuery<StationLive[]>({
     queryKey: ['stations-live'],
     queryFn: fetchLiveStations,
-    refetchInterval: 6000,
+    refetchInterval: POLL_INTERVALS.STATIONS,
   });
 
-  // Fetch real database customer sessions
-  const { data: dbSessions = [] } = useQuery<CustomerSessionRecord[]>({
-    queryKey: ['customer-sessions', user?.phone, user?.name, user?.id],
-    queryFn: () =>
-      fetchCustomerSessions({
-        phone: user?.phone,
-        name: user?.name,
-        userId: user?.id,
-      }),
-    refetchInterval: 5000,
-  });
-
-  const cancelMutation = useMutation({
-    mutationFn: cancelCustomerSessionApi,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['customer-sessions'] });
-      queryClient.invalidateQueries({ queryKey: ['stations-live'] });
-    },
+  // Fetch Experience Categories with real-time aggregate device availability
+  const {
+    data: categories = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery<CategoryAvailability[]>({
+    queryKey: ['fleet-categories'],
+    queryFn: fetchFleetCategories,
+    refetchInterval: POLL_INTERVALS.STATIONS,
   });
 
   const safeStations = Array.isArray(stations) ? stations : [];
-  const activeReservations = Array.isArray(dbSessions)
-    ? dbSessions.filter((s) => s.status === 'ACTIVE')
-    : [];
+  const safeCategories = Array.isArray(categories) ? categories : [];
 
-  const handleSelectTier = (st: StationLive, tier: PricingTier) => {
-    setSelectedStationForBooking(st);
-    setSelectedTierForBooking(tier);
-  };
+  // Filter authenticated user's active session(s) strictly for the currently logged-in user
+  const myActiveStations = safeStations.filter((s) => {
+    if (!user) return false;
+    if (!s.is_occupied && s.status !== 'OCCUPIED') return false;
+
+    const matchesUserId = Boolean(user.id && s.user_id && String(s.user_id) === String(user.id));
+    const matchesPhone = Boolean(
+      user.phone && s.customer_phone && user.phone.trim() && s.customer_phone.trim() === user.phone.trim()
+    );
+    const isVerifiedMySession = Boolean(s.is_my_session) && user.role !== 'admin';
+
+    return matchesUserId || matchesPhone || isVerifiedMySession;
+  });
 
   return (
     <div className="space-y-6 sm:space-y-8 relative z-10">
@@ -65,80 +66,23 @@ export const CustomerPortal: React.FC = () => {
         <GameCatalogueCarousel userName={user?.name || 'Gamer'} />
       </ErrorBoundary>
 
-      {/* 2. My Active Bookings Drawer (Real SQLite Sessions) */}
-      {activeReservations.length > 0 && (
-        <div className="bg-slate-900/80 backdrop-blur-xl p-5 sm:p-6 rounded-3xl border border-blue-500/30 space-y-3">
-          <h4 className="text-sm font-bold text-white flex items-center justify-between">
-            <span className="flex items-center gap-2">
-              <CalendarCheck className="w-4 h-4 text-blue-400" />
-              <span>My Active Reservations ({activeReservations.length})</span>
-            </span>
-            <span className="text-[11px] font-mono-code text-cyan-400 bg-cyan-950/60 px-2.5 py-0.5 rounded-full border border-cyan-800/40">
-              Live SQLite Sessions
-            </span>
-          </h4>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {activeReservations.map((b) => (
-              <div
-                key={b.id}
-                className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800 text-xs space-y-2 hover:border-slate-700 transition-colors"
-              >
-                <div className="flex justify-between items-center">
-                  <span className="font-bold text-blue-400 font-mono-code truncate max-w-[140px]">
-                    {b.stationName}
-                  </span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-bold">
-                    {b.status}
-                  </span>
-                </div>
-
-                <div className="text-slate-400 text-[11px] font-mono-code space-y-1">
-                  <div className="flex justify-between items-center">
-                    <span className="flex items-center gap-1 text-slate-300">
-                      <Clock className="w-3 h-3 text-cyan-400" />
-                      <span>Elapsed: {b.elapsedMinutes} mins</span>
-                    </span>
-                    <span className="text-white font-bold">₹{Number(b.totalCost || 0).toFixed(2)}</span>
-                  </div>
-                  {b.ordersCharge > 0 && (
-                    <div className="text-[10px] text-slate-400 flex justify-between">
-                      <span>Cafe Orders Tab:</span>
-                      <span className="text-amber-400">₹{Number(b.ordersCharge).toFixed(2)}</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex justify-between items-center pt-2 border-t border-slate-800/80">
-                  <span className="text-[10px] text-slate-400">Rate: ₹{b.hourlyRate}/hr</span>
-                  <button
-                    onClick={() => cancelMutation.mutate(b.id)}
-                    disabled={cancelMutation.isPending && cancelMutation.variables === b.id}
-                    className="text-rose-400 hover:text-rose-300 text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1 disabled:opacity-50"
-                  >
-                    {cancelMutation.isPending && cancelMutation.variables === b.id ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>Cancelling...</span>
-                      </>
-                    ) : (
-                      <span>Cancel Session</span>
-                    )}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+      {/* 2. Personal Session Isolation: My Active Reservations Tray */}
+      {myActiveStations.length > 0 && (
+        <ActiveReservationsTray
+          myStations={myActiveStations}
+          onOrderFood={(st) => setSelectedStationForFood(st)}
+        />
       )}
 
-      {/* 3. Stations Grid */}
+      {/* 3. Gaming Stations Fleet: 4 Experience Categories */}
       <div>
-        <div className="flex items-center gap-2 mb-4">
-          <Gamepad2 className="w-5 h-5 text-blue-400" />
-          <h3 className="text-lg font-bold text-white font-display">
-            Gaming Stations Fleet
-          </h3>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Gamepad2 className="w-5 h-5 text-blue-400" />
+            <h3 className="text-lg font-bold text-white font-display">
+              Gaming Stations Fleet
+            </h3>
+          </div>
         </div>
 
         {isError ? (
@@ -157,38 +101,35 @@ export const CustomerPortal: React.FC = () => {
           <div className="flex items-center justify-center p-16 bg-slate-900/50 rounded-3xl border border-slate-800">
             <div className="w-8 h-8 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin" />
           </div>
-        ) : safeStations.length === 0 ? (
+        ) : safeCategories.length === 0 ? (
           <div className="p-12 text-center bg-slate-900/50 rounded-3xl border border-dashed border-slate-800 space-y-2">
             <Gamepad2 className="w-10 h-10 text-slate-600 mx-auto" />
-            <p className="text-sm text-slate-400">No stations registered yet.</p>
+            <p className="text-sm text-slate-400">No categories registered yet.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
-            {safeStations.map((station) => (
-              <StationCard
-                key={station.id}
-                station={station}
-                isAdmin={false}
-                onSelectTier={handleSelectTier}
-                onBookStation={(s) => {
-                  setSelectedStationForBooking(s);
-                  const firstTier = Array.isArray(s.pricing_tiers) && s.pricing_tiers.length > 0 ? s.pricing_tiers[0] : null;
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6">
+            {safeCategories.map((category) => (
+              <CategoryCard
+                key={category.id}
+                category={category}
+                onSelectCategory={(cat, tier) => {
+                  setSelectedCategoryForBooking(cat);
+                  const firstTier = tier || (Array.isArray(cat.pricing_tiers) && cat.pricing_tiers.length > 0 ? cat.pricing_tiers[0] : null);
                   setSelectedTierForBooking(firstTier);
                 }}
-                onOrderFood={(s) => setSelectedStationForFood(s)}
               />
             ))}
           </div>
         )}
       </div>
 
-      {/* 4. Interactive Upsell Drawer (Replaces old static booking modal) */}
+      {/* 4. Interactive Upsell & Hardware Selection Drawer */}
       <SessionUpsellDrawer
-        isOpen={!!selectedStationForBooking}
-        station={selectedStationForBooking}
+        isOpen={!!selectedCategoryForBooking}
+        category={selectedCategoryForBooking}
         selectedTier={selectedTierForBooking}
         onClose={() => {
-          setSelectedStationForBooking(null);
+          setSelectedCategoryForBooking(null);
           setSelectedTierForBooking(null);
         }}
         isAdmin={false}
@@ -206,3 +147,4 @@ export const CustomerPortal: React.FC = () => {
     </div>
   );
 };
+

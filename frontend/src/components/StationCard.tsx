@@ -9,9 +9,11 @@ import {
   ArrowRightLeft,
   AlertCircle,
   Hourglass,
+  Lock,
 } from 'lucide-react';
 import { StationLive, PricingTier } from '../types';
 import { getStationTierVisuals } from '../constants';
+import { useAuthStore } from '../store/authStore';
 
 interface StationCardProps {
   station: StationLive;
@@ -34,8 +36,19 @@ export const StationCard: React.FC<StationCardProps> = ({
   onTransfer,
   onQuickExtend,
 }) => {
+  const { user } = useAuthStore();
   const isAvailable = station?.status === 'AVAILABLE';
-  const isOccupied = station?.status === 'OCCUPIED';
+  const isOccupied = station?.status === 'OCCUPIED' || Boolean(station?.is_occupied);
+
+  // Ownership resolution: Admin has full visibility.
+  // Customer only sees private session data if they own the session.
+  const isMySession =
+    isAdmin ||
+    user?.role === 'admin' ||
+    Boolean(station?.is_my_session) ||
+    (Boolean(user?.id) && Boolean(station?.user_id) && station?.user_id === user?.id);
+
+  const isOccupiedByOther = isOccupied && !isMySession;
 
   // Running bills purely reflect real SQLite live station values
   const timeCharge = Number(station?.time_charge || 0);
@@ -52,19 +65,19 @@ export const StationCard: React.FC<StationCardProps> = ({
   }, [station?.remaining_minutes]);
 
   useEffect(() => {
-    if (!isOccupied) return;
+    if (!isOccupied || isOccupiedByOther) return;
     const interval = setInterval(() => {
       setSecondsRemaining((prev) => Math.max(0, prev - 1));
     }, 1000);
     return () => clearInterval(interval);
-  }, [isOccupied]);
+  }, [isOccupied, isOccupiedByOther]);
 
   const mins = Math.floor(secondsRemaining / 60);
   const secs = secondsRemaining % 60;
   const formattedCountdown = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  const isExpired = isOccupied && secondsRemaining <= 0;
+  const isExpired = isOccupied && !isOccupiedByOther && secondsRemaining <= 0;
 
-  // Platform Tier Visuals & Specs (Hardware spec display text intentionally removed as requested)
+  // Platform Tier Visuals & Specs
   const tierVisual = getStationTierVisuals(station?.tier);
   const tierIcon =
     station?.tier === 'CONSOLE' ? (
@@ -98,6 +111,8 @@ export const StationCard: React.FC<StationCardProps> = ({
       className={`bg-slate-900/85 backdrop-blur-xl p-5 sm:p-6 rounded-3xl border transition-all duration-300 flex flex-col justify-between shadow-lg hover:shadow-2xl ${
         isAvailable
           ? 'border-emerald-500/30 hover:border-emerald-500/60 hover:shadow-emerald-500/10'
+          : isOccupiedByOther
+          ? 'border-slate-800/80 hover:border-slate-700/80'
           : isExpired
           ? 'border-rose-500/50 hover:border-rose-500 shadow-rose-500/10'
           : 'border-cyan-500/30 hover:border-cyan-500/60 hover:shadow-cyan-500/10'
@@ -121,6 +136,11 @@ export const StationCard: React.FC<StationCardProps> = ({
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span>Available</span>
               </span>
+            ) : isOccupiedByOther ? (
+              <span className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-medium">
+                <span className="w-2 h-2 rounded-full bg-amber-400" />
+                <span>In Use</span>
+              </span>
             ) : isExpired ? (
               <span className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/30 animate-pulse">
                 <AlertCircle className="w-3.5 h-3.5" />
@@ -135,24 +155,29 @@ export const StationCard: React.FC<StationCardProps> = ({
           </div>
         </div>
 
-        {/* Station Name & Base Hourly Rate (Hardware specs subtitle removed as requested) */}
-        <div className="mb-4">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xl font-black text-white font-display tracking-wide">
-              {station?.name || 'Station'}
-            </h4>
-            <div className="flex items-baseline gap-1">
-              <span className="text-xl font-black font-mono-code text-blue-400">
-                ₹{Number(station?.default_hourly_rate || station?.hourly_rate || 180).toFixed(0)}
-              </span>
-              <span className="text-xs text-slate-400 font-medium">/ hr</span>
-            </div>
-          </div>
+        {/* Station Name & Allocated Console Room */}
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <h4 className="text-xl font-black text-white font-display tracking-wide">
+            {station?.name || 'Station'}
+          </h4>
+          {(station?.allocated_console || station?.device_name) && (
+            <span className="text-[11px] font-mono-code font-bold px-2 py-0.5 rounded-md bg-blue-500/20 text-cyan-300 border border-blue-500/40 shrink-0">
+              Room: {station.allocated_console || station.device_name}
+            </span>
+          )}
         </div>
 
-        {/* Live Session Telemetry (When Station is Occupied) */}
-        {isOccupied && (
+        {/* Case 2: Live Session Telemetry (When Station is Occupied by Current User or Admin) */}
+        {isOccupied && !isOccupiedByOther && (
           <div className="bg-slate-950/80 rounded-2xl p-3.5 border border-slate-800 mb-3.5 space-y-2">
+            {(station?.allocated_console || station?.device_name) && (
+              <div className="flex justify-between items-center text-xs text-slate-400">
+                <span>Allocated Console / Room:</span>
+                <span className="font-mono-code text-cyan-300 font-bold">
+                  {station.allocated_console || station.device_name}
+                </span>
+              </div>
+            )}
             <div className="flex justify-between items-center text-xs text-slate-400">
               <span className="flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-cyan-400" />
@@ -185,15 +210,31 @@ export const StationCard: React.FC<StationCardProps> = ({
             </div>
           </div>
         )}
+
+        {/* Case 3: Station In Use Privacy Shield (When Occupied by Another User) */}
+        {isOccupiedByOther && (
+          <div className="bg-slate-950/50 rounded-2xl p-4 border border-slate-800/80 mb-3.5 flex flex-col items-center justify-center text-center py-5 gap-2">
+            <div className="w-9 h-9 rounded-full bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-400">
+              <Lock className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-slate-300 uppercase tracking-wider">Station Currently In Use</div>
+              <div className="text-[11px] text-slate-500 mt-1 font-mono-code">
+                Occupied by another player
+                {station?.remaining_minutes ? ` (~${station.remaining_minutes}m remaining)` : ''}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Dynamic Action Buttons */}
       <div className="pt-3 border-t border-slate-800 space-y-2.5">
         {isAvailable ? (
+          /* Case 1: Station is Available */
           <div>
-            <div className="text-[11px] font-mono-code uppercase text-slate-400 mb-2 font-bold flex items-center justify-between">
+            <div className="text-[11px] font-mono-code uppercase text-slate-400 mb-2 font-bold">
               <span>Select Session Duration:</span>
-              <span className="text-emerald-400 text-[10px] font-normal">Tap to customize</span>
             </div>
             
             {/* Dynamic Duration Buttons populated directly from station.pricing_tiers */}
@@ -202,7 +243,7 @@ export const StationCard: React.FC<StationCardProps> = ({
                 <button
                   key={i}
                   onClick={() => handleTierClick(pt)}
-                  className="py-2.5 px-2 rounded-xl bg-slate-950 hover:bg-blue-600/20 border border-slate-800 hover:border-blue-500/60 text-white font-bold transition-all flex flex-col items-center justify-center gap-0.5 shadow-sm group active:scale-95"
+                  className="py-2.5 px-2 rounded-xl bg-slate-950 hover:bg-blue-600/20 border border-slate-800 hover:border-blue-500/60 text-white font-bold transition-all flex flex-col items-center justify-center gap-0.5 shadow-sm group active:scale-95 cursor-pointer"
                   title={`Start session: ${pt.label || `${pt.duration_min}m`}`}
                 >
                   <span className="text-xs font-display tracking-wide group-hover:text-blue-300 transition-colors">
@@ -215,7 +256,14 @@ export const StationCard: React.FC<StationCardProps> = ({
               ))}
             </div>
           </div>
+        ) : isOccupiedByOther ? (
+          /* Case 3: Station Occupied by Another User - Locked */
+          <div className="w-full py-3 px-4 bg-slate-950/70 border border-slate-800 text-slate-500 font-bold rounded-2xl text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-not-allowed select-none">
+            <Lock className="w-3.5 h-3.5 text-slate-600" />
+            <span>Currently in Use</span>
+          </div>
         ) : (
+          /* Case 2: Station Occupied by Current User or Admin */
           <>
             {/* Primary Action on Occupied: Order Food & Drinks */}
             <button

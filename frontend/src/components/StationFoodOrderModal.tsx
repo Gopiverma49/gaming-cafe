@@ -49,11 +49,14 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
 
   const orderMutation = useMutation({
     mutationFn: placeStationOrderApi,
-    onSuccess: () => {
-      // Refresh DB data everywhere
-      queryClient.invalidateQueries({ queryKey: ['admin-menu'] });
-      queryClient.invalidateQueries({ queryKey: ['stations-live'] });
-      queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
+    onSuccess: async () => {
+      // Refresh DB data everywhere immediately
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['stations-live'] }),
+        queryClient.refetchQueries({ queryKey: ['customer-sessions'] }),
+        queryClient.refetchQueries({ queryKey: ['kitchen-orders'] }),
+        queryClient.refetchQueries({ queryKey: ['admin-menu'] }),
+      ]);
 
       addNotification(
         'FOOD_ORDER',

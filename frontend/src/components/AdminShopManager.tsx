@@ -24,6 +24,7 @@ import {
 } from '../api';
 import { MenuItem, RevenueAnalyticsSummary } from '../types';
 import { POLL_INTERVALS, evaluateStockStatus, StockStatusType } from '../constants';
+import { useNotificationStore } from '../store/notificationStore';
 
 const defaultRevenueSummary: RevenueAnalyticsSummary = {
   totalRevenue: 0,
@@ -37,6 +38,7 @@ const defaultRevenueSummary: RevenueAnalyticsSummary = {
 
 export const AdminShopManager: React.FC = () => {
   const queryClient = useQueryClient();
+  const { addNotification } = useNotificationStore();
 
   const { data: menuItems = [] } = useQuery<MenuItem[]>({
     queryKey: ['admin-menu'],
@@ -67,6 +69,11 @@ export const AdminShopManager: React.FC = () => {
     mutationFn: deleteMenuItemApi,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-menu'] });
+      queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
+      addNotification('FOOD_ORDER', '🗑️ Item Deleted', 'Inventory item removed successfully.');
+    },
+    onError: (err: any) => {
+      addNotification('FOOD_ORDER', '⚠️ Delete Failed', err.message || 'Failed to delete item.');
     },
   });
 

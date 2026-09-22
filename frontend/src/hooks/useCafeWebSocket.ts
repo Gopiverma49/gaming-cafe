@@ -15,12 +15,37 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectAttemptRef = useRef(0);
   const reconnectTimeoutRef = useRef<number | null>(null);
+  const pingIntervalRef = useRef<number | null>(null);
   const isUnmountedRef = useRef(false);
   const onEventRef = useRef(onEvent);
 
   useEffect(() => {
     onEventRef.current = onEvent;
   }, [onEvent]);
+
+  const debounceTimerRef = useRef<number | null>(null);
+  const pendingKeysRef = useRef<Set<string>>(new Set());
+
+  const triggerDebouncedInvalidate = useCallback((keys: string[]) => {
+    keys.forEach((k) => pendingKeysRef.current.add(k));
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = window.setTimeout(() => {
+      const keysToInvalidate = Array.from(pendingKeysRef.current);
+      pendingKeysRef.current.clear();
+      keysToInvalidate.forEach((k) => {
+        queryClient.invalidateQueries({ queryKey: [k] });
+      });
+    }, 100);
+  }, [queryClient]);
+
+  const clearPingInterval = () => {
+    if (pingIntervalRef.current) {
+      clearInterval(pingIntervalRef.current);
+      pingIntervalRef.current = null;
+    }
+  };
 
   const connect = useCallback(() => {
     if (isUnmountedRef.current) return;
@@ -43,8 +68,20 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
       ws.onopen = () => {
         setIsConnected(true);
         reconnectAttemptRef.current = 0; // Reset backoff upon successful connection
-        // Optional ping
-        ws.send(JSON.stringify({ type: 'PING' }));
+        // Initial ping
+        try {
+          ws.send(JSON.stringify({ type: 'PING' }));
+        } catch {}
+
+        // Setup active keep-alive heartbeat every 15s to keep proxy & mobile connections alive
+        clearPingInterval();
+        pingIntervalRef.current = window.setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            try {
+              ws.send(JSON.stringify({ type: 'PING' }));
+            } catch {}
+          }
+        }, 15000);
       };
 
       ws.onmessage = (event) => {
@@ -58,29 +95,38 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
             onEventRef.current(wsEvent);
           }
 
-          // Automatically invalidate TanStack Query cache keys based on event_type
+          // Debounced and coalesced query invalidations to prevent thundering herd / request spam
           switch (wsEvent.event_type) {
             case 'SESSION_UPDATED':
             case 'SESSION_STARTED':
             case 'SESSION_COMPLETED':
             case 'SESSION_TRANSFERRED':
-              queryClient.invalidateQueries({ queryKey: ['stations-live'] });
-              queryClient.invalidateQueries({ queryKey: ['desk-session'] });
+            case 'SESSION_CANCELLED':
+            case 'STATION_LOCKED':
+              triggerDebouncedInvalidate([
+                'stations-live',
+                'fleet-categories',
+                'customer-sessions',
+                'kitchen-orders',
+                'admin-customers',
+                'desk-session',
+              ]);
               break;
 
             case 'ORDER_STATUS_CHANGED':
             case 'ORDER_CREATED':
-              queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
-              queryClient.invalidateQueries({ queryKey: ['stations-live'] });
-              queryClient.invalidateQueries({ queryKey: ['desk-session'] });
-              break;
-
-            case 'STATION_LOCKED':
-              queryClient.invalidateQueries({ queryKey: ['stations-live'] });
-              queryClient.invalidateQueries({ queryKey: ['desk-session'] });
+              triggerDebouncedInvalidate([
+                'kitchen-orders',
+                'stations-live',
+                'customer-sessions',
+                'desk-session',
+                'admin-menu',
+                'admin-customers',
+              ]);
               break;
 
             default:
+              triggerDebouncedInvalidate(['stations-live', 'fleet-categories', 'customer-sessions']);
               break;
           }
         } catch {
@@ -90,10 +136,10 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
 
       ws.onclose = () => {
         setIsConnected(false);
+        clearPingInterval();
         if (isUnmountedRef.current) return;
 
         // Exponential backoff: 1s initial, 30s ceiling
-        // delay = min(30000, 1000 * 2^attempt)
         const delay = Math.min(30000, 1000 * Math.pow(2, reconnectAttemptRef.current));
         reconnectAttemptRef.current += 1;
 
@@ -103,9 +149,11 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
       };
 
       ws.onerror = () => {
+        clearPingInterval();
         ws.close();
       };
     } catch {
+      clearPingInterval();
       // Reconnect after 3s on immediate constructor failure
       reconnectTimeoutRef.current = window.setTimeout(() => {
         connect();
@@ -119,6 +167,7 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
 
     return () => {
       isUnmountedRef.current = true;
+      clearPingInterval();
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }

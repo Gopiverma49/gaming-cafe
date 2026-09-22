@@ -11,7 +11,11 @@ import {
   CustomerRecord,
   CustomerSessionRecord,
   RevenueAnalyticsSummary,
+  CategoryAvailability,
+  SessionStartPayload,
 } from './types';
+
+import { useAuthStore } from './store/authStore';
 
 const RAW_BASE = import.meta.env.VITE_API_BASE_URL
   ? String(import.meta.env.VITE_API_BASE_URL).replace(/\/+$/, '')
@@ -21,9 +25,30 @@ export const API_BASE = `${RAW_BASE}/api/v1`;
 
 const DEFAULT_TIMEOUT_MS = 12000;
 
+async function getAuthHeaders(url?: string): Promise<Record<string, string>> {
+  const state = useAuthStore.getState();
+
+  // If in customer portal, strictly use the customer token (or null if not logged in).
+  // Never leak or inject admin token in customer portal, preserving strict session isolation.
+  if (state.currentPortal === 'customer') {
+    const token = state.customerToken || (state.user?.role === 'customer' ? state.token : null);
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  const isAdminRoute = url ? url.includes('/admin/') : state.currentPortal === 'admin';
+  let token = (isAdminRoute && state.adminToken) ? state.adminToken : (state.token || state.adminToken || state.customerToken);
+
+  // If calling an admin route and no admin token is currently set, auto-acquire it!
+  if (isAdminRoute && !token) {
+    token = await useAuthStore.getState().ensureAdminToken();
+  }
+
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 /**
  * Resilient fetch wrapper with network timeout, connection abort safety,
- * and comprehensive error diagnostics.
+ * automatic Bearer token injection, and comprehensive error diagnostics.
  */
 async function safeFetch(
   url: string,
@@ -37,11 +62,34 @@ async function safeFetch(
     ? options.signal
     : controller.signal;
 
+  const headers = new Headers(options.headers || {});
+  const authHeaders = await getAuthHeaders(url);
+  for (const [key, value] of Object.entries(authHeaders)) {
+    if (!headers.has(key)) {
+      headers.set(key, value);
+    }
+  }
+
   try {
-    const res = await fetch(url, {
+    let res = await fetch(url, {
       ...options,
+      headers,
       signal: mergedSignal,
     });
+
+    // Auto-retry once on 401 if calling an admin endpoint
+    if (res.status === 401 && url.includes('/admin/')) {
+      const freshToken = await useAuthStore.getState().ensureAdminToken(true);
+      if (freshToken) {
+        headers.set('Authorization', `Bearer ${freshToken}`);
+        res = await fetch(url, {
+          ...options,
+          headers,
+          signal: mergedSignal,
+        });
+      }
+    }
+
     return res;
   } catch (err: any) {
     if (err.name === 'AbortError') {
@@ -145,12 +193,29 @@ export async function fetchLiveStations(): Promise<StationLive[]> {
   return Array.isArray(data) ? data : [];
 }
 
+export async function fetchFleetCategories(): Promise<CategoryAvailability[]> {
+  const res = await safeFetch(`${API_BASE}/admin/fleet/categories`);
+  const data = await handleResponse<CategoryAvailability[]>(res, []);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function startCategorySessionApi(payload: SessionStartPayload) {
+  const res = await safeFetch(`${API_BASE}/sessions/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<any>(res);
+}
+
 export async function checkInStation(
   stationId: string,
   allocatedMinutes: number = 60,
   customerName?: string,
   customerPhone?: string,
-  userId?: string
+  userId?: string,
+  tierPrice?: number,
+  deviceId?: string
 ) {
   const res = await safeFetch(`${API_BASE}/admin/sessions/check-in`, {
     method: 'POST',
@@ -161,9 +226,11 @@ export async function checkInStation(
       customer_name: customerName,
       customer_phone: customerPhone,
       user_id: userId,
+      tier_price: tierPrice,
+      device_id: deviceId,
     }),
   });
-  return handleResponse<{ message: string; session_id: string; station_id: string }>(res);
+  return handleResponse<{ message: string; session_id: string; station_id: string; device_name?: string }>(res);
 }
 
 export async function transferStation(sessionId: string, targetStationId: string) {

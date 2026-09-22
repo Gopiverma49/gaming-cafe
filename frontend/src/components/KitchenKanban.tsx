@@ -59,6 +59,11 @@ export const KitchenKanban: React.FC = () => {
     mutationFn: deleteMenuItemApi,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-menu'] });
+      queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
+      addNotification('FOOD_ORDER', '🗑️ Item Removed', 'Menu item removed successfully.');
+    },
+    onError: (err: any) => {
+      addNotification('FOOD_ORDER', '⚠️ Delete Failed', err.message || 'Could not delete item.');
     },
   });
 

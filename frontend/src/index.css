@@ -95,3 +95,18 @@
   -webkit-mask-image: linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%);
 }
 
+/* Pulse border only - keeps text and interior 100% solid and crisp */
+@keyframes pulseAmberBorder {
+  0%, 100% {
+    border-color: #f59e0b;
+  }
+  50% {
+    border-color: rgba(245, 158, 11, 0.18);
+  }
+}
+
+.animate-pulse-border {
+  animation: pulseAmberBorder 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+

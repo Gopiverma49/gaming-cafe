@@ -11,9 +11,11 @@ import {
   AlertCircle,
   Coffee,
   Gamepad2,
+  Sparkles,
+  Cpu,
 } from 'lucide-react';
-import { StationLive, PricingTier, MenuItem } from '../types';
-import { checkInStation, fetchAdminMenuItems, placeStationOrderApi } from '../api';
+import { StationLive, PricingTier, MenuItem, CategoryAvailability } from '../types';
+import { checkInStation, fetchAdminMenuItems, placeStationOrderApi, startCategorySessionApi, fetchFleetCategories } from '../api';
 import { useAuthStore } from '../store/authStore';
 import { useLoungeStore } from '../store/loungeStore';
 import { useNotificationStore } from '../store/notificationStore';
@@ -21,7 +23,8 @@ import { SlideToConfirm } from './SlideToConfirm';
 
 interface SessionUpsellDrawerProps {
   isOpen: boolean;
-  station: StationLive | null;
+  station?: StationLive | null;
+  category?: CategoryAvailability | null;
   selectedTier: PricingTier | null;
   onClose: () => void;
   isAdmin?: boolean;
@@ -33,6 +36,7 @@ interface SessionUpsellDrawerProps {
 export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
   isOpen,
   station,
+  category,
   selectedTier,
   onClose,
   isAdmin = false,
@@ -44,6 +48,9 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
   const { user } = useAuthStore();
   const { addBooking, recordCustomerVisit, addStationFoodOrder } = useLoungeStore();
   const { addNotification } = useNotificationStore();
+
+  // Selected hardware device when booking a Category (Solo/Multiplayer -> PS1, PS2, PS3)
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('PS1');
 
   // Customer credentials
   const [customerName, setCustomerName] = useState(defaultCustomerName || user?.name || (isAdmin ? 'Walk-in Gamer' : 'Gamer'));
@@ -63,6 +70,90 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
     staleTime: 10000,
   });
 
+  // Fetch Experience Categories to ensure live device/console availability
+  const { data: fleetCategories = [] } = useQuery<CategoryAvailability[]>({
+    queryKey: ['fleet-categories'],
+    queryFn: fetchFleetCategories,
+    enabled: isOpen,
+    staleTime: 5000,
+  });
+
+  // Effective category resolution (whether opened via StationCard or CategoryCard)
+  const effectiveCategory = useMemo<CategoryAvailability | null>(() => {
+    if (category) return category;
+    if (!station) return null;
+    const nameLower = (station.name || '').toLowerCase();
+    const found = fleetCategories.find(
+      (c) =>
+        c.name.toLowerCase() === nameLower ||
+        c.id.toLowerCase() === nameLower ||
+        (nameLower.includes('car') && c.id === 'car_sim') ||
+        (nameLower.includes('vr') && c.id === 'vr_sim') ||
+        (nameLower.includes('multi') && c.id === 'multiplayer') ||
+        (nameLower.includes('solo') && c.id === 'solo')
+    );
+    if (found) return found;
+
+    if (nameLower.includes('multi')) {
+      return {
+        id: 'multiplayer',
+        name: 'Multiplayer',
+        tier: 'CONSOLE',
+        supported_device_ids: ['PS1', 'PS2', 'PS3'],
+        devices: [
+          { id: 'PS1', name: 'PS1', is_occupied: false },
+          { id: 'PS2', name: 'PS2', is_occupied: false },
+          { id: 'PS3', name: 'PS3', is_occupied: false },
+        ],
+        total_units: 3,
+        available_units: 3,
+        is_available: true,
+        hourly_rate: Number(station.hourly_rate || 220),
+      };
+    }
+    if (nameLower.includes('car')) {
+      return {
+        id: 'car_sim',
+        name: 'Car Simulator',
+        tier: 'SIMULATOR',
+        supported_device_ids: ['PS3'],
+        devices: [{ id: 'PS3', name: 'PS3', is_occupied: false }],
+        total_units: 1,
+        available_units: 1,
+        is_available: true,
+        hourly_rate: Number(station.hourly_rate || 250),
+      };
+    }
+    if (nameLower.includes('vr')) {
+      return {
+        id: 'vr_sim',
+        name: 'VR',
+        tier: 'VR',
+        supported_device_ids: ['VR1'],
+        devices: [{ id: 'VR1', name: 'VR1', is_occupied: false }],
+        total_units: 1,
+        available_units: 1,
+        is_available: true,
+        hourly_rate: Number(station.hourly_rate || 300),
+      };
+    }
+    return {
+      id: 'solo',
+      name: 'Solo',
+      tier: 'CONSOLE',
+      supported_device_ids: ['PS1', 'PS2', 'PS3'],
+      devices: [
+        { id: 'PS1', name: 'PS1', is_occupied: false },
+        { id: 'PS2', name: 'PS2', is_occupied: false },
+        { id: 'PS3', name: 'PS3', is_occupied: false },
+      ],
+      total_units: 3,
+      available_units: 3,
+      is_available: true,
+      hourly_rate: Number(station.hourly_rate || 180),
+    };
+  }, [category, station, fleetCategories]);
+
   const safeMenuItems = useMemo(() => {
     return (Array.isArray(menuItems) ? menuItems : []).filter(
       (item) => item?.is_available !== false && (item?.stock ?? 1) > 0
@@ -74,8 +165,12 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
   const baseStationPrice = Number(
     selectedTier?.price !== undefined
       ? selectedTier.price
-      : station?.default_hourly_rate || station?.hourly_rate || 180
+      : effectiveCategory?.hourly_rate || station?.default_hourly_rate || station?.hourly_rate || 180
   );
+
+  const isConsoleCategory = effectiveCategory && (effectiveCategory.id.toLowerCase() === 'solo' || effectiveCategory.id.toLowerCase() === 'multiplayer');
+  const isCarSim = effectiveCategory && effectiveCategory.id.toLowerCase() === 'car_sim';
+  const isVrSim = effectiveCategory && (effectiveCategory.id.toLowerCase() === 'vr_sim' || effectiveCategory.id.toLowerCase() === 'vr');
 
   // Reset states upon opening
   useEffect(() => {
@@ -86,8 +181,19 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
       setActiveSnackFilter('ALL');
       setErrorMessage(null);
       setIsSubmitting(false);
+
+      if (effectiveCategory) {
+        if (effectiveCategory.id.toLowerCase() === 'car_sim') {
+          setSelectedDeviceId('PS3');
+        } else if (effectiveCategory.id.toLowerCase() === 'vr_sim' || effectiveCategory.id.toLowerCase() === 'vr') {
+          setSelectedDeviceId('VR1');
+        } else {
+          const firstFree = effectiveCategory.devices.find((d) => !d.is_occupied);
+          setSelectedDeviceId(firstFree ? firstFree.id : 'PS1');
+        }
+      }
     }
-  }, [isOpen, defaultCustomerName, defaultCustomerPhone, user, isAdmin]);
+  }, [isOpen, defaultCustomerName, defaultCustomerPhone, user, isAdmin, effectiveCategory]);
 
   // Filtered snacks list
   const displayedSnacks = useMemo(() => {
@@ -118,24 +224,26 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
     return Object.entries(snackQuantities)
       .map(([id, qty]) => {
         const item = safeMenuItems.find((m) => m.id === id);
+        if (!item) return null;
         return {
-          id,
-          name: item?.name || 'Snack',
-          category: item?.category || 'Snack',
-          price: Number(item?.price || 0),
+          id: item.id,
+          name: item.name,
+          category: item.category,
+          price: Number(item.price || 0),
           quantity: qty,
-          total: Number(item?.price || 0) * qty,
+          subtotal: Number(item.price || 0) * qty,
         };
       })
-      .filter((i) => i.quantity > 0);
+      .filter((s): s is NonNullable<typeof s> => s !== null);
   }, [snackQuantities, safeMenuItems]);
 
-  const snacksTotalCost = selectedSnacksList.reduce((sum, item) => sum + item.total, 0);
-  const grandTotalCost = baseStationPrice + snacksTotalCost;
+  const snacksSubtotal = selectedSnacksList.reduce((acc, itm) => acc + itm.subtotal, 0);
+  const snacksTotalCost = snacksSubtotal;
+  const grandTotalCost = baseStationPrice + snacksSubtotal;
 
   // Session committal upon slide confirmation
   const handleConfirmSession = async () => {
-    if (!station) return;
+    if (!station && !effectiveCategory) return;
     setErrorMessage(null);
 
     const finalName = customerName.trim() || user?.name || (isAdmin ? 'Walk-in Gamer' : 'Gamer');
@@ -143,20 +251,47 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
 
     setIsSubmitting(true);
     try {
-      // 1. Check in station session
-      await checkInStation(
-        station.id,
-        durationMinutes,
-        finalName,
-        finalPhone,
-        user?.id
-      );
+      let targetStationId: string;
+      let targetStationName: string;
+
+      const targetCatId = effectiveCategory?.id || (station?.name.toLowerCase().includes('multi') ? 'multiplayer' : station?.name.toLowerCase().includes('car') ? 'car_sim' : station?.name.toLowerCase().includes('vr') ? 'vr_sim' : 'solo');
+
+      // Shared-resource device allocation route
+      try {
+        const sessionResult = await startCategorySessionApi({
+          category_id: targetCatId,
+          device_id: selectedDeviceId,
+          duration_minutes: durationMinutes,
+          customer_name: finalName,
+          customer_phone: finalPhone,
+          user_id: user?.id,
+          tier_price: baseStationPrice,
+        });
+        targetStationId = sessionResult.station_id;
+        targetStationName = sessionResult.station_name || sessionResult.station || effectiveCategory?.name || selectedDeviceId;
+      } catch (catErr: any) {
+        if (station) {
+          const checkInRes = await checkInStation(
+            station.id,
+            durationMinutes,
+            finalName,
+            finalPhone,
+            user?.id,
+            baseStationPrice,
+            selectedDeviceId
+          );
+          targetStationId = checkInRes.station_id || station.id;
+          targetStationName = station.name;
+        } else {
+          throw catErr;
+        }
+      }
 
       // 2. If snacks were selected, place food order for this station
       if (selectedSnacksList.length > 0) {
         try {
           await placeStationOrderApi({
-            station_id: station.id,
+            station_id: targetStationId,
             items: selectedSnacksList.map((s) => ({
               menu_item_id: s.id,
               quantity: s.quantity,
@@ -165,7 +300,7 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
           });
 
           // Update local store for instant live bill breakdown
-          addStationFoodOrder(station.name, selectedSnacksList);
+          addStationFoodOrder(targetStationName, selectedSnacksList);
         } catch (snackErr) {
           console.warn('Snack order placed with note:', snackErr);
         }
@@ -173,14 +308,14 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
 
       // 3. Record local visit & advance booking entry
       addBooking({
-        stationId: station.id,
-        stationName: station.name,
+        stationId: targetStationId,
+        stationName: targetStationName,
         customerName: finalName,
         customerPhone: finalPhone,
         bookingType: 'NOW',
         scheduledTime: 'Immediate Access',
         durationMinutes,
-        hourlyRate: Number(station.hourly_rate || 180),
+        hourlyRate: Number(effectiveCategory?.hourly_rate || category?.hourly_rate || station?.hourly_rate || 180),
         totalCost: grandTotalCost,
         status: 'CONFIRMED',
       });
@@ -191,13 +326,18 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
       addNotification(
         'BOOKING',
         '🎮 Session Started!',
-        `${finalName} started ${station.name} for ${durationMinutes} mins (Total: ₹${grandTotalCost.toFixed(0)}).`
+        `${finalName} started ${targetStationName} for ${durationMinutes} mins (Total: ₹${grandTotalCost.toFixed(0)}).`
       );
 
-      // 5. Invalidate server state across all views
-      await queryClient.invalidateQueries({ queryKey: ['stations-live'] });
-      await queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
-      await queryClient.invalidateQueries({ queryKey: ['admin-menu'] });
+      // 5. Invalidate & immediately refetch server state across all views
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['stations-live'] }),
+        queryClient.refetchQueries({ queryKey: ['fleet-categories'] }),
+        queryClient.refetchQueries({ queryKey: ['customer-sessions'] }),
+        queryClient.refetchQueries({ queryKey: ['kitchen-orders'] }),
+        queryClient.refetchQueries({ queryKey: ['admin-menu'] }),
+        queryClient.refetchQueries({ queryKey: ['admin-customers'] }),
+      ]);
 
       onSuccess?.();
       onClose();
@@ -209,7 +349,9 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
     }
   };
 
-  if (!isOpen || !station) return null;
+  if (!isOpen || (!station && !category && !effectiveCategory)) return null;
+
+  const displayName = effectiveCategory?.name || category?.name || station?.name || 'Station';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
@@ -226,7 +368,7 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
                   Enhance Your Session
                 </h3>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-300 font-mono-code font-bold uppercase">
-                  {station.name}
+                  {displayName}
                 </span>
               </div>
               <p className="text-xs text-slate-400">
@@ -249,6 +391,81 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
             <div className="p-3 rounded-2xl bg-rose-950/80 border border-rose-600/60 text-rose-200 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
               <span>{errorMessage}</span>
+            </div>
+          )}
+
+          {/* Hardware Console / Rig Selector for Experience Categories */}
+          {effectiveCategory && (
+            <div className="bg-slate-950/80 p-3.5 rounded-2xl border border-slate-800 space-y-2.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-300 font-bold uppercase tracking-wider font-mono-code flex items-center gap-1.5">
+                  <Gamepad2 className="w-3.5 h-3.5 text-blue-400" />
+                  <span>HARDWARE ASSET ALLOCATION:</span>
+                </span>
+                {isConsoleCategory && (
+                  <span className="text-[11px] text-slate-500">Pick an available console room</span>
+                )}
+              </div>
+
+              {isConsoleCategory && (
+                <div className="grid grid-cols-3 gap-2">
+                  {effectiveCategory.devices.map((dev) => {
+                    const isSelected = selectedDeviceId === dev.id;
+                    const isBusy = dev.is_occupied;
+                    return (
+                      <button
+                        key={dev.id}
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => setSelectedDeviceId(dev.id)}
+                        className={`py-2 px-2.5 rounded-xl border font-bold text-xs flex flex-col items-center justify-center gap-0.5 transition-all ${
+                          isBusy
+                            ? 'bg-slate-950/60 border-slate-800 text-slate-600 cursor-not-allowed line-through'
+                            : isSelected
+                            ? 'bg-blue-600/30 border-blue-400 text-cyan-300 shadow-md shadow-blue-500/20'
+                            : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500 cursor-pointer'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`w-2 h-2 rounded-full ${
+                              isBusy ? 'bg-rose-500' : isSelected ? 'bg-cyan-400 animate-pulse' : 'bg-emerald-400'
+                            }`}
+                          />
+                          <span className="font-display">{dev.name}</span>
+                        </div>
+                        <span className="text-[10px] font-mono-code font-normal">
+                          {isBusy ? 'Busy' : isSelected ? 'Selected' : 'Available'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {isCarSim && (
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs">
+                  <span className="text-amber-300 font-semibold flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Rig Allocation: Dedicated PS3 Racing Simulator</span>
+                  </span>
+                  <span className="font-mono-code text-[11px] text-emerald-400 font-bold px-2 py-0.5 rounded bg-emerald-500/20">
+                    Locked to PS3
+                  </span>
+                </div>
+              )}
+
+              {isVrSim && (
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-teal-500/10 border border-teal-500/20 text-xs">
+                  <span className="text-teal-300 font-semibold flex items-center gap-1.5">
+                    <Cpu className="w-3.5 h-3.5 text-teal-400" />
+                    <span>Rig Allocation: Dedicated VR1 Headset</span>
+                  </span>
+                  <span className="font-mono-code text-[11px] text-emerald-400 font-bold px-2 py-0.5 rounded bg-emerald-500/20">
+                    Locked to VR1
+                  </span>
+                </div>
+              )}
             </div>
           )}
 

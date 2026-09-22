@@ -151,9 +151,11 @@ function MainDashboard() {
                   LOUNGE
                 </span>
               </div>
-              <p className="text-[10px] sm:text-xs text-slate-400 font-mono-code">
-                {isAdminPortal ? 'Staff Operations Console' : 'Customer Self-Service Terminal'}
-              </p>
+              {isAdminPortal && (
+                <p className="text-[10px] sm:text-xs text-slate-400 font-mono-code">
+                  Staff Operations Console
+                </p>
+              )}
             </div>
           </div>
 
@@ -185,7 +187,7 @@ function MainDashboard() {
                 <BellRing className={`w-4 h-4 ${pendingOrdersCount > 0 ? 'animate-bounce text-amber-400' : ''}`} />
                 <span>Orders</span>
                 {pendingOrdersCount > 0 ? (
-                  <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-amber-400 text-black font-mono-code font-black shadow-sm animate-pulse">
+                  <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-amber-400 text-black font-mono-code font-black shadow-sm border border-amber-300 animate-pulse-border">
                     [ {pendingOrdersCount} ]
                   </span>
                 ) : (

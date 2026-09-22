@@ -8,7 +8,6 @@ import {
   XCircle,
   Clock,
   AlertTriangle,
-  Search,
   Check,
   Ban,
   ShoppingBag,
@@ -50,8 +49,6 @@ export const AdminOrdersDispatcher: React.FC = () => {
 
   // Audio mute state
   const [muted, setMutedState] = useState<boolean>(() => isAudioMuted());
-  // Search query
-  const [searchFilter, setSearchFilter] = useState('');
   // Out-of-Stock Guard Dialog State
   const [outOfStockModal, setOutOfStockModal] = useState<{
     order: Order;
@@ -166,20 +163,28 @@ export const AdminOrdersDispatcher: React.FC = () => {
     }
   }, [rawOrders]);
 
-  // Listen to WebSocket events for instant real-time updates
+  // Listen to WebSocket events for instant real-time updates across sessions and orders
   useCafeWebSocket({
     channel: 'admin',
     onEvent: (event) => {
       if (event.event_type === 'ORDER_CREATED') {
         playOrderChime();
         refetchOrders();
-        queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
-        queryClient.invalidateQueries({ queryKey: ['stations-live'] });
-      } else if (event.event_type === 'ORDER_STATUS_CHANGED') {
+        queryClient.refetchQueries({ queryKey: ['kitchen-orders'] });
+        queryClient.refetchQueries({ queryKey: ['stations-live'] });
+      } else if (
+        event.event_type === 'ORDER_STATUS_CHANGED' ||
+        event.event_type === 'SESSION_UPDATED' ||
+        event.event_type === 'SESSION_STARTED' ||
+        event.event_type === 'SESSION_COMPLETED' ||
+        event.event_type === 'SESSION_TRANSFERRED' ||
+        event.event_type === 'SESSION_CANCELLED' ||
+        event.event_type === 'STATION_LOCKED'
+      ) {
         refetchOrders();
-        queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
-        queryClient.invalidateQueries({ queryKey: ['admin-menu'] });
-        queryClient.invalidateQueries({ queryKey: ['stations-live'] });
+        queryClient.refetchQueries({ queryKey: ['kitchen-orders'] });
+        queryClient.refetchQueries({ queryKey: ['stations-live'] });
+        queryClient.refetchQueries({ queryKey: ['admin-menu'] });
       }
     },
   });
@@ -226,15 +231,8 @@ export const AdminOrdersDispatcher: React.FC = () => {
         };
       });
 
-    if (!searchFilter.trim()) return list;
-    const q = searchFilter.toLowerCase().trim();
-    return list.filter(
-      (o) =>
-        o.stationName.toLowerCase().includes(q) ||
-        o.customerName.toLowerCase().includes(q) ||
-        o.items.some((it) => it.name.toLowerCase().includes(q))
-    );
-  }, [rawOrders, searchFilter]);
+    return list;
+  }, [rawOrders]);
 
   // =========================================================================
   // GROUPED COMPLETED / SERVED SESSIONS LOGIC:
@@ -308,26 +306,17 @@ export const AdminOrdersDispatcher: React.FC = () => {
     }
 
     const allSessions = Array.from(sessionMap.values());
-    const q = searchFilter.toLowerCase().trim();
-    const filtered = q
-      ? allSessions.filter(
-          (s) =>
-            s.stationName.toLowerCase().includes(q) ||
-            s.customerName.toLowerCase().includes(q) ||
-            s.items.some((it) => it.name.toLowerCase().includes(q))
-        )
-      : allSessions;
 
-    const activeList = filtered
+    const activeList = allSessions
       .filter((s) => s.isActive)
       .sort((a, b) => new Date(b.lastOrderTime).getTime() - new Date(a.lastOrderTime).getTime());
 
-    const pastList = filtered
+    const pastList = allSessions
       .filter((s) => !s.isActive)
       .sort((a, b) => new Date(b.lastOrderTime).getTime() - new Date(a.lastOrderTime).getTime());
 
     return { activeServedSessions: activeList, pastServedSessions: pastList };
-  }, [rawOrders, activeSessionIds, searchFilter]);
+  }, [rawOrders, activeSessionIds]);
 
   // Accept handler with Out-of-Stock Guard
   const handleAcceptClick = (order: Order) => {
@@ -389,7 +378,7 @@ export const AdminOrdersDispatcher: React.FC = () => {
                 Live Orders Dispatch
               </h2>
               {pendingOrders.length > 0 ? (
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono-code font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono-code font-bold bg-amber-500/20 text-amber-300 border border-amber-500 animate-pulse-border">
                   {pendingOrders.length} Pending
                 </span>
               ) : (
@@ -401,31 +390,18 @@ export const AdminOrdersDispatcher: React.FC = () => {
           </div>
         </div>
 
-        {/* Toolbar Controls (Refresh Button Removed) */}
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          {/* Quick Search */}
-          <div className="relative flex-1 sm:w-64">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search station or item..."
-              value={searchFilter}
-              onChange={(e) => setSearchFilter(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-slate-950/70 border border-slate-800 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors"
-            />
-          </div>
-
+        {/* Toolbar Controls (Sound Alert & Test Chime) */}
+        <div className="flex items-center gap-2 sm:gap-3">
           {/* Sound Alert Toggle */}
           <button
             onClick={handleToggleMute}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-              muted
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${muted
                 ? 'bg-rose-950/40 border-rose-800/60 text-rose-300 hover:bg-rose-900/50'
                 : 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300 hover:bg-emerald-900/50'
-            }`}
+              }`}
             title={muted ? 'Unmute Audio Alerts' : 'Mute Audio Alerts'}
           >
-            {muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 animate-pulse" />}
+            {muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
             <span>{muted ? 'Alerts Muted' : 'Sound ON'}</span>
           </button>
 
@@ -450,7 +426,7 @@ export const AdminOrdersDispatcher: React.FC = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between px-1">
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
               <h3 className="text-sm font-black text-amber-400 font-display uppercase tracking-wider">
                 Incoming Orders Awaiting Action
               </h3>
@@ -475,7 +451,7 @@ export const AdminOrdersDispatcher: React.FC = () => {
                 return (
                   <div
                     key={ticket.id}
-                    className="relative bg-slate-950/90 rounded-2xl border-2 border-amber-500/60 shadow-[0_0_25px_rgba(245,158,11,0.18)] p-4 sm:p-5 transition-all animate-[pulse_3s_ease-in-out_infinite] hover:border-amber-400"
+                    className="relative bg-slate-950/90 rounded-2xl border-2 border-amber-500 p-4 sm:p-5 animate-pulse-border hover:border-amber-400"
                   >
                     {/* Header */}
                     <div className="flex items-start justify-between gap-2 border-b border-slate-800/80 pb-3">
@@ -581,11 +557,10 @@ export const AdminOrdersDispatcher: React.FC = () => {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowPastSessions(!showPastSessions)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold font-display uppercase tracking-wider transition-all border cursor-pointer ${
-                  showPastSessions
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold font-display uppercase tracking-wider transition-all border cursor-pointer ${showPastSessions
                     ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm'
                     : 'bg-slate-800/90 hover:bg-slate-700 text-slate-200 border-slate-700/80 shadow-sm hover:border-slate-600'
-                }`}
+                  }`}
                 title="View Past Session Orders History"
               >
                 <History className="w-3.5 h-3.5 text-slate-400" />

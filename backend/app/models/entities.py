@@ -77,6 +77,16 @@ class User(Base):
     sessions: Mapped[List["Session"]] = relationship("Session", back_populates="user")
 
 
+class PhysicalDevice(Base):
+    __tablename__ = "devices"
+
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # 'PS1', 'PS2', 'PS3', 'VR1'
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    device_type: Mapped[str] = mapped_column(String(50), default="CONSOLE", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default=StationStatus.AVAILABLE.value, nullable=False)
+    current_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid(as_uuid=True), nullable=True)
+
+
 class Session(Base):
     __tablename__ = "sessions"
 
@@ -108,6 +118,20 @@ class Session(Base):
     )
     status: Mapped[str] = mapped_column(String(20), default=SessionStatus.ACTIVE.value, nullable=False)
     total_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    allocated_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=True)
+    tier_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    category_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    device_name: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    station_name: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    console_room: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
+    @property
+    def console(self) -> str:
+        return self.console_room or self.device_name or ""
+
+    @property
+    def room(self) -> str:
+        return self.console
 
     __table_args__ = (
         CheckConstraint(
@@ -115,11 +139,11 @@ class Session(Base):
             name="ck_session_status",
         ),
         Index(
-            "uq_active_station_session",
-            "station_id",
+            "uq_active_device_session",
+            "device_name",
             unique=True,
-            postgresql_where=(status == "ACTIVE"),
-            sqlite_where=text("status = 'ACTIVE'"),
+            postgresql_where=text("status = 'ACTIVE' AND device_name IS NOT NULL"),
+            sqlite_where=text("status = 'ACTIVE' AND device_name IS NOT NULL"),
         ),
     )
 
@@ -144,7 +168,7 @@ class MenuItem(Base):
     min_stock_alert: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    order_items: Mapped[List["OrderItem"]] = relationship("OrderItem", back_populates="menu_item")
+    order_items: Mapped[List["OrderItem"]] = relationship("OrderItem", back_populates="menu_item", cascade="all, delete-orphan")
 
 
 class Order(Base):

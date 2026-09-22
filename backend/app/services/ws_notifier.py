@@ -72,18 +72,39 @@ def buffer_ws_event(session: AsyncSession, channel: str, event_type: str, payloa
     The event will strictly be broadcast ONLY after session.commit().
     If the session rolls back, the buffer is dropped immediately.
     """
-    # AsyncSession wraps sync_session
     sync_session = session.sync_session
     if "event_buffer" not in sync_session.info:
         sync_session.info["event_buffer"] = []
 
-    message = {
-        "channel": channel,
-        "event_type": event_type,
-        "payload": payload,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+    existing = sync_session.info["event_buffer"]
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    target_channels = [channel]
+    # Operational events notify both admin and customer portals
+    operational_events = {
+        "SESSION_STARTED",
+        "SESSION_UPDATED",
+        "SESSION_COMPLETED",
+        "SESSION_TRANSFERRED",
+        "SESSION_CANCELLED",
+        "ORDER_CREATED",
+        "ORDER_STATUS_CHANGED",
+        "STATION_LOCKED",
     }
-    sync_session.info["event_buffer"].append(message)
+    if event_type in operational_events:
+        if "admin" not in target_channels:
+            target_channels.append("admin")
+        if "customer" not in target_channels:
+            target_channels.append("customer")
+
+    for ch in target_channels:
+        if not any(e.get("channel") == ch and e.get("event_type") == event_type for e in existing):
+            existing.append({
+                "channel": ch,
+                "event_type": event_type,
+                "payload": payload,
+                "timestamp": now_iso,
+            })
 
 
 # Hook into SQLAlchemy commit & rollback events
