@@ -145,6 +145,8 @@ class Session(Base):
             postgresql_where=text("status = 'ACTIVE' AND device_name IS NOT NULL"),
             sqlite_where=text("status = 'ACTIVE' AND device_name IS NOT NULL"),
         ),
+        Index("ix_sessions_status_started", "status", "started_at"),
+        Index("ix_sessions_customer_phone", "customer_phone"),
     )
 
     station: Mapped["Station"] = relationship("Station", back_populates="sessions")
@@ -167,6 +169,10 @@ class MenuItem(Base):
     stock: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
     min_stock_alert: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    __table_args__ = (
+        Index("ix_menu_category_available", "category", "is_available"),
+    )
 
     order_items: Mapped[List["OrderItem"]] = relationship("OrderItem", back_populates="menu_item", cascade="all, delete-orphan")
 
@@ -197,6 +203,8 @@ class Order(Base):
             "status IN ('QUEUED', 'PREPARING', 'SERVED', 'CANCELLED')",
             name="ck_order_status",
         ),
+        Index("ix_orders_session_status", "session_id", "status"),
+        Index("ix_orders_status_created", "status", "created_at"),
     )
 
     session: Mapped["Session"] = relationship("Session", back_populates="orders")

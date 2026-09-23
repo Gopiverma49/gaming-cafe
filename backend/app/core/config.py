@@ -28,6 +28,7 @@ class Settings(BaseSettings):
 
     # Business Billing & Session Configuration
     DEFAULT_SESSION_DURATION_MINUTES: int = 60
+    DEFAULT_HOURLY_RATE: float = 180.0
     MINIMUM_BILLING_MINUTES: int = 30
     GRACE_PERIOD_MINUTES: int = 5
     MINIMUM_BILLABLE_HOURS: float = 0.5

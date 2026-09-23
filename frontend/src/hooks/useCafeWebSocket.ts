@@ -50,22 +50,34 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
   const connect = useCallback(() => {
     if (isUnmountedRef.current) return;
 
-    // Build WebSocket URL
+    // Build WebSocket URL: When accessed locally or via Vite proxy, always use the same origin WebSocket proxy
     let wsUrl: string;
-    if (import.meta.env.VITE_WS_URL) {
-      let baseWs = (import.meta.env.VITE_WS_URL as string).replace(/\/+$/, '');
-      if (baseWs.startsWith('wsss://')) {
-        baseWs = baseWs.replace(/^wsss:\/\//, 'wss://');
-      } else if (baseWs.startsWith('https://')) {
-        baseWs = baseWs.replace(/^https:\/\//, 'wss://');
-      } else if (baseWs.startsWith('http://')) {
-        baseWs = baseWs.replace(/^http:\/\//, 'ws://');
+    if (typeof window !== 'undefined') {
+      const host = window.location.hostname;
+      if (
+        host === 'localhost' ||
+        host === '127.0.0.1' ||
+        host.includes('trycloudflare.com') ||
+        host.includes('ngrok')
+      ) {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        wsUrl = `${protocol}//${window.location.host}/ws/${channel}`;
+      } else if (import.meta.env.VITE_WS_URL) {
+        let baseWs = (import.meta.env.VITE_WS_URL as string).replace(/\/+$/, '');
+        if (baseWs.startsWith('wsss://')) {
+          baseWs = baseWs.replace(/^wsss:\/\//, 'wss://');
+        } else if (baseWs.startsWith('https://')) {
+          baseWs = baseWs.replace(/^https:\/\//, 'wss://');
+        } else if (baseWs.startsWith('http://')) {
+          baseWs = baseWs.replace(/^http:\/\//, 'ws://');
+        }
+        wsUrl = `${baseWs}/ws/${channel}`;
+      } else {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        wsUrl = `${protocol}//${window.location.host}/ws/${channel}`;
       }
-      wsUrl = `${baseWs}/ws/${channel}`;
     } else {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.host;
-      wsUrl = `${protocol}//${host}/ws/${channel}`;
+      wsUrl = `ws://127.0.0.1:8000/ws/${channel}`;
     }
 
     try {
@@ -75,6 +87,7 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
       ws.onopen = () => {
         setIsConnected(true);
         reconnectAttemptRef.current = 0; // Reset backoff upon successful connection
+        console.log(`[WebSocket] Connected to channel "${channel}" via ${wsUrl}`);
         // Initial ping
         try {
           ws.send(JSON.stringify({ type: 'PING' }));
@@ -98,6 +111,7 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
 
           const wsEvent = parsed as WebSocketEvent;
           setLastEvent(wsEvent);
+          console.log(`[WebSocket Event Received] ${wsEvent.event_type} on channel "${channel}"`, wsEvent.payload);
           if (onEventRef.current) {
             onEventRef.current(wsEvent);
           }
@@ -112,6 +126,7 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
             case 'SESSION_CANCELLED':
             case 'STATION_LOCKED':
               triggerDebouncedInvalidate([
+                'station-matrix',
                 'stations-live',
                 'fleet-categories',
                 'customer-sessions',
@@ -124,6 +139,7 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
             case 'ORDER_STATUS_CHANGED':
             case 'ORDER_CREATED':
               triggerDebouncedInvalidate([
+                'station-matrix',
                 'kitchen-orders',
                 'stations-live',
                 'customer-sessions',
@@ -134,7 +150,12 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
               break;
 
             default:
-              triggerDebouncedInvalidate(['stations-live', 'fleet-categories', 'customer-sessions']);
+              triggerDebouncedInvalidate([
+                'station-matrix',
+                'stations-live',
+                'fleet-categories',
+                'customer-sessions',
+              ]);
               break;
           }
         } catch {

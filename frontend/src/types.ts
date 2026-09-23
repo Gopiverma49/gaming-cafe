@@ -218,8 +218,10 @@ export interface CategoryAvailability {
 }
 
 export interface SessionStartPayload {
-  category_id: string;
+  category_id?: string;
   device_id?: string;
+  mode?: string;
+  station_id?: string;
   duration_minutes: number;
   customer_name?: string;
   customer_phone?: string;
@@ -242,6 +244,49 @@ export interface SessionResponse {
   tier_price?: number | string;
   category_id?: string;
   device_name?: string;
+}
+
+export interface MatrixSession {
+  session_id: string;
+  station_id: string;
+  mode: string;
+  mode_name: string;
+  customer_name: string;
+  customer_phone?: string | null;
+  started_at: string;
+  elapsed_minutes: number;
+  remaining_minutes: number;
+  allocated_minutes: number;
+  time_charge: number;
+  orders_charge: number;
+  running_total: number;
+  active_orders_count: number;
+  hourly_rate: number;
+  pricing_tiers: PricingTier[];
+}
+
+export interface MatrixStation {
+  id: string;
+  name: string;
+  device_type: 'CONSOLE' | 'SIMULATOR' | 'VR' | string;
+  status: 'AVAILABLE' | 'OCCUPIED' | 'MAINTENANCE';
+  supported_modes: string[];
+  active_session?: MatrixSession | null;
+}
+
+export interface MatrixMode {
+  id: string;
+  name: string;
+  tier: string;
+  hourly_rate: number;
+  pricing_tiers: PricingTier[];
+  supported_stations: string[];
+}
+
+export interface StationMatrixData {
+  modes: MatrixMode[];
+  stations: MatrixStation[];
+  vr_session?: MatrixSession | null;
 }
 
 

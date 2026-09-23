@@ -153,3 +153,67 @@ async def test_revenue_analytics_database_endpoint(orders_test_db):
         assert "foodRevenue" in data
         assert "chartData" in data
         assert isinstance(data["chartData"], list)
+
+
+@pytest.mark.asyncio
+async def test_station_food_order_with_station_name_or_session_id(orders_test_db):
+    from app.core.security import create_admin_token
+    transport = ASGITransport(app=app)
+    headers = {"Authorization": f"Bearer {create_admin_token()}"}
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Start a session on PS5-VIP
+        checkin_res = await client.post(
+            "/api/v1/admin/sessions/check-in",
+            headers=headers,
+            json={
+                "station_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "customer_name": "Matrix Gamer",
+                "customer_phone": "9998887776",
+                "allocated_minutes": 60,
+            },
+        )
+        assert checkin_res.status_code == 200
+        session_id = checkin_res.json()["session_id"]
+
+        # Place food order using string station_id "PS5-VIP" and session_id
+        order_res = await client.post(
+            "/api/v1/admin/orders/station-order",
+            headers=headers,
+            json={
+                "station_id": "PS5-VIP",
+                "session_id": session_id,
+                "customer_name": "Matrix Gamer",
+                "items": [
+                    {"menu_item_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "quantity": 1}
+                ],
+            },
+        )
+        assert order_res.status_code == 201
+        data = order_res.json()
+        assert data["status"] == "QUEUED"
+        assert len(data["items"]) == 1
+
+        # Verify customer directory captures this gamer
+        cust_res = await client.get("/api/v1/admin/customers", headers=headers)
+        assert cust_res.status_code == 200
+        cust_list = cust_res.json()
+        assert any("Matrix Gamer" in c["name"] or c["phone"] == "9998887776" for c in cust_list)
+
+
+@pytest.mark.asyncio
+async def test_station_matrix_strictly_three_columns_and_vr_isolation(orders_test_db):
+    from app.core.security import create_admin_token
+    transport = ASGITransport(app=app)
+    headers = {"Authorization": f"Bearer {create_admin_token()}"}
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        matrix_res = await client.get("/api/v1/admin/fleet/matrix", headers=headers)
+        assert matrix_res.status_code == 200
+        data = matrix_res.json()
+
+        # Strictly 3 columns at all times
+        station_names = [s["name"] for s in data["stations"]]
+        assert station_names == ["PS1", "PS2", "PS3"]
+        assert "VR1" not in station_names
+
+        # vr_session field is present
+        assert "vr_session" in data

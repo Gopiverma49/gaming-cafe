@@ -1,7 +1,7 @@
 import uuid
 from decimal import Decimal
 from datetime import datetime
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Union
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 from app.core.config import settings
@@ -96,12 +96,14 @@ class CheckInRequest(BaseModel):
 
 class TransferRequest(BaseModel):
     session_id: uuid.UUID
-    target_station_id: uuid.UUID
+    target_station_id: Optional[uuid.UUID] = None
+    target_device: Optional[str] = None
 
 
 class CheckoutRequest(BaseModel):
     session_id: uuid.UUID
     payment_method: PaymentMethod
+    discount_percent: Optional[Decimal] = None
 
 
 class SessionResponse(BaseModel):
@@ -181,13 +183,74 @@ class CategoryAvailabilityResponse(BaseModel):
 
 
 class SessionStartRequest(BaseModel):
-    category_id: str
+    category_id: Optional[str] = None
+    mode: Optional[str] = None
     device_id: Optional[str] = None  # 'PS1', 'PS2', 'PS3', 'VR1' or Station UUID
+    station_id: Optional[str] = None
     duration_minutes: int = Field(default=60, ge=5)
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
     user_id: Optional[str] = None
     tier_price: Optional[Decimal] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_mode_and_station(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Normalize mode -> category_id
+            if data.get("mode") and not data.get("category_id"):
+                data["category_id"] = data["mode"]
+            # Normalize station_id -> device_id
+            if data.get("station_id") and not data.get("device_id"):
+                data["device_id"] = data["station_id"]
+        return data
+
+
+class SessionExtendRequest(BaseModel):
+    minutes: int = Field(default=30, ge=1)
+
+
+class MatrixSessionDetail(BaseModel):
+    session_id: uuid.UUID
+    station_id: str
+    mode: str
+    mode_name: str
+    customer_name: str
+    customer_phone: Optional[str] = None
+    started_at: datetime
+    elapsed_minutes: int
+    remaining_minutes: int
+    allocated_minutes: int
+    time_charge: Decimal
+    orders_charge: Decimal
+    running_total: Decimal
+    active_orders_count: int = 0
+    hourly_rate: Decimal
+    pricing_tiers: List[PricingTier] = Field(default_factory=list)
+
+
+class MatrixStationColumn(BaseModel):
+    id: str
+    name: str
+    device_type: str = "CONSOLE"
+    status: str = "AVAILABLE"
+    supported_modes: List[str] = Field(default_factory=list)
+    active_session: Optional[MatrixSessionDetail] = None
+
+
+class MatrixModeResponse(BaseModel):
+    id: str
+    name: str
+    tier: str
+    hourly_rate: Decimal
+    pricing_tiers: List[PricingTier] = Field(default_factory=list)
+    supported_stations: List[str] = Field(default_factory=list)
+
+
+class StationMatrixResponse(BaseModel):
+    modes: List[MatrixModeResponse]
+    stations: List[MatrixStationColumn]
+    vr_session: Optional[MatrixSessionDetail] = None
 
 
 # Menu & Order Schemas
@@ -248,7 +311,8 @@ class OrderCreateRequest(BaseModel):
 
 
 class StationOrderCreateRequest(BaseModel):
-    station_id: uuid.UUID
+    station_id: Union[uuid.UUID, str]
+    session_id: Optional[Union[uuid.UUID, str]] = None
     items: List[OrderItemCreate] = Field(..., min_length=1)
     customer_name: Optional[str] = None
 

@@ -333,6 +333,8 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
 
       // 5. Invalidate & immediately refetch server state across all views
       await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['station-matrix'] }),
+        queryClient.refetchQueries({ queryKey: ['station-matrix'] }),
         queryClient.refetchQueries({ queryKey: ['stations-live'] }),
         queryClient.refetchQueries({ queryKey: ['fleet-categories'] }),
         queryClient.refetchQueries({ queryKey: ['customer-sessions'] }),

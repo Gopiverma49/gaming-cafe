@@ -11,52 +11,6 @@ from app.main import app
 from app.models.entities import Station, MenuItem
 
 
-@pytest_asyncio.fixture
-async def test_db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    # Seed sample stations & menu
-    async with async_session() as session:
-        st1 = Station(
-            id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
-            name="TEST-RIG-01",
-            tier="VIP",
-            hourly_rate=Decimal("200.00"),
-            status="AVAILABLE",
-        )
-        st2 = Station(
-            id=uuid.UUID("22222222-2222-2222-2222-222222222222"),
-            name="TEST-RIG-02",
-            tier="STANDARD",
-            hourly_rate=Decimal("150.00"),
-            status="AVAILABLE",
-        )
-        menu1 = MenuItem(
-            id=uuid.UUID("33333333-3333-3333-3333-333333333333"),
-            name="Energy Drink",
-            category="Beverages",
-            price=Decimal("100.00"),
-            is_available=True,
-        )
-        session.add_all([st1, st2, menu1])
-        await session.commit()
-
-    async def override_get_db():
-        async with async_session() as s:
-            yield s
-
-    app.dependency_overrides[get_db] = override_get_db
-
-    yield
-
-    app.dependency_overrides.clear()
-    await engine.dispose()
-
-
 @pytest.mark.asyncio
 async def test_full_cafe_lifecycle_flow(test_db):
     transport = ASGITransport(app=app)
@@ -538,6 +492,118 @@ async def test_custom_admin_created_station_lifecycle(test_db):
         assert live_st is not None
         assert live_st["is_occupied"] is True
         assert live_st["active_session_id"] == sess_id
+
+
+@pytest.mark.asyncio
+async def test_console_management_2d_matrix(test_db):
+    """
+    Test 2D Matrix Dashboard for Console Management:
+    1. Verify GET /api/v1/admin/fleet/matrix layout (Modes as rows, Physical Stations as columns).
+    2. Start session using { station_id, mode, duration_minutes }.
+    3. Verify matrix state updates: State A (Active Here) and State C (Occupied Elsewhere).
+    4. Test session extension (+30m).
+    5. Test session transfer to available device.
+    """
+    from app.core.security import create_admin_token
+    transport = ASGITransport(app=app)
+    headers = {"Authorization": f"Bearer {create_admin_token()}"}
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Fetch initial matrix
+        matrix_res = await client.get("/api/v1/admin/fleet/matrix", headers=headers)
+        assert matrix_res.status_code == 200
+        matrix_data = matrix_res.json()
+
+        assert "modes" in matrix_data
+        assert "stations" in matrix_data
+
+        mode_ids = [m["id"] for m in matrix_data["modes"]]
+        assert "solo" in mode_ids
+        assert "multiplayer" in mode_ids
+        assert "car_sim" in mode_ids
+
+        station_names = [s["name"] for s in matrix_data["stations"]]
+        assert "PS1" in station_names
+        assert "PS2" in station_names
+        assert "PS3" in station_names
+
+        # 2. Start session using payload: { station_id, mode, duration_minutes }
+        start_payload = {
+            "station_id": "PS1",
+            "mode": "Solo",
+            "duration_minutes": 60,
+            "customer_name": "Test Gamer",
+        }
+        start_res = await client.post("/api/v1/admin/sessions/start", json=start_payload, headers=headers)
+        assert start_res.status_code == 201
+        session_info = start_res.json()
+        sess_id = session_info["id"]
+
+        # 3. Verify matrix reflects State A on PS1
+        matrix_res2 = await client.get("/api/v1/admin/fleet/matrix", headers=headers)
+        assert matrix_res2.status_code == 200
+        matrix_data2 = matrix_res2.json()
+
+        ps1 = next(s for s in matrix_data2["stations"] if s["name"] == "PS1")
+        assert ps1["status"] == "OCCUPIED"
+        assert ps1["active_session"] is not None
+        assert ps1["active_session"]["session_id"] == sess_id
+        assert ps1["active_session"]["mode"] == "solo"
+        assert ps1["active_session"]["allocated_minutes"] == 60
+
+        # 4. Test quick extension (+30m)
+        ext_res = await client.post(
+            f"/api/v1/admin/sessions/{sess_id}/extend",
+            json={"minutes": 30},
+            headers=headers,
+        )
+        assert ext_res.status_code == 200
+        ext_data = ext_res.json()
+        assert ext_data["allocated_minutes"] == 90
+
+        # 5. Verify matrix reflects extended duration
+        matrix_res3 = await client.get("/api/v1/admin/fleet/matrix", headers=headers)
+        ps1_ext = next(s for s in matrix_res3.json()["stations"] if s["name"] == "PS1")
+        assert ps1_ext["active_session"]["allocated_minutes"] == 90
+
+        # 6. Test session transfer to device PS2
+        trans_res = await client.post(
+            "/api/v1/admin/sessions/transfer",
+            json={"session_id": sess_id, "target_device": "PS2"},
+            headers=headers,
+        )
+        assert trans_res.status_code == 200
+        trans_data = trans_res.json()
+        assert trans_data["new_device_name"] == "PS2"
+
+        # Verify PS1 is now AVAILABLE and PS2 is now OCCUPIED
+        matrix_res4 = await client.get("/api/v1/admin/fleet/matrix", headers=headers)
+        stations4 = {s["name"]: s for s in matrix_res4.json()["stations"]}
+        assert stations4["PS1"]["status"] == "AVAILABLE"
+        assert stations4["PS1"]["active_session"] is None
+        assert stations4["PS2"]["status"] == "OCCUPIED"
+        assert stations4["PS2"]["active_session"]["session_id"] == sess_id
+
+        # 7. Checkout the session with 10% discount and verify matrix resets and discounted total
+        checkout_res = await client.post(
+            "/api/v1/admin/checkout",
+            json={
+                "session_id": sess_id,
+                "payment_method": "CASH",
+                "discount_percent": 10,
+            },
+            headers=headers,
+        )
+        assert checkout_res.status_code == 200
+        checkout_data = checkout_res.json()
+        assert checkout_data["payment_status"] in ("COMPLETED", "PAID")
+        # 90m base total is 270.00; with 10% discount (27.00), total is 243.00
+        assert float(checkout_data["total_amount"]) == 243.00
+
+        matrix_res5 = await client.get("/api/v1/admin/fleet/matrix", headers=headers)
+        stations5 = {s["name"]: s for s in matrix_res5.json()["stations"]}
+        assert stations5["PS2"]["status"] == "AVAILABLE"
+        assert stations5["PS2"]["active_session"] is None
 
 
 

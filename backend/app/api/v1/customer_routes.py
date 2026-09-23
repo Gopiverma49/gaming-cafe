@@ -299,7 +299,7 @@ async def get_customer_sessions(
         started_at = ensure_utc(s.started_at)
         elapsed_min = max(0, int((now - started_at).total_seconds() // 60))
         station_name = s.station.name if s.station else "Station"
-        hourly_rate = float(s.station.hourly_rate) if s.station else 180.0
+        hourly_rate = float(s.station.hourly_rate) if s.station else settings.DEFAULT_HOURLY_RATE
 
         if s.status == SessionStatus.ACTIVE.value and s.station:
             if s.tier_price is not None:

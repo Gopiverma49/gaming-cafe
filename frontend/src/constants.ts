@@ -2,12 +2,14 @@ import { PricingTier } from './types';
 
 // ---------------------------------------------------------------------------
 // Real-time Query Polling Intervals (in milliseconds)
+// WebSocket and mutation cache invalidations provide instant real-time sync.
+// These intervals serve as a gentle, low-overhead fallback.
 // ---------------------------------------------------------------------------
 export const POLL_INTERVALS = {
-  STATIONS: 3000,
+  STATIONS: 4000,
   ORDERS: 5000,
   CUSTOMERS: 10000,
-  MENU: 15000,
+  MENU: 30000,
   KITCHEN_BADGE: 10000,
 } as const;
 
@@ -55,11 +57,13 @@ export function evaluateStockStatus(stock: number | null | undefined): StockStat
 }
 
 // ---------------------------------------------------------------------------
-// Standard Default Pricing Slabs
+// Standard Default Pricing Slabs & Rates
 // ---------------------------------------------------------------------------
+export const DEFAULT_HOURLY_RATE = 180;
+
 export const DEFAULT_PRICING_TIERS: PricingTier[] = [
   { duration_min: 30, price: 100, label: '30 mins' },
-  { duration_min: 60, price: 180, label: '1 hr' },
+  { duration_min: 60, price: DEFAULT_HOURLY_RATE, label: '1 hr' },
   { duration_min: 120, price: 320, label: '2 hrs' },
 ];
 

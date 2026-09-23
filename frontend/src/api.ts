@@ -13,15 +13,34 @@ import {
   RevenueAnalyticsSummary,
   CategoryAvailability,
   SessionStartPayload,
+  StationMatrixData,
 } from './types';
 
 import { useAuthStore } from './store/authStore';
 
-const RAW_BASE = import.meta.env.VITE_API_BASE_URL
-  ? String(import.meta.env.VITE_API_BASE_URL).replace(/\/+$/, '')
-  : '';
+function resolveApiBase(): string {
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    // On localhost or 127.0.0.1, always use relative path '' so requests go through
+    // Vite's local reverse proxy directly to 127.0.0.1:8000 with sub-5ms latency,
+    // completely avoiding the external Cloudflare tunnel.
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return '';
+    }
+    // If accessing the UI through Cloudflare/ngrok tunnel, use relative path as well
+    // so Vite reverse-proxies it locally on the host without cross-origin CORS overhead.
+    if (host.includes('trycloudflare.com') || host.includes('ngrok')) {
+      return '';
+    }
+  }
+  const envBase = import.meta.env.VITE_API_BASE_URL;
+  if (envBase) {
+    return String(envBase).replace(/\/+$/, '');
+  }
+  return '';
+}
 
-export const API_BASE = `${RAW_BASE}/api/v1`;
+export const API_BASE = `${resolveApiBase()}/api/v1`;
 
 const DEFAULT_TIMEOUT_MS = 12000;
 
@@ -83,7 +102,8 @@ async function safeFetch(
       throw new Error(`Request timed out after ${timeoutMs / 1000}s. Please check backend server status.`);
     }
     if (err instanceof TypeError && err.message.toLowerCase().includes('failed to fetch')) {
-      throw new Error('Unable to connect to backend server. Please verify the API is running on localhost:8000.');
+      const targetHost = resolveApiBase() || (typeof window !== 'undefined' ? window.location.origin : 'API server');
+      throw new Error(`Unable to connect to backend server. Please verify the API is reachable at ${targetHost}.`);
     }
     throw err;
   } finally {
@@ -103,7 +123,15 @@ async function handleResponse<T>(res: Response, fallbackValue?: T): Promise<T> {
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
         const errJson = await res.json();
-        errorDetail = errJson.detail || errJson.message || JSON.stringify(errJson);
+        if (Array.isArray(errJson.detail)) {
+          errorDetail = errJson.detail.map((e: any) => e.msg || e.message || JSON.stringify(e)).join(', ');
+        } else if (typeof errJson.detail === 'object' && errJson.detail !== null) {
+          errorDetail = errJson.detail.message || errJson.detail.detail || JSON.stringify(errJson.detail);
+        } else if (typeof errJson.detail === 'string') {
+          errorDetail = errJson.detail;
+        } else {
+          errorDetail = errJson.message || JSON.stringify(errJson);
+        }
       } else {
         const text = await res.text();
         if (text && text.length < 200) {
@@ -186,11 +214,33 @@ export async function fetchFleetCategories(): Promise<CategoryAvailability[]> {
   return Array.isArray(data) ? data : [];
 }
 
+export async function fetchStationMatrix(): Promise<StationMatrixData> {
+  const res = await safeFetch(`${API_BASE}/admin/fleet/matrix`);
+  const data = await handleResponse<StationMatrixData>(res, { modes: [], stations: [] });
+  return data && Array.isArray(data.modes) && Array.isArray(data.stations) ? data : { modes: [], stations: [] };
+}
+
+export async function extendSessionApi(sessionId: string, minutes: number = 30) {
+  const res = await safeFetch(`${API_BASE}/admin/sessions/${sessionId}/extend`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ minutes }),
+  });
+  return handleResponse<{ message: string; session_id: string; allocated_minutes: number }>(res);
+}
+
 export async function startCategorySessionApi(payload: SessionStartPayload) {
+  const normalizedPayload: any = {
+    ...payload,
+    category_id: payload.category_id || payload.mode,
+    mode: payload.mode || payload.category_id,
+    device_id: payload.device_id || payload.station_id,
+    station_id: payload.station_id || payload.device_id,
+  };
   const res = await safeFetch(`${API_BASE}/sessions/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(normalizedPayload),
   });
   return handleResponse<any>(res);
 }
@@ -220,16 +270,21 @@ export async function checkInStation(
   return handleResponse<{ message: string; session_id: string; station_id: string; device_name?: string }>(res);
 }
 
-export async function transferStation(sessionId: string, targetStationId: string) {
+export async function transferStation(
+  sessionId: string,
+  targetStationId?: string,
+  targetDevice?: string
+) {
+  const payload: any = { session_id: sessionId };
+  if (targetStationId) payload.target_station_id = targetStationId;
+  if (targetDevice) payload.target_device = targetDevice;
+
   const res = await safeFetch(`${API_BASE}/admin/sessions/transfer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      session_id: sessionId,
-      target_station_id: targetStationId,
-    }),
+    body: JSON.stringify(payload),
   });
-  return handleResponse<{ message: string; session_id: string; new_station_id: string }>(res);
+  return handleResponse<{ message: string; session_id: string; new_station_id: string; new_device_name?: string }>(res);
 }
 
 export async function createStation(data: {
@@ -274,7 +329,11 @@ export async function deleteStation(stationId: string) {
   return handleResponse<void>(res);
 }
 
-export async function checkoutSession(sessionId: string, paymentMethod: 'CASH' | 'UPI'): Promise<CheckoutResult> {
+export async function checkoutSession(
+  sessionId: string,
+  paymentMethod: 'CASH' | 'UPI',
+  discountPercent: number = 0
+): Promise<CheckoutResult> {
   const idempotencyKey = `chk-${sessionId}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   const res = await safeFetch(`${API_BASE}/admin/sessions/checkout`, {
     method: 'POST',
@@ -285,6 +344,7 @@ export async function checkoutSession(sessionId: string, paymentMethod: 'CASH' |
     body: JSON.stringify({
       session_id: sessionId,
       payment_method: paymentMethod,
+      discount_percent: discountPercent,
     }),
   });
   return handleResponse<CheckoutResult>(res);
@@ -416,6 +476,7 @@ export async function restockMenuItemApi(itemId: string, amount: number): Promis
 // ---------------------------------------------------------------------------
 export async function placeStationOrderApi(data: {
   station_id: string;
+  session_id?: string | null;
   items: { menu_item_id: string; quantity: number }[];
   customer_name?: string;
 }): Promise<Order> {

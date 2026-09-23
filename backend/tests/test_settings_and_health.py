@@ -52,3 +52,17 @@ async def test_cors_preflight_idempotency_key_allowed():
         allowed_headers = res.headers.get("access-control-allow-headers", "").lower()
         assert "idempotency-key" in allowed_headers
 
+
+@pytest.mark.asyncio
+async def test_health_check_database_connectivity(test_db):
+    from httpx import AsyncClient, ASGITransport
+    from app.main import app
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.get("/health")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "healthy"
+        assert data["database"] == "healthy"
+

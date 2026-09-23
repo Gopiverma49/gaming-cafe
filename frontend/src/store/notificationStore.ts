@@ -34,13 +34,8 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
 
     set({
       notifications: [newNotif, ...get().notifications.slice(0, 49)],
-      activeToast: newNotif,
+      activeToast: null,
     });
-
-    // Automatically auto-dismiss toast after 6 seconds
-    setTimeout(() => {
-      set((state) => (state.activeToast?.id === newNotif.id ? { activeToast: null } : {}));
-    }, 6000);
   },
 
   dismissToast: () => set({ activeToast: null }),

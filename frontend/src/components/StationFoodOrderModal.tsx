@@ -53,6 +53,8 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
       // Refresh DB data everywhere immediately
       await Promise.all([
         queryClient.refetchQueries({ queryKey: ['stations-live'] }),
+        queryClient.refetchQueries({ queryKey: ['station-matrix'] }),
+        queryClient.refetchQueries({ queryKey: ['admin-customers'] }),
         queryClient.refetchQueries({ queryKey: ['customer-sessions'] }),
         queryClient.refetchQueries({ queryKey: ['kitchen-orders'] }),
         queryClient.refetchQueries({ queryKey: ['admin-menu'] }),
@@ -141,11 +143,12 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
     // Call backend API to save order in DB and decrement inventory stock atomically
     orderMutation.mutate({
       station_id: station.id,
+      session_id: station.active_session_id,
       items: selectedItemsList.map((i) => ({
         menu_item_id: i.id,
         quantity: i.quantity,
       })),
-      customer_name: user?.name || 'Customer',
+      customer_name: user?.name || station.customer_name || 'Customer',
     });
 
     // Also update lounge store for immediate UI feedback

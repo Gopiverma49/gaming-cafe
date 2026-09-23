@@ -20,8 +20,8 @@ from app.api.deps import IdempotencyMiddleware, get_db, get_optional_auth_user
 from app.api.v1.admin_routes import router as admin_router
 from app.api.v1.customer_routes import router as customer_router
 from app.api.v1.auth_routes import router as auth_router
-from app.schemas.api_schemas import CategoryAvailabilityResponse, SessionStartRequest, SessionResponse
-from app.services.session_service import get_fleet_categories, start_category_session
+from app.schemas.api_schemas import CategoryAvailabilityResponse, SessionStartRequest, SessionResponse, StationMatrixResponse
+from app.services.session_service import get_fleet_categories, start_category_session, get_fleet_matrix
 from app.services.ws_notifier import manager
 
 # Configure logging
@@ -97,10 +97,10 @@ async def ensure_canonical_domain_hierarchy():
             {
                 "name": "Solo",
                 "tier": "CONSOLE",
-                "hourly_rate": Decimal("180.00"),
+                "hourly_rate": Decimal(str(settings.DEFAULT_HOURLY_RATE)),
                 "pricing_tiers": [
                     {"duration_min": 30, "price": 100, "label": "30 mins"},
-                    {"duration_min": 60, "price": 180, "label": "1 hr"},
+                    {"duration_min": 60, "price": settings.DEFAULT_HOURLY_RATE, "label": "1 hr"},
                     {"duration_min": 120, "price": 320, "label": "2 hrs"},
                 ],
             },
@@ -359,6 +359,12 @@ async def public_fleet_categories(db: AsyncSession = Depends(get_db)):
     return await get_fleet_categories(db)
 
 
+@app.get("/api/fleet/matrix", response_model=StationMatrixResponse, tags=["Fleet Categories"])
+@app.get("/api/v1/fleet/matrix", response_model=StationMatrixResponse, tags=["Fleet Categories"])
+async def public_fleet_matrix(db: AsyncSession = Depends(get_db)):
+    return await get_fleet_matrix(db)
+
+
 @app.post("/api/sessions/start", response_model=SessionResponse, status_code=status.HTTP_201_CREATED, tags=["Fleet Categories"])
 @app.post("/api/v1/sessions/start", response_model=SessionResponse, status_code=status.HTTP_201_CREATED, tags=["Fleet Categories"])
 async def public_start_session(
@@ -369,11 +375,13 @@ async def public_start_session(
     user_id = auth_user.id if auth_user else (payload.user_id or None)
     customer_name = payload.customer_name or (auth_user.name if auth_user else "Gamer")
     customer_phone = payload.customer_phone or (auth_user.phone if auth_user else None)
+    cat_id = payload.category_id or payload.mode or "solo"
+    dev_id = payload.device_id or payload.station_id
 
     return await start_category_session(
         db=db,
-        category_id=payload.category_id,
-        device_id=payload.device_id,
+        category_id=cat_id,
+        device_id=dev_id,
         duration_minutes=payload.duration_minutes,
         customer_name=customer_name,
         customer_phone=customer_phone,
@@ -383,10 +391,18 @@ async def public_start_session(
 
 
 @app.get("/health", tags=["Health"])
-async def health_check():
+async def health_check(db: AsyncSession = Depends(get_db)):
+    db_status = "healthy"
+    try:
+        await db.execute(select(1))
+    except Exception as exc:
+        logger.error(f"Database health check failed: {exc}")
+        db_status = "unreachable"
+
     return {
-        "status": "healthy",
-        "system": "Gaming Cafe Operations & Financial Management System",
+        "status": "healthy" if db_status == "healthy" else "degraded",
+        "database": db_status,
+        "system": settings.PROJECT_NAME,
         "version": settings.VERSION,
     }
 

@@ -4,7 +4,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Set
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, or_, func
@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import DBAPIError
 
 from app.core.config import settings
-from app.models.entities import Station, Session, Order, Payment, PhysicalDevice, User
+from app.models.entities import Station, Session, Order, OrderItem, Payment, PhysicalDevice, User
 from app.models.enums import (
     StationStatus,
     SessionStatus,
@@ -22,7 +22,7 @@ from app.models.enums import (
     PaymentMethod,
 )
 from app.services.billing_engine import calculate_station_charge, generate_upi_qr_string
-from app.services.order_service import ensure_utc
+from app.services.order_service import ensure_utc, calculate_order_subtotals, CURRENCY_QUANTIZATION
 from app.services.ws_notifier import buffer_ws_event
 
 logger = logging.getLogger("session_service")
@@ -252,12 +252,13 @@ async def check_in(
 async def transfer_station(
     db: AsyncSession,
     session_id: uuid.UUID,
-    target_station_id: uuid.UUID,
+    target_station_id: Optional[uuid.UUID] = None,
+    target_device: Optional[str] = None,
 ) -> Session:
     """
     Deterministic row-locking transfer:
-    Sorts origin and target station IDs lexicographically to prevent circular wait deadlocks.
-    Locks both rows via SELECT ... FOR UPDATE, validates availability, and reassigns session.
+    Supports transferring to a different physical device (e.g. PS1 -> PS2)
+    and/or transferring to a different Station row in database.
     """
     # 1. Fetch current active session
     session_stmt = select(Session).where(Session.id == session_id).with_for_update()
@@ -274,71 +275,95 @@ async def transfer_station(
         )
 
     origin_station_id = cafe_session.station_id
-    if origin_station_id == target_station_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Target station is the same as current origin station.",
+    old_device_name = cafe_session.device_name or cafe_session.console_room or "Console"
+
+    # If target device is specified (e.g. "PS2")
+    if target_device:
+        t_dev = target_device.strip().upper()
+        if t_dev == (old_device_name or "").upper():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Session is already running on device '{target_device}'.",
+            )
+        # Check active session conflict on target device
+        conflict_stmt = select(Session).where(
+            Session.status == SessionStatus.ACTIVE.value,
+            func.upper(Session.device_name) == t_dev,
+            Session.id != cafe_session.id,
         )
+        conflict = (await db.execute(conflict_stmt)).scalars().first()
+        if conflict:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Target console '{target_device}' is currently occupied.",
+            )
+        cafe_session.device_name = t_dev
+        cafe_session.console_room = t_dev
 
-    # 2. Lexicographical ID sorting: min(id_a, id_b) then max(id_a, id_b)
-    sorted_ids = sorted([origin_station_id, target_station_id], key=lambda x: str(x))
+        # Update PhysicalDevice status records
+        old_pdev = await db.get(PhysicalDevice, old_device_name)
+        if old_pdev:
+            old_pdev.status = StationStatus.AVAILABLE.value
+            old_pdev.current_session_id = None
+        new_pdev = await db.get(PhysicalDevice, t_dev)
+        if new_pdev:
+            new_pdev.status = StationStatus.OCCUPIED.value
+            new_pdev.current_session_id = cafe_session.id
 
-    # Deterministic sequential locking
-    stmt_first = select(Station).where(Station.id == sorted_ids[0]).with_for_update()
-    first_station = (await db.execute(stmt_first)).scalar_one_or_none()
+    # If target_station_id is provided and different from origin
+    origin_station = None
+    target_station = None
+    if target_station_id and target_station_id != origin_station_id:
+        sorted_ids = sorted([origin_station_id, target_station_id], key=lambda x: str(x))
+        stmt_first = select(Station).where(Station.id == sorted_ids[0]).with_for_update()
+        first_station = (await db.execute(stmt_first)).scalar_one_or_none()
+        stmt_second = select(Station).where(Station.id == sorted_ids[1]).with_for_update()
+        second_station = (await db.execute(stmt_second)).scalar_one_or_none()
 
-    stmt_second = select(Station).where(Station.id == sorted_ids[1]).with_for_update()
-    second_station = (await db.execute(stmt_second)).scalar_one_or_none()
+        if not first_station or not second_station:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="One or more stations not found")
 
-    if not first_station or not second_station:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="One or more stations not found")
+        origin_station = first_station if first_station.id == origin_station_id else second_station
+        target_station = second_station if second_station.id == target_station_id else first_station
 
-    origin_station = first_station if first_station.id == origin_station_id else second_station
-    target_station = second_station if second_station.id == target_station_id else first_station
+        if target_station.status != StationStatus.AVAILABLE.value:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Target station '{target_station.name}' is not available (status: {target_station.status}).",
+            )
 
-    # 3. Validate target station availability
-    if target_station.status != StationStatus.AVAILABLE.value:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Target station '{target_station.name}' is not available (status: {target_station.status}).",
-        )
+        origin_station.status = StationStatus.AVAILABLE.value
+        target_station.status = StationStatus.OCCUPIED.value
+        cafe_session.station_id = target_station.id
 
-    # 4. Atomic transfer swap
-    origin_station.status = StationStatus.AVAILABLE.value
-    target_station.status = StationStatus.OCCUPIED.value
-    cafe_session.station_id = target_station.id
+    # Buffer notifications
+    from_name = origin_station.name if origin_station else old_device_name
+    to_name = target_station.name if target_station else (target_device or old_device_name)
 
-    # 5. Buffer post-commit notifications
     buffer_ws_event(
         db,
         channel="admin",
-        event_type="STATION_LOCKED",
+        event_type="SESSION_TRANSFERRED",
         payload={
             "action": "TRANSFER",
             "session_id": str(cafe_session.id),
-            "from_station_id": str(origin_station.id),
-            "to_station_id": str(target_station.id),
-            "from_station_name": origin_station.name,
-            "to_station_name": target_station.name,
+            "from_station_id": str(origin_station_id),
+            "to_station_id": str(target_station_id or origin_station_id),
+            "from_station_name": from_name,
+            "to_station_name": to_name,
+            "device_name": cafe_session.device_name,
         },
-    )
-    buffer_ws_event(
-        db,
-        channel=f"customer:{origin_station.id}",
-        event_type="SESSION_TRANSFERRED",
-        payload={"session_id": str(cafe_session.id), "new_station_id": str(target_station.id)},
-    )
-    buffer_ws_event(
-        db,
-        channel=f"customer:{target_station.id}",
-        event_type="SESSION_STARTED",
-        payload={"session_id": str(cafe_session.id), "station_id": str(target_station.id)},
     )
     buffer_ws_event(
         db,
         channel="customer",
         event_type="SESSION_TRANSFERRED",
-        payload={"session_id": str(cafe_session.id), "from_station_id": str(origin_station.id), "to_station_id": str(target_station.id)},
+        payload={
+            "session_id": str(cafe_session.id),
+            "from_station_id": str(origin_station_id),
+            "to_station_id": str(target_station_id or origin_station_id),
+            "device_name": cafe_session.device_name,
+        },
     )
 
     await db.commit()
@@ -352,6 +377,7 @@ async def settle_checkout(
     session_id: uuid.UUID,
     payment_method: str,
     idempotency_key: str,
+    discount_percent: Optional[Decimal] = None,
 ) -> Dict[str, Any]:
     """
     Checkout handler:
@@ -359,6 +385,7 @@ async def settle_checkout(
     - Blocks checkout (HTTP 409 Conflict) if any related food orders are QUEUED or PREPARING.
     - Computes exact station charge using billing_engine (Decimal + ROUND_HALF_UP).
     - Aggregates completed SERVED kitchen orders.
+    - Applies optional operator discount (e.g. 5%, 10%, 15%, 20%).
     - Inserts Payment record and sets station to AVAILABLE.
     """
     # 1. Lock Session row
@@ -427,7 +454,13 @@ async def settle_checkout(
                     Decimal("0.01"), rounding=ROUND_HALF_UP
                 )
 
-    total_amount = (station_charge + orders_charge).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    raw_subtotal = (station_charge + orders_charge).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if discount_percent and Decimal(str(discount_percent)) > Decimal("0"):
+        disc_pct = Decimal(str(discount_percent))
+        disc_amt = (raw_subtotal * (disc_pct / Decimal("100"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        total_amount = max(Decimal("0.00"), (raw_subtotal - disc_amt).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    else:
+        total_amount = raw_subtotal
 
     # 5. Check if payment already exists for this idempotency_key
     existing_payment_stmt = select(Payment).where(Payment.idempotency_key == idempotency_key)
@@ -717,6 +750,342 @@ async def get_fleet_categories(db: AsyncSession) -> List[Dict[str, Any]]:
     return categories
 
 
+@with_transaction_retry()
+async def extend_session(
+    db: AsyncSession,
+    session_id: uuid.UUID,
+    minutes: int = 30,
+) -> Session:
+    """
+    Extends an active session's allocated duration by `minutes` and recalculates tier pricing.
+    Buffers WebSocket notifications.
+    """
+    stmt = (
+        select(Session)
+        .options(
+            selectinload(Session.station),
+            selectinload(Session.orders).selectinload(Order.items),
+        )
+        .where(Session.id == session_id)
+        .with_for_update()
+    )
+    result = await db.execute(stmt)
+    cafe_session = result.scalar_one_or_none()
+    if not cafe_session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if cafe_session.status != SessionStatus.ACTIVE.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot extend session with status {cafe_session.status}",
+        )
+
+    prev_alloc = cafe_session.allocated_minutes or 60
+    new_alloc = prev_alloc + minutes
+    cafe_session.allocated_minutes = new_alloc
+
+    hourly_rate = (
+        cafe_session.station.hourly_rate
+        if cafe_session.station and cafe_session.station.hourly_rate
+        else Decimal(str(settings.DEFAULT_HOURLY_RATE))
+    )
+    add_price = ((Decimal(str(minutes)) / Decimal("60")) * hourly_rate).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    if cafe_session.tier_price is not None:
+        cafe_session.tier_price = cafe_session.tier_price + add_price
+    if cafe_session.total_amount is not None:
+        cafe_session.total_amount = cafe_session.total_amount + add_price
+
+    buffer_ws_event(
+        db,
+        channel="admin",
+        event_type="SESSION_UPDATED",
+        payload={
+            "session_id": str(cafe_session.id),
+            "allocated_minutes": new_alloc,
+            "extended_by": minutes,
+            "device_name": cafe_session.device_name,
+        },
+    )
+    buffer_ws_event(
+        db,
+        channel="customer",
+        event_type="SESSION_UPDATED",
+        payload={
+            "session_id": str(cafe_session.id),
+            "allocated_minutes": new_alloc,
+        },
+    )
+    await db.commit()
+    await db.refresh(cafe_session)
+    return cafe_session
+
+
+async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
+    """
+    Returns the 2D Station Allocation Matrix data:
+    - Rows: Game Modes ("Solo", "Multiplayer", "Car Simulator", "VR")
+    - Columns: Physical Stations ("PS1", "PS2", "PS3", etc.) with live active session metrics.
+    """
+    now = datetime.now(timezone.utc)
+
+    # 1. Query all active sessions with order relationships loaded
+    active_stmt = (
+        select(Session)
+        .options(
+            selectinload(Session.station),
+            selectinload(Session.orders)
+            .selectinload(Order.items)
+            .selectinload(OrderItem.menu_item),
+        )
+        .where(Session.status == SessionStatus.ACTIVE.value)
+    )
+    active_sessions = (await db.execute(active_stmt)).scalars().all()
+
+    # Map active sessions by device_name
+    device_session_map: Dict[str, Session] = {}
+    for s in active_sessions:
+        dev_key = (s.device_name or s.console_room or "").strip().upper()
+        if dev_key:
+            device_session_map[dev_key] = s
+        elif s.station:
+            device_session_map[s.station.name.strip().upper()] = s
+
+    # 2. Query configured Station records for live custom rates/tiers
+    st_stmt = select(Station)
+    stations_db = (await db.execute(st_stmt)).scalars().all()
+    station_by_name = {st.name.lower(): st for st in stations_db}
+
+    # 3. Construct Modes (Rows)
+    canonical_cat_keys = ["solo", "multiplayer", "car_sim", "vr_sim"]
+    modes_list = []
+    all_supported_devices_set: Set[str] = set()
+
+    for cat_id in canonical_cat_keys:
+        cfg = CATEGORY_CONFIGS[cat_id]
+        if cat_id == "vr_sim":
+            supported = ["PS1"]  # Independent VR station represented in Column 1 per spec
+        else:
+            supported = cfg["supported_devices"]
+
+        for d in supported:
+            all_supported_devices_set.add(d.upper())
+
+        station_record = (
+            station_by_name.get(cfg["name"].lower())
+            or station_by_name.get(cfg["id"].lower())
+        )
+        hourly_rate = station_record.hourly_rate if station_record else cfg["hourly_rate"]
+        pricing_tiers = (
+            station_record.pricing_tiers
+            if (station_record and station_record.pricing_tiers)
+            else cfg["pricing_tiers"]
+        )
+
+        modes_list.append({
+            "id": cfg["id"],
+            "name": cfg["name"],
+            "tier": cfg["tier"],
+            "hourly_rate": hourly_rate,
+            "pricing_tiers": pricing_tiers,
+            "supported_stations": supported,
+        })
+
+    # Include any custom stations created by admin as additional row modes (NOT new columns)
+    canonical_names = {"solo", "multiplayer", "car simulator", "vr"}
+    for st in stations_db:
+        if st.name.lower() in canonical_names or st.name.upper() in ("PS1", "PS2", "PS3", "VR1"):
+            continue
+        modes_list.append({
+            "id": str(st.id),
+            "name": st.name,
+            "tier": st.tier or "CONSOLE",
+            "hourly_rate": st.hourly_rate,
+            "pricing_tiers": st.pricing_tiers or [],
+            "supported_stations": ["PS1", "PS2", "PS3"],
+        })
+
+    # 4. Construct Physical Stations (Columns): STRICTLY 3 COLUMNS ALL THE TIME (PS1, PS2, PS3)
+    pdev_stmt = select(PhysicalDevice).where(PhysicalDevice.id.in_(["PS1", "PS2", "PS3"])).order_by(PhysicalDevice.id)
+    pdev_res = await db.execute(pdev_stmt)
+    db_pdevs = pdev_res.scalars().all()
+    pdev_map = {p.id.strip().upper(): p for p in db_pdevs}
+
+    ordered_devices = ["PS1", "PS2", "PS3"]
+
+    stations_list = []
+    for dev_name in ordered_devices:
+        dev_upper = dev_name.upper()
+        active_s = device_session_map.get(dev_upper)
+        is_occupied = active_s is not None
+
+        # Determine device type dynamically from PhysicalDevice record
+        pdev = pdev_map.get(dev_upper)
+        if pdev and pdev.device_type:
+            device_type = pdev.device_type
+        elif "SIM" in dev_upper or "CAR" in dev_upper:
+            device_type = "SIMULATOR"
+        else:
+            device_type = "CONSOLE"
+
+        supported_modes_for_station = [
+            m["id"] for m in modes_list if any(s.upper() == dev_upper for s in m["supported_stations"])
+        ]
+
+        active_detail = None
+        if active_s:
+            started_at = ensure_utc(active_s.started_at)
+            elapsed_sec = (now - started_at).total_seconds()
+            elapsed_min = max(0, int(elapsed_sec // 60))
+            alloc_min = active_s.allocated_minutes or 60
+            rem_min = max(0, alloc_min - elapsed_min)
+
+            st_rate = active_s.station.hourly_rate if active_s.station else Decimal(str(settings.DEFAULT_HOURLY_RATE))
+            if active_s.tier_price is not None:
+                if elapsed_min > alloc_min:
+                    overtime_min = elapsed_min - alloc_min
+                    overtime = (
+                        (Decimal(str(overtime_min)) / Decimal("60")) * st_rate
+                    ).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
+                    time_charge = (active_s.tier_price + overtime).quantize(
+                        CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
+                    )
+                else:
+                    time_charge = active_s.tier_price
+            else:
+                time_charge = calculate_station_charge(started_at, now, st_rate)
+
+            orders_charge = Decimal("0.00")
+            active_orders_count = 0
+            for o in active_s.orders:
+                if o.status != OrderStatus.CANCELLED.value:
+                    if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value):
+                        active_orders_count += 1
+                    subtotal, _ = calculate_order_subtotals(o.items)
+                    orders_charge += subtotal
+
+            running_total = (time_charge + orders_charge).quantize(CURRENCY_QUANTIZATION)
+
+            cat_id_raw = (active_s.category_id or "").lower()
+            if "car" in cat_id_raw:
+                mode_key = "car_sim"
+                mode_name = "Car Simulator"
+            elif "multi" in cat_id_raw:
+                mode_key = "multiplayer"
+                mode_name = "Multiplayer"
+            elif "vr" in cat_id_raw:
+                mode_key = "vr_sim"
+                mode_name = "VR"
+            elif cat_id_raw == "solo":
+                mode_key = "solo"
+                mode_name = "Solo"
+            else:
+                mode_key = cat_id_raw or "solo"
+                mode_name = active_s.station_name or "Solo"
+
+            pricing_tiers = []
+            if active_s.station and active_s.station.pricing_tiers:
+                pricing_tiers = active_s.station.pricing_tiers
+
+            active_detail = {
+                "session_id": active_s.id,
+                "station_id": dev_name,
+                "mode": mode_key,
+                "mode_name": mode_name,
+                "customer_name": active_s.customer_name or "Gamer",
+                "customer_phone": active_s.customer_phone,
+                "started_at": started_at,
+                "elapsed_minutes": elapsed_min,
+                "remaining_minutes": rem_min,
+                "allocated_minutes": alloc_min,
+                "time_charge": time_charge,
+                "orders_charge": orders_charge,
+                "running_total": running_total,
+                "active_orders_count": active_orders_count,
+                "hourly_rate": st_rate,
+                "pricing_tiers": pricing_tiers,
+            }
+
+        stations_list.append({
+            "id": dev_name,
+            "name": dev_name,
+            "device_type": device_type,
+            "status": "OCCUPIED" if is_occupied else "AVAILABLE",
+            "supported_modes": supported_modes_for_station,
+            "active_session": active_detail,
+        })
+
+    # 5. Extract active VR session independently (independent headset, not tying up PS1/PS2/PS3)
+    vr_active_s = (
+        device_session_map.get("VR1")
+        or device_session_map.get("VR")
+        or next((s for s in active_sessions if "vr" in (s.category_id or "").lower() or (s.device_name and "vr" in s.device_name.lower()) or (s.station and "vr" in s.station.name.lower())), None)
+    )
+    vr_detail = None
+    if vr_active_s:
+        vr_started_at = ensure_utc(vr_active_s.started_at)
+        vr_elapsed_sec = (now - vr_started_at).total_seconds()
+        vr_elapsed_min = max(0, int(vr_elapsed_sec // 60))
+        vr_alloc_min = vr_active_s.allocated_minutes or 60
+        vr_rem_min = max(0, vr_alloc_min - vr_elapsed_min)
+
+        vr_rate = vr_active_s.station.hourly_rate if vr_active_s.station else Decimal(str(settings.DEFAULT_HOURLY_RATE))
+        if vr_active_s.tier_price is not None:
+            if vr_elapsed_min > vr_alloc_min:
+                vr_overtime_min = vr_elapsed_min - vr_alloc_min
+                vr_overtime = (
+                    (Decimal(str(vr_overtime_min)) / Decimal("60")) * vr_rate
+                ).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
+                vr_time_charge = (vr_active_s.tier_price + vr_overtime).quantize(
+                    CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
+                )
+            else:
+                vr_time_charge = vr_active_s.tier_price
+        else:
+            vr_time_charge = calculate_station_charge(vr_started_at, now, vr_rate)
+
+        vr_orders_charge = Decimal("0.00")
+        vr_active_orders_count = 0
+        for o in vr_active_s.orders:
+            if o.status != OrderStatus.CANCELLED.value:
+                if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value):
+                    vr_active_orders_count += 1
+                subtotal, _ = calculate_order_subtotals(o.items)
+                vr_orders_charge += subtotal
+
+        vr_running_total = (vr_time_charge + vr_orders_charge).quantize(CURRENCY_QUANTIZATION)
+
+        vr_pricing_tiers = []
+        if vr_active_s.station and vr_active_s.station.pricing_tiers:
+            vr_pricing_tiers = vr_active_s.station.pricing_tiers
+
+        vr_detail = {
+            "session_id": vr_active_s.id,
+            "station_id": vr_active_s.device_name or "VR1",
+            "mode": "vr_sim",
+            "mode_name": "VR",
+            "customer_name": vr_active_s.customer_name or "Gamer",
+            "customer_phone": vr_active_s.customer_phone,
+            "started_at": vr_started_at,
+            "elapsed_minutes": vr_elapsed_min,
+            "remaining_minutes": vr_rem_min,
+            "allocated_minutes": vr_alloc_min,
+            "time_charge": vr_time_charge,
+            "orders_charge": vr_orders_charge,
+            "running_total": vr_running_total,
+            "active_orders_count": vr_active_orders_count,
+            "hourly_rate": vr_rate,
+            "pricing_tiers": vr_pricing_tiers,
+        }
+
+    return {
+        "modes": modes_list,
+        "stations": stations_list,
+        "vr_session": vr_detail,
+    }
+
+
 async def start_category_session(
     db: AsyncSession,
     category_id: str,
@@ -868,7 +1237,7 @@ async def start_category_session(
             )
 
         pricing_tiers_pool = station.pricing_tiers or []
-        fallback_hourly_rate = station.hourly_rate or Decimal("180.00")
+        fallback_hourly_rate = station.hourly_rate or Decimal(str(settings.DEFAULT_HOURLY_RATE))
 
     # Determine tier price
     resolved_tier_price: Decimal

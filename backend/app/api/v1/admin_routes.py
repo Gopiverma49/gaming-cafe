@@ -5,7 +5,7 @@ from typing import List, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -36,6 +36,8 @@ from app.schemas.api_schemas import (
     CategoryAvailabilityResponse,
     SessionStartRequest,
     SessionResponse,
+    StationMatrixResponse,
+    SessionExtendRequest,
 )
 from app.services.billing_engine import calculate_station_charge
 from app.services.order_service import serialize_order, ensure_utc, calculate_order_subtotals, CURRENCY_QUANTIZATION
@@ -46,6 +48,8 @@ from app.services.session_service import (
     with_transaction_retry,
     get_fleet_categories,
     start_category_session,
+    extend_session,
+    get_fleet_matrix,
 )
 from app.services.ws_notifier import buffer_ws_event
 
@@ -61,6 +65,17 @@ async def get_fleet_experience_categories(db: AsyncSession = Depends(get_db)):
     return await get_fleet_categories(db)
 
 
+@router.get("/fleet/matrix", response_model=StationMatrixResponse)
+@router.get("/matrix", response_model=StationMatrixResponse)
+async def get_console_fleet_matrix(db: AsyncSession = Depends(get_db)):
+    """
+    2D Station Allocation Matrix:
+    - Rows: Game Modes (Solo, Multiplayer, Car Simulator)
+    - Columns: Physical Stations (PS1, PS2, PS3)
+    """
+    return await get_fleet_matrix(db)
+
+
 @router.post("/sessions/start", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
 async def start_experience_session_endpoint(
     payload: SessionStartRequest,
@@ -70,21 +85,46 @@ async def start_experience_session_endpoint(
     """
     Starts an experience session on a shared physical device.
     Enforces atomic conflict rejection if device (e.g. PS3 across Solo/Multiplayer/CAR) is busy.
+    Supports payload { station_id, mode, duration_minutes }.
     """
     user_id = auth_user.id if auth_user else None
     customer_name = payload.customer_name or (auth_user.name if auth_user else "Gamer")
     customer_phone = payload.customer_phone or (auth_user.phone if auth_user else None)
+    cat_id = payload.category_id or payload.mode or "solo"
+    dev_id = payload.device_id or payload.station_id
 
     return await start_category_session(
         db=db,
-        category_id=payload.category_id,
-        device_id=payload.device_id,
+        category_id=cat_id,
+        device_id=dev_id,
         duration_minutes=payload.duration_minutes,
         customer_name=customer_name,
         customer_phone=customer_phone,
         user_id=user_id,
         tier_price=payload.tier_price,
     )
+
+
+@router.post("/sessions/{session_id}/extend")
+async def admin_extend_session_endpoint(
+    session_id: uuid.UUID,
+    payload: SessionExtendRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Extends an active session duration by specified minutes (+30m, +1h).
+    """
+    session = await extend_session(
+        db=db,
+        session_id=session_id,
+        minutes=payload.minutes,
+    )
+    return {
+        "message": f"Session extended by {payload.minutes} minutes",
+        "session_id": str(session.id),
+        "allocated_minutes": session.allocated_minutes,
+        "device_name": session.device_name,
+    }
 
 
 @router.post("/auth/login", response_model=TokenResponse)
@@ -296,7 +336,7 @@ async def create_station(
             first_tier = payload.pricing_tiers[0]
             rate = Decimal(str(first_tier.price)) * Decimal(str(60 / first_tier.duration_min))
         else:
-            rate = Decimal("180.00")
+            rate = Decimal(str(settings.DEFAULT_HOURLY_RATE))
 
     tiers_data = [t.model_dump(mode="json") for t in payload.pricing_tiers] if payload.pricing_tiers else []
     station = Station(
@@ -455,14 +495,17 @@ async def admin_transfer_station(
         db=db,
         session_id=payload.session_id,
         target_station_id=payload.target_station_id,
+        target_device=payload.target_device,
     )
     return {
         "message": "Session transferred successfully",
-        "session_id": session.id,
-        "new_station_id": session.station_id,
+        "session_id": str(session.id),
+        "new_station_id": str(session.station_id),
+        "new_device_name": session.device_name,
     }
 
 
+@router.post("/checkout", response_model=CheckoutResponse)
 @router.post("/sessions/checkout", response_model=CheckoutResponse)
 async def admin_checkout(
     payload: CheckoutRequest,
@@ -479,6 +522,7 @@ async def admin_checkout(
         session_id=payload.session_id,
         payment_method=payload.payment_method,
         idempotency_key=resolved_idempotency_key,
+        discount_percent=payload.discount_percent,
     )
     return CheckoutResponse(**result)
 
@@ -711,16 +755,59 @@ async def place_station_food_order(
     attaches to active session, and broadcasts ORDER_CREATED event to Kitchen Kanban.
     Enforces server-side authorization: caller must be an admin or the session owner.
     """
-    stmt = (
-        select(Session)
-        .where(Session.station_id == payload.station_id, Session.status == SessionStatus.ACTIVE.value)
-        .options(selectinload(Session.station))
-    )
-    cafe_session = (await db.execute(stmt)).scalar_one_or_none()
+    target_st_id_str = str(payload.station_id).strip()
+    target_sess_id_str = str(payload.session_id).strip() if payload.session_id else None
+
+    cafe_session = None
+
+    # 1. Direct session_id lookup if provided
+    if target_sess_id_str:
+        try:
+            sess_uuid = uuid.UUID(target_sess_id_str)
+            sess_stmt = (
+                select(Session)
+                .where(Session.id == sess_uuid, Session.status == SessionStatus.ACTIVE.value)
+                .options(selectinload(Session.station))
+            )
+            cafe_session = (await db.execute(sess_stmt)).scalar_one_or_none()
+        except ValueError:
+            pass
+
+    # 2. Try UUID station_id lookup
+    if not cafe_session:
+        try:
+            st_uuid = uuid.UUID(target_st_id_str)
+            stmt = (
+                select(Session)
+                .where(Session.station_id == st_uuid, Session.status == SessionStatus.ACTIVE.value)
+                .options(selectinload(Session.station))
+            )
+            cafe_session = (await db.execute(stmt)).scalar_one_or_none()
+        except ValueError:
+            pass
+
+    # 3. Match by device_name, console_room, or station name (e.g. 'PS3', 'PS1', 'VR1')
+    if not cafe_session:
+        st_upper = target_st_id_str.upper()
+        active_stmt = (
+            select(Session)
+            .join(Session.station, isouter=True)
+            .where(
+                Session.status == SessionStatus.ACTIVE.value,
+                or_(
+                    func.upper(Session.device_name) == st_upper,
+                    func.upper(Session.console_room) == st_upper,
+                    func.upper(Station.name) == st_upper,
+                ),
+            )
+            .options(selectinload(Session.station))
+        )
+        cafe_session = (await db.execute(active_stmt)).scalars().first()
+
     if not cafe_session:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No active playing session on this station. Please start a session before ordering snacks.",
+            detail=f"No active playing session found on station '{target_st_id_str}'. Please verify the session is active before ordering snacks.",
         )
 
     # Authorization Check: Caller must be authenticated, and either ADMIN or session owner
@@ -835,16 +922,23 @@ async def get_customer_directory(db: AsyncSession = Depends(get_db)):
 
     out: List[CustomerProfileResponse] = []
     seen_phones = set()
+    registered_session_ids = set()
 
     for u in users:
-        seen_phones.add(u.phone)
-        # Combine sessions linked by user_id or phone without duplicates
+        u_phone_clean = (u.phone or "").strip()
+        if u_phone_clean:
+            seen_phones.add(u_phone_clean)
+
         user_sess_map = {}
         for s in sessions_by_user.get(str(u.id), []):
             user_sess_map[s.id] = s
-        for s in sessions_by_phone.get(u.phone, []):
-            user_sess_map[s.id] = s
+        if u_phone_clean:
+            for s in sessions_by_phone.get(u_phone_clean, []):
+                user_sess_map[s.id] = s
+
         u_sessions = list(user_sess_map.values())
+        for s in u_sessions:
+            registered_session_ids.add(s.id)
 
         visit_count = len(u_sessions)
         last_visit_str = None
@@ -856,6 +950,8 @@ async def get_customer_directory(db: AsyncSession = Depends(get_db)):
             for s in u_sessions:
                 if s.total_amount:
                     total_spent += s.total_amount
+                elif s.tier_price:
+                    total_spent += s.tier_price
                 for o in s.orders:
                     if o.status != OrderStatus.CANCELLED.value:
                         for itm in o.items:
@@ -866,32 +962,49 @@ async def get_customer_directory(db: AsyncSession = Depends(get_db)):
                 id=str(u.id),
                 name=u.name,
                 phone=u.phone,
-                visit_count=max(visit_count, 1),
+                visit_count=visit_count,
                 last_visit=last_visit_str or u.created_at.strftime("%d %b, %I:%M %p"),
                 total_spent=float(total_spent),
-                notes="Registered Gamer",
+                notes="Registered Player",
             )
         )
 
-    # Capture walk-in customers with distinct phone numbers not yet registered
-    for phone, s_list in sessions_by_phone.items():
-        if phone in seen_phones or len(phone) < 10:
-            continue
-        name = s_list[0].customer_name or "Walk-in Gamer"
+    # 2. Capture ALL walk-in player sessions (admin checkins and customer portal checkins)
+    unassigned_sessions = [s for s in all_sessions if s.id not in registered_session_ids]
+
+    walkin_groups: Dict[str, List[Session]] = defaultdict(list)
+    for s in unassigned_sessions:
+        ph = (s.customer_phone or "").strip()
+        nm = (s.customer_name or "").strip()
+        if ph and ph not in seen_phones and len(ph) >= 7:
+            group_key = f"phone_{ph}"
+        elif nm and nm.lower() not in ("walk-in gamer", "gamer", "customer"):
+            group_key = f"name_{nm.lower()}"
+        else:
+            group_key = f"session_{str(s.id)}"
+        walkin_groups[group_key].append(s)
+
+    for group_key, s_list in walkin_groups.items():
+        sorted_s = sorted(s_list, key=lambda s: s.started_at, reverse=True)
+        primary_s = sorted_s[0]
+        name = primary_s.customer_name or "Walk-in Gamer"
+        phone = primary_s.customer_phone or "Walk-in"
+        last_visit_str = primary_s.started_at.strftime("%d %b, %I:%M %p")
+
         total_spent = Decimal("0.00")
         for s in s_list:
             if s.total_amount:
                 total_spent += s.total_amount
+            elif s.tier_price:
+                total_spent += s.tier_price
             for o in s.orders:
                 if o.status != OrderStatus.CANCELLED.value:
                     for itm in o.items:
                         total_spent += itm.unit_price * Decimal(str(itm.quantity))
-        sorted_walkin = sorted(s_list, key=lambda s: s.started_at, reverse=True)
-        last_visit_str = sorted_walkin[0].started_at.strftime("%d %b, %I:%M %p")
 
         out.append(
             CustomerProfileResponse(
-                id=f"walkin_{phone}",
+                id=f"walkin_{group_key}",
                 name=name,
                 phone=phone,
                 visit_count=len(s_list),

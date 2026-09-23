@@ -5,9 +5,6 @@ import {
   ChefHat,
   LogOut,
   ShoppingBag,
-  X,
-  Utensils,
-  Sparkles,
   Gamepad2,
   BellRing,
 } from 'lucide-react';
@@ -20,7 +17,6 @@ import { LoginPage } from './components/LoginPage';
 import { GamingCafeCanvas } from './components/GamingCafeCanvas';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { useAuthStore } from './store/authStore';
-import { useNotificationStore } from './store/notificationStore';
 import { useCafeWebSocket } from './hooks/useCafeWebSocket';
 import { fetchKitchenOrders } from './api';
 import { Order } from './types';
@@ -40,12 +36,8 @@ type ActiveTab = 'matrix' | 'orders' | 'shop' | 'kitchen';
 
 function MainDashboard() {
   const { currentPortal, adminUser, customerUser, logout } = useAuthStore();
-  const {
-    activeToast,
-    dismissToast,
-  } = useNotificationStore();
-
   const [activeTab, setActiveTab] = useState<ActiveTab>('matrix');
+
   useEffect(() => {
     document.documentElement.classList.add('dark');
 
@@ -93,46 +85,6 @@ function MainDashboard() {
     <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col selection:bg-blue-600 selection:text-white relative transition-colors duration-300">
       {/* Background Interactive Gaming & Cafe Canvas */}
       <GamingCafeCanvas isLight={false} />
-
-      {/* ========================================================================= */}
-      {/* FLOATING LIVE NOTIFICATION TOAST (FOR BOOKINGS & FOOD ORDERS) */}
-      {/* ========================================================================= */}
-      {isAdminPortal && activeToast && (
-        <div className="fixed top-20 right-4 z-50 max-w-sm w-full animate-in slide-in-from-right-5 fade-in duration-300">
-          <div className="glass-panel p-4 rounded-2xl border border-amber-500/50 shadow-2xl bg-slate-950/95 flex items-start gap-3">
-            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-500 shrink-0 mt-0.5">
-              {activeToast.type === 'FOOD_ORDER' ? (
-                <Utensils className="w-5 h-5 text-amber-500 animate-bounce" />
-              ) : activeToast.type === 'BOOKING' ? (
-                <Gamepad2 className="w-5 h-5 text-blue-500 animate-pulse" />
-              ) : (
-                <Sparkles className="w-5 h-5 text-cyan-500" />
-              )}
-            </div>
-
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold text-white font-display uppercase tracking-wider">
-                  {activeToast.title}
-                </h4>
-                <span className="text-[10px] text-slate-400 font-mono-code">
-                  {activeToast.timestamp}
-                </span>
-              </div>
-              <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                {activeToast.message}
-              </p>
-            </div>
-
-            <button
-              onClick={dismissToast}
-              className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Responsive Top PlayStation & Cafe Navigation Bar */}
       <header className="sticky top-0 z-40 bg-[#090d16]/95 backdrop-blur-xl border-b border-slate-800/80 px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3 pt-safe transition-colors shadow-md">
