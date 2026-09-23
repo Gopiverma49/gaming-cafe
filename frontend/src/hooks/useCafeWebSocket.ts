@@ -53,7 +53,14 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
     // Build WebSocket URL
     let wsUrl: string;
     if (import.meta.env.VITE_WS_URL) {
-      const baseWs = (import.meta.env.VITE_WS_URL as string).replace(/\/+$/, '');
+      let baseWs = (import.meta.env.VITE_WS_URL as string).replace(/\/+$/, '');
+      if (baseWs.startsWith('wsss://')) {
+        baseWs = baseWs.replace(/^wsss:\/\//, 'wss://');
+      } else if (baseWs.startsWith('https://')) {
+        baseWs = baseWs.replace(/^https:\/\//, 'wss://');
+      } else if (baseWs.startsWith('http://')) {
+        baseWs = baseWs.replace(/^http:\/\//, 'ws://');
+      }
       wsUrl = `${baseWs}/ws/${channel}`;
     } else {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -97,6 +104,7 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
 
           // Debounced and coalesced query invalidations to prevent thundering herd / request spam
           switch (wsEvent.event_type) {
+            case 'STATION_UPDATED':
             case 'SESSION_UPDATED':
             case 'SESSION_STARTED':
             case 'SESSION_COMPLETED':

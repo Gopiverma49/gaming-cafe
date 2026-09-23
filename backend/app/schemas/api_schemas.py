@@ -25,7 +25,7 @@ class StationBase(BaseModel):
 
 class StationCreate(BaseModel):
     name: str = Field(..., max_length=50)
-    tier: str = Field(..., max_length=20)
+    tier: Optional[str] = Field(default="CONSOLE", max_length=20)
     hourly_rate: Optional[Decimal] = Field(None, decimal_places=2, ge=Decimal("0.00"))
     default_hourly_rate: Optional[Decimal] = Field(None, decimal_places=2, ge=Decimal("0.00"))
     pricing_tiers: Optional[List[PricingTier]] = None

@@ -9,6 +9,14 @@ const ADMIN_TOKEN_KEY = 'vanya_admin_token';
 const CUSTOMER_STORAGE_KEY = 'vanya_customer_auth';
 const CUSTOMER_TOKEN_KEY = 'vanya_customer_token';
 
+// Clean up any stale admin token accidentally saved in localStorage
+if (typeof window !== 'undefined') {
+  try {
+    localStorage.removeItem(ADMIN_STORAGE_KEY);
+    localStorage.removeItem(ADMIN_TOKEN_KEY);
+  } catch {}
+}
+
 // Determine initial portal based on URL pathname
 export function getCurrentPortal(): PortalType {
   if (typeof window === 'undefined') return 'customer';
@@ -18,7 +26,7 @@ export function getCurrentPortal(): PortalType {
 // Load user from sessionStorage first (per-tab isolation), fallback to localStorage
 function loadStoredUser(sessionKey: string, localKey: string): AuthUser | null {
   try {
-    const raw = sessionStorage.getItem(sessionKey) || localStorage.getItem(localKey);
+    const raw = sessionStorage.getItem(sessionKey) || (localKey ? localStorage.getItem(localKey) : null);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed.role === 'string') {
@@ -33,7 +41,7 @@ function loadStoredUser(sessionKey: string, localKey: string): AuthUser | null {
 // Load token from sessionStorage first, fallback to localStorage
 function loadStoredToken(sessionKey: string, localKey: string): string | null {
   try {
-    return sessionStorage.getItem(sessionKey) || localStorage.getItem(localKey) || null;
+    return sessionStorage.getItem(sessionKey) || (localKey ? localStorage.getItem(localKey) : null);
   } catch {
     return null;
   }
@@ -43,35 +51,13 @@ function saveToStorage(sessionKey: string, localKey: string, value: string | nul
   try {
     if (value !== null) {
       sessionStorage.setItem(sessionKey, value);
-      localStorage.setItem(localKey, value);
+      if (localKey) localStorage.setItem(localKey, value);
     } else {
       sessionStorage.removeItem(sessionKey);
-      localStorage.removeItem(localKey);
+      if (localKey) localStorage.removeItem(localKey);
     }
   } catch (e) {
     console.error(e);
-  }
-}
-
-// Direct fetch helper to avoid circular dependency with api.ts
-async function fetchAdminToken(): Promise<{ user: AuthUser; token: string } | null> {
-  try {
-    const rawBase = import.meta.env.VITE_API_BASE_URL
-      ? String(import.meta.env.VITE_API_BASE_URL).replace(/\/+$/, '')
-      : '';
-    const identifier = (import.meta.env.VITE_ADMIN_USERNAME as string) || 'admin';
-    const password = (import.meta.env.VITE_ADMIN_PASSWORD as string) || 'admin123';
-    const res = await fetch(`${rawBase}/api/v1/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ identifier, password }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return { user: data.user, token: data.access_token };
-  } catch (err) {
-    console.warn('[authStore] Failed to auto-acquire admin token:', err);
-    return null;
   }
 }
 
@@ -96,8 +82,9 @@ interface AuthState {
 }
 
 const initialPortal = getCurrentPortal();
-const initialAdminUser = loadStoredUser(ADMIN_STORAGE_KEY, ADMIN_STORAGE_KEY);
-const initialAdminToken = loadStoredToken(ADMIN_TOKEN_KEY, ADMIN_TOKEN_KEY);
+// Admin credentials are kept strictly in sessionStorage (tab-isolated, not auto-retained across restarts)
+const initialAdminUser = loadStoredUser(ADMIN_STORAGE_KEY, '');
+const initialAdminToken = loadStoredToken(ADMIN_TOKEN_KEY, '');
 const initialCustomerUser = loadStoredUser(CUSTOMER_STORAGE_KEY, CUSTOMER_STORAGE_KEY);
 const initialCustomerToken = loadStoredToken(CUSTOMER_TOKEN_KEY, CUSTOMER_TOKEN_KEY);
 
@@ -121,10 +108,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         user: state.adminUser,
         token: state.adminToken,
       }));
-      // Proactively ensure valid admin token exists
-      if (!get().adminToken) {
-        get().ensureAdminToken();
-      }
     } else {
       if (window.location.pathname.toLowerCase().startsWith('/admin')) {
         window.history.pushState(null, '', '/');
@@ -137,15 +120,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  ensureAdminToken: async (force: boolean = false): Promise<string | null> => {
-    const state = get();
-    if (!force && state.adminToken) return state.adminToken;
-    const authData = await fetchAdminToken();
-    if (authData) {
-      get().setAuth(authData.user, authData.token, 'admin');
-      return authData.token;
-    }
-    return state.adminToken;
+  ensureAdminToken: async (_force: boolean = false): Promise<string | null> => {
+    return get().adminToken;
   },
 
   setAuth: (user: AuthUser, token: string, targetPortal?: PortalType) => {
@@ -157,8 +133,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const isTargetAdmin = targetPortal === 'admin' || role === 'admin';
 
     if (isTargetAdmin) {
-      saveToStorage(ADMIN_STORAGE_KEY, ADMIN_STORAGE_KEY, JSON.stringify(normalizedUser));
-      saveToStorage(ADMIN_TOKEN_KEY, ADMIN_TOKEN_KEY, token);
+      saveToStorage(ADMIN_STORAGE_KEY, '', JSON.stringify(normalizedUser));
+      saveToStorage(ADMIN_TOKEN_KEY, '', token);
       set((state) => ({
         adminUser: normalizedUser,
         adminToken: token,
@@ -189,23 +165,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }));
   },
 
-  loginAsAdmin: async (_username?: string) => {
-    const authData = await fetchAdminToken();
-    if (authData) {
-      get().setAuth(authData.user, authData.token, 'admin');
-    } else {
-      const fallbackUser: AuthUser = {
-        id: `admin_${Date.now()}`,
-        name: 'System Administrator',
-        phone: '0000000000',
-        role: 'admin',
-      };
-      saveToStorage(ADMIN_STORAGE_KEY, ADMIN_STORAGE_KEY, JSON.stringify(fallbackUser));
-      set((state) => ({
-        adminUser: fallbackUser,
-        ...(state.currentPortal === 'admin' ? { user: fallbackUser } : {}),
-      }));
-    }
+  loginAsAdmin: async (username?: string) => {
+    const fallbackUser: AuthUser = {
+      id: `admin_${Date.now()}`,
+      name: username || 'System Administrator',
+      phone: '0000000000',
+      role: 'admin',
+    };
+    saveToStorage(ADMIN_STORAGE_KEY, '', JSON.stringify(fallbackUser));
+    set((state) => ({
+      adminUser: fallbackUser,
+      ...(state.currentPortal === 'admin' ? { user: fallbackUser } : {}),
+    }));
   },
 
   registerCustomer: (name: string, _username: string, phone: string) => {
@@ -225,8 +196,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logout: () => {
     const portal = get().currentPortal;
     if (portal === 'admin') {
-      saveToStorage(ADMIN_STORAGE_KEY, ADMIN_STORAGE_KEY, null);
-      saveToStorage(ADMIN_TOKEN_KEY, ADMIN_TOKEN_KEY, null);
+      saveToStorage(ADMIN_STORAGE_KEY, '', null);
+      saveToStorage(ADMIN_TOKEN_KEY, '', null);
       set({ adminUser: null, adminToken: null, user: null, token: null });
     } else {
       saveToStorage(CUSTOMER_STORAGE_KEY, CUSTOMER_STORAGE_KEY, null);
@@ -242,12 +213,4 @@ if (typeof window !== 'undefined') {
     const portal = getCurrentPortal();
     useAuthStore.getState().setPortal(portal);
   });
-
-  // Automatically acquire fresh admin token on launch if in admin portal or adminUser is set without token
-  if ((initialPortal === 'admin' || initialAdminUser) && !initialAdminToken) {
-    setTimeout(() => {
-      useAuthStore.getState().ensureAdminToken();
-    }, 100);
-  }
 }
-

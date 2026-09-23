@@ -473,4 +473,71 @@ async def test_canonical_station_and_console_room_hierarchy(test_db):
         assert res_fail.status_code == 409
 
 
+@pytest.mark.asyncio
+async def test_custom_admin_created_station_lifecycle(test_db):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Admin creates a new custom station with only pricing slabs (no platform tier or rate required)
+        create_res = await client.post(
+            "/api/v1/admin/stations",
+            json={
+                "name": "Cockpit Flight Rig",
+                "pricing_tiers": [
+                    {"duration_min": 30, "price": 120.0, "label": "30 mins"},
+                    {"duration_min": 60, "price": 200.0, "label": "1 hr"},
+                    {"duration_min": 120, "price": 380.0, "label": "2 hrs"},
+                ],
+            },
+        )
+        assert create_res.status_code == 201
+        st_data = create_res.json()
+        assert st_data["name"] == "Cockpit Flight Rig"
+        st_id = st_data["id"]
+
+        # 2. Verify it reflects immediately on customer fleet categories
+        fleet_res = await client.get("/api/fleet/categories")
+        assert fleet_res.status_code == 200
+        categories = fleet_res.json()
+        custom_cat = next((c for c in categories if c["id"] == st_id or c["name"] == "Cockpit Flight Rig"), None)
+        assert custom_cat is not None
+        assert custom_cat["is_available"] is True
+        assert custom_cat["total_units"] == 1
+        assert custom_cat["available_units"] == 1
+        assert len(custom_cat["pricing_tiers"]) == 3
+
+        # 3. Customer starts session on this custom station
+        start_res = await client.post(
+            "/api/sessions/start",
+            json={
+                "category_id": st_id,
+                "duration_minutes": 60,
+                "customer_name": "Flight Gamer",
+                "tier_price": 200.0,
+            },
+        )
+        assert start_res.status_code == 201
+        sess_data = start_res.json()
+        assert sess_data["station"] == "Cockpit Flight Rig"
+        sess_id = sess_data["id"]
+
+        # 4. Verify it is now OCCUPIED on customer fleet categories
+        fleet_res2 = await client.get("/api/fleet/categories")
+        categories2 = fleet_res2.json()
+        custom_cat2 = next((c for c in categories2 if c["id"] == st_id), None)
+        assert custom_cat2 is not None
+        assert custom_cat2["is_available"] is False
+        assert custom_cat2["available_units"] == 0
+
+        # 5. Admin live stations shows it is occupied
+        from app.core.security import create_admin_token
+        headers = {"Authorization": f"Bearer {create_admin_token()}"}
+        live_res = await client.get("/api/v1/admin/stations/live", headers=headers)
+        assert live_res.status_code == 200
+        live_stations = live_res.json()
+        live_st = next((s for s in live_stations if s["id"] == st_id), None)
+        assert live_st is not None
+        assert live_st["is_occupied"] is True
+        assert live_st["active_session_id"] == sess_id
+
+
 

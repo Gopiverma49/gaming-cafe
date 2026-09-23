@@ -619,6 +619,7 @@ async def get_fleet_categories(db: AsyncSession) -> List[Dict[str, Any]]:
 
     now = datetime.now(timezone.utc)
     categories = []
+    canonical_handled_station_ids: Set[Any] = set()
 
     canonical_cat_keys = ["solo", "multiplayer", "car_sim", "vr_sim"]
     for cat_id in canonical_cat_keys:
@@ -652,6 +653,9 @@ async def get_fleet_categories(db: AsyncSession) -> List[Dict[str, Any]]:
             or station_by_name.get(cfg["id"].lower())
             or next((st for st in stations if st.name.upper() == supported[0].upper()), None)
         )
+        if station_record:
+            canonical_handled_station_ids.add(station_record.id)
+
         cat_hourly_rate = station_record.hourly_rate if station_record else cfg["hourly_rate"]
         cat_pricing_tiers = (
             station_record.pricing_tiers
@@ -672,6 +676,44 @@ async def get_fleet_categories(db: AsyncSession) -> List[Dict[str, Any]]:
             "pricing_tiers": cat_pricing_tiers,
         })
 
+    # Include all other stations configured in the database by the admin
+    canonical_names = {"solo", "multiplayer", "car simulator", "vr"}
+    for st in stations:
+        if st.id in canonical_handled_station_ids or st.name.lower() in canonical_names:
+            continue
+
+        active_s = next(
+            (s for s in active_sessions if s.station_id == st.id or (s.station_name and s.station_name.lower() == st.name.lower())),
+            None,
+        )
+        if not active_s:
+            active_s = device_session_map.get(st.name.strip().upper())
+
+        is_occupied = active_s is not None or st.status == StationStatus.OCCUPIED.value
+        rem_min = None
+        if active_s:
+            elapsed = int((now - ensure_utc(active_s.started_at)).total_seconds() / 60)
+            rem_min = max(0, (active_s.allocated_minutes or 60) - elapsed)
+
+        categories.append({
+            "id": str(st.id),
+            "name": st.name,
+            "tier": st.tier or "CONSOLE",
+            "supported_device_ids": [st.name],
+            "devices": [{
+                "id": st.name,
+                "name": st.name,
+                "is_occupied": is_occupied,
+                "current_session_id": str(active_s.id) if active_s else None,
+                "remaining_minutes": rem_min,
+            }],
+            "total_units": 1,
+            "available_units": 0 if is_occupied else 1,
+            "is_available": not is_occupied,
+            "hourly_rate": st.hourly_rate,
+            "pricing_tiers": st.pricing_tiers or [],
+        })
+
     return categories
 
 
@@ -687,9 +729,8 @@ async def start_category_session(
 ) -> Session:
     """
     Enforces shared-resource device allocation and atomic conflict rejection.
-    - Category validation: ensures category exists and console room is valid.
-    - Cross-category hardware lock: CAR Simulator requires PS3; Solo & Multiplayer can use PS1, PS2, PS3.
-    - Atomically verifies device.is_occupied == false; rejects with 409 Conflict if occupied.
+    Supports both canonical shared categories (Solo, Multiplayer, Car Simulator, VR)
+    and custom stations created by the administrator.
     """
     raw_cat = category_id.lower().strip()
     if raw_cat in ("vr", "vr simulator", "vr_simulator"):
@@ -699,106 +740,141 @@ async def start_category_session(
     else:
         norm_cat = raw_cat
 
-    if norm_cat not in CATEGORY_CONFIGS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid category '{category_id}'. Valid options: {list(CATEGORY_CONFIGS.keys())}",
-        )
-    cat_cfg = CATEGORY_CONFIGS[norm_cat]
+    if norm_cat in CATEGORY_CONFIGS:
+        cat_cfg = CATEGORY_CONFIGS[norm_cat]
 
-    # Query currently occupied devices across all active sessions
-    active_dev_res = await db.execute(
-        select(Session.device_name).where(
-            Session.status == SessionStatus.ACTIVE.value,
-            Session.device_name.is_not(None),
-        )
-    )
-    occupied_devs = {str(d).upper() for d in active_dev_res.scalars().all() if d}
-
-    # Resolve target console room / device
-    target_device_name: str
-    if norm_cat == "car_sim":
-        target_device_name = "PS3"
-    elif norm_cat == "vr_sim":
-        target_device_name = "VR1"
-    else:
-        # Solo or Multiplayer: device_id can be 'PS1', 'PS2', 'PS3'
-        if not device_id:
-            avail = [d for d in cat_cfg["supported_devices"] if d.upper() not in occupied_devs]
-            if not avail:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"All consoles for {cat_cfg['name']} are currently occupied.",
-                )
-            target_device_name = avail[0]
-        else:
-            dev_str = str(device_id).strip().upper()
-            matched = next((d for d in cat_cfg["supported_devices"] if d.upper() == dev_str), None)
-            if not matched:
-                # Check if device was passed as UUID
-                try:
-                    dev_uuid = uuid.UUID(str(device_id))
-                    st_lookup = await db.get(Station, dev_uuid)
-                    if st_lookup and st_lookup.name.upper() in [d.upper() for d in cat_cfg["supported_devices"]]:
-                        matched = st_lookup.name.upper()
-                except ValueError:
-                    pass
-
-            if not matched:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Device '{device_id}' is not supported by category '{cat_cfg['name']}'. Supported: {cat_cfg['supported_devices']}",
-                )
-            target_device_name = matched
-
-    # Verify device occupancy atomically: check for any active session on target_device_name
-    if target_device_name.upper() in occupied_devs:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Device '{target_device_name}' currently in use.",
-        )
-
-    # Double check database row lock on existing active sessions for this device
-    active_stmt = (
-        select(Session)
-        .where(
-            func.upper(Session.device_name) == target_device_name.upper(),
-            Session.status == SessionStatus.ACTIVE.value,
-        )
-        .with_for_update()
-    )
-    active_conflict = (await db.execute(active_stmt)).scalars().first()
-    if active_conflict:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Device '{target_device_name}' currently in use.",
-        )
-
-    # Resolve Station entity (Canonical Station: Solo, Multiplayer, Car Simulator, VR)
-    station_stmt = select(Station).where(func.lower(Station.name) == cat_cfg["name"].lower())
-    station = (await db.execute(station_stmt)).scalar_one_or_none()
-    if not station:
-        # Check if legacy station exists matching target_device_name (e.g. in test fixture where station was named PS1)
-        st_legacy = (await db.execute(select(Station).where(Station.name == target_device_name))).scalar_one_or_none()
-        if st_legacy:
-            station = st_legacy
-        else:
-            station = Station(
-                name=cat_cfg["name"],
-                tier=cat_cfg["tier"],
-                hourly_rate=cat_cfg["hourly_rate"],
-                pricing_tiers=cat_cfg["pricing_tiers"],
-                status=StationStatus.AVAILABLE.value,
+        # Query currently occupied devices across all active sessions
+        active_dev_res = await db.execute(
+            select(Session.device_name).where(
+                Session.status == SessionStatus.ACTIVE.value,
+                Session.device_name.is_not(None),
             )
-            db.add(station)
-            await db.flush()
+        )
+        occupied_devs = {str(d).upper() for d in active_dev_res.scalars().all() if d}
+
+        # Resolve target console room / device
+        if norm_cat == "car_sim":
+            target_device_name = "PS3"
+        elif norm_cat == "vr_sim":
+            target_device_name = "VR1"
+        else:
+            # Solo or Multiplayer: device_id can be 'PS1', 'PS2', 'PS3'
+            if not device_id:
+                avail = [d for d in cat_cfg["supported_devices"] if d.upper() not in occupied_devs]
+                if not avail:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"All consoles for {cat_cfg['name']} are currently occupied.",
+                    )
+                target_device_name = avail[0]
+            else:
+                dev_str = str(device_id).strip().upper()
+                matched = next((d for d in cat_cfg["supported_devices"] if d.upper() == dev_str), None)
+                if not matched:
+                    try:
+                        dev_uuid = uuid.UUID(str(device_id))
+                        st_lookup = await db.get(Station, dev_uuid)
+                        if st_lookup and st_lookup.name.upper() in [d.upper() for d in cat_cfg["supported_devices"]]:
+                            matched = st_lookup.name.upper()
+                    except ValueError:
+                        pass
+
+                if not matched:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Device '{device_id}' is not supported by category '{cat_cfg['name']}'. Supported: {cat_cfg['supported_devices']}",
+                    )
+                target_device_name = matched
+
+        # Verify device occupancy atomically: check for any active session on target_device_name
+        if target_device_name.upper() in occupied_devs:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Device '{target_device_name}' currently in use.",
+            )
+
+        # Double check database row lock on existing active sessions for this device
+        active_stmt = (
+            select(Session)
+            .where(
+                func.upper(Session.device_name) == target_device_name.upper(),
+                Session.status == SessionStatus.ACTIVE.value,
+            )
+            .with_for_update()
+        )
+        active_conflict = (await db.execute(active_stmt)).scalars().first()
+        if active_conflict:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Device '{target_device_name}' currently in use.",
+            )
+
+        # Resolve Station entity (Canonical Station: Solo, Multiplayer, Car Simulator, VR)
+        station_stmt = select(Station).where(func.lower(Station.name) == cat_cfg["name"].lower())
+        station = (await db.execute(station_stmt)).scalar_one_or_none()
+        if not station:
+            st_legacy = (await db.execute(select(Station).where(Station.name == target_device_name))).scalar_one_or_none()
+            if st_legacy:
+                station = st_legacy
+            else:
+                station = Station(
+                    name=cat_cfg["name"],
+                    tier=cat_cfg["tier"],
+                    hourly_rate=cat_cfg["hourly_rate"],
+                    pricing_tiers=cat_cfg["pricing_tiers"],
+                    status=StationStatus.AVAILABLE.value,
+                )
+                db.add(station)
+                await db.flush()
+
+        pricing_tiers_pool = station.pricing_tiers or cat_cfg["pricing_tiers"]
+        fallback_hourly_rate = station.hourly_rate or cat_cfg["hourly_rate"]
+    else:
+        # Custom station added by admin
+        custom_station = None
+        try:
+            cat_uuid = uuid.UUID(category_id)
+            custom_station = await db.get(Station, cat_uuid)
+        except (ValueError, TypeError):
+            pass
+
+        if not custom_station:
+            stmt_st = select(Station).where(func.lower(Station.name) == raw_cat)
+            custom_station = (await db.execute(stmt_st)).scalar_one_or_none()
+
+        if not custom_station:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid category or station '{category_id}'. Valid options include: {list(CATEGORY_CONFIGS.keys())}",
+            )
+
+        station = custom_station
+        target_device_name = station.name
+
+        # Verify station occupancy atomically
+        active_stmt = (
+            select(Session)
+            .where(
+                Session.station_id == station.id,
+                Session.status == SessionStatus.ACTIVE.value,
+            )
+            .with_for_update()
+        )
+        active_conflict = (await db.execute(active_stmt)).scalars().first()
+        if active_conflict or station.status == StationStatus.OCCUPIED.value:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Station '{station.name}' currently in use.",
+            )
+
+        pricing_tiers_pool = station.pricing_tiers or []
+        fallback_hourly_rate = station.hourly_rate or Decimal("180.00")
 
     # Determine tier price
     resolved_tier_price: Decimal
     if tier_price is not None:
         resolved_tier_price = Decimal(str(tier_price)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     else:
-        pricing_tiers_pool = station.pricing_tiers or cat_cfg["pricing_tiers"]
         matching_tier = next(
             (t for t in pricing_tiers_pool if t.get("duration_min") == duration_minutes),
             None,
@@ -807,7 +883,7 @@ async def start_category_session(
             resolved_tier_price = Decimal(str(matching_tier["price"])).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         else:
             resolved_tier_price = (
-                (Decimal(str(duration_minutes)) / Decimal("60")) * (station.hourly_rate or cat_cfg["hourly_rate"])
+                (Decimal(str(duration_minutes)) / Decimal("60")) * fallback_hourly_rate
             ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     # Resolve user_id if string or lookup by phone

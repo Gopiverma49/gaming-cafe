@@ -44,15 +44,11 @@ export const ManageStation: React.FC = () => {
   // 1. Create Station Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createName, setCreateName] = useState('');
-  const [createTier, setCreateTier] = useState<StationTier>('CONSOLE');
-  const [createRate, setCreateRate] = useState('180');
   const [createTiers, setCreateTiers] = useState<PricingTier[]>(DEFAULT_PRICING_TIERS);
 
-  // 2. Edit Modal State (Station Name, Tier, Rate, and Dynamic Pricing Tiers)
+  // 2. Edit Modal State (Station Name and Dynamic Pricing Tiers)
   const [editingStation, setEditingStation] = useState<StationLive | null>(null);
   const [editName, setEditName] = useState('');
-  const [editTier, setEditTier] = useState<StationTier>('CONSOLE');
-  const [editRate, setEditRate] = useState('');
   const [editTiers, setEditTiers] = useState<PricingTier[]>([]);
 
   // 3. Transfer Station Modal State
@@ -71,20 +67,35 @@ export const ManageStation: React.FC = () => {
   // Mutation: Create Station
   const createMutation = useMutation({
     mutationFn: async () => {
-      const rateNum = parseFloat(createRate) || 180;
+      const hrTier = createTiers.find((t) => t.duration_min === 60);
+      const rateNum = hrTier
+        ? Number(hrTier.price)
+        : createTiers.length > 0
+        ? Number(createTiers[0].price) * (60 / createTiers[0].duration_min)
+        : 180;
+      const inferredTier: StationTier = createName.toLowerCase().includes('sim')
+        ? 'SIMULATOR'
+        : createName.toLowerCase().includes('vr')
+        ? 'VR'
+        : createName.toLowerCase().includes('pc')
+        ? 'PC_RIG'
+        : 'CONSOLE';
+
       return await createStation({
         name: createName.trim(),
-        tier: createTier,
+        tier: inferredTier,
         hourly_rate: rateNum,
         default_hourly_rate: rateNum,
         pricing_tiers: createTiers,
       });
     },
     onSuccess: async (newSt) => {
-      await queryClient.refetchQueries({ queryKey: ['stations-live'] });
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['stations-live'] }),
+        queryClient.refetchQueries({ queryKey: ['fleet-categories'] }),
+      ]);
       setShowCreateModal(false);
       setCreateName('');
-      setCreateRate('180');
       setCreateTiers(DEFAULT_PRICING_TIERS);
       setActionError(null);
       showFeedback(`Station "${newSt.name}" created successfully!`);
@@ -93,21 +104,29 @@ export const ManageStation: React.FC = () => {
     onError: (err: any) => setActionError(err.message || 'Failed to create station'),
   });
 
-  // Mutation: Edit Station (Name, Tier, Rate, Pricing Tiers)
+  // Mutation: Edit Station (Name, Rate & Pricing Tiers)
   const editMutation = useMutation({
     mutationFn: async () => {
       if (!editingStation) return;
-      const rateNum = parseFloat(editRate);
+      const hrTier = editTiers.find((t) => t.duration_min === 60);
+      const rateNum = hrTier
+        ? Number(hrTier.price)
+        : editTiers.length > 0
+        ? Number(editTiers[0].price) * (60 / editTiers[0].duration_min)
+        : Number(editingStation.hourly_rate || 180);
+
       return await updateStation(editingStation.id, {
         name: editName.trim(),
-        tier: editTier,
-        hourly_rate: isNaN(rateNum) ? undefined : rateNum,
-        default_hourly_rate: isNaN(rateNum) ? undefined : rateNum,
+        hourly_rate: rateNum,
+        default_hourly_rate: rateNum,
         pricing_tiers: editTiers,
       });
     },
     onSuccess: async () => {
-      await queryClient.refetchQueries({ queryKey: ['stations-live'] });
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['stations-live'] }),
+        queryClient.refetchQueries({ queryKey: ['fleet-categories'] }),
+      ]);
       setEditingStation(null);
       setActionError(null);
       showFeedback('Station details and pricing tiers updated successfully!');
@@ -125,7 +144,10 @@ export const ManageStation: React.FC = () => {
       return await transferStation(transferSource.active_session_id, targetStationId);
     },
     onSuccess: async () => {
-      await queryClient.refetchQueries({ queryKey: ['stations-live'] });
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['stations-live'] }),
+        queryClient.refetchQueries({ queryKey: ['fleet-categories'] }),
+      ]);
       setTransferSource(null);
       setTargetStationId('');
       setActionError(null);
@@ -142,7 +164,10 @@ export const ManageStation: React.FC = () => {
       return await deleteStation(deletingStation.id);
     },
     onSuccess: async () => {
-      await queryClient.refetchQueries({ queryKey: ['stations-live'] });
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['stations-live'] }),
+        queryClient.refetchQueries({ queryKey: ['fleet-categories'] }),
+      ]);
       setDeletingStation(null);
       setActionError(null);
       showFeedback('Station deleted from fleet.');
@@ -308,8 +333,6 @@ export const ManageStation: React.FC = () => {
                           onClick={() => {
                             setEditingStation(st);
                             setEditName(st?.name || '');
-                            setEditTier((st?.tier as StationTier) || 'CONSOLE');
-                            setEditRate(String(st?.default_hourly_rate || st?.hourly_rate || 180));
                             const existingTiers = (Array.isArray(st?.pricing_tiers) && st.pricing_tiers.length > 0)
                               ? st.pricing_tiers.map((t) => ({ ...t }))
                               : [
@@ -387,37 +410,7 @@ export const ManageStation: React.FC = () => {
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Platform Tier
-                </label>
-                <select
-                  value={createTier}
-                  onChange={(e) => setCreateTier(e.target.value as StationTier)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
-                >
-                  <option value="CONSOLE">CONSOLE (PS5 / Xbox Series X)</option>
-                  <option value="PC_RIG">PC_RIG (High-end RTX 4090)</option>
-                  <option value="VR">VR (PlayStation VR2 / Meta Quest 3)</option>
-                  <option value="SIMULATOR">SIMULATOR (Racing / Cockpit Rig)</option>
-                </select>
-              </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Default Hourly Rate (₹) *
-                </label>
-                <input
-                  type="number"
-                  required
-                  min="1"
-                  step="any"
-                  placeholder="e.g. 180, 350"
-                  value={createRate}
-                  onChange={(e) => setCreateRate(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono-code"
-                />
-              </div>
 
               {/* Pricing Tiers Configurator */}
               <div className="space-y-2 pt-2 border-t border-slate-800">
@@ -578,39 +571,7 @@ export const ManageStation: React.FC = () => {
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Platform Tier
-                </label>
-                <select
-                  value={editTier}
-                  onChange={(e) => setEditTier(e.target.value as StationTier)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
-                >
-                  <option value="CONSOLE">CONSOLE</option>
-                  <option value="PC_RIG">PC_RIG</option>
-                  <option value="VR">VR</option>
-                  <option value="SIMULATOR">SIMULATOR</option>
-                </select>
-              </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Default Hourly Rate (₹) *
-                </label>
-                <input
-                  type="number"
-                  required
-                  min="1"
-                  step="any"
-                  value={editRate}
-                  onChange={(e) => setEditRate(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 font-mono-code"
-                />
-                <p className="text-[10px] text-slate-500 mt-1">
-                  Used as fallback rate when custom minutes outside slabs are booked.
-                </p>
-              </div>
 
               {/* Dynamic Pricing Tiers Editor */}
               <div className="space-y-2 pt-2 border-t border-slate-800">

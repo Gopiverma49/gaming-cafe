@@ -20,41 +20,41 @@ export const CategoryCard: React.FC<CategoryCardProps> = ({
   const isAvailable = category.is_available && category.available_units > 0;
 
   // Category Icon & Accent Colors
-  const getCategoryTheme = (id: string) => {
-    switch (id.toLowerCase()) {
-      case 'car_sim':
-        return {
-          icon: <Sparkles className="w-4 h-4 text-amber-400" />,
-          badge: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
-          borderHover: 'hover:border-amber-500/60 hover:shadow-amber-500/10',
-          accentColor: 'text-amber-400',
-        };
-      case 'vr_sim':
-        return {
-          icon: <Cpu className="w-4 h-4 text-teal-400" />,
-          badge: 'bg-teal-500/10 text-teal-400 border-teal-500/30',
-          borderHover: 'hover:border-teal-500/60 hover:shadow-teal-500/10',
-          accentColor: 'text-teal-400',
-        };
-      case 'multiplayer':
-        return {
-          icon: <Users className="w-4 h-4 text-purple-400" />,
-          badge: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
-          borderHover: 'hover:border-purple-500/60 hover:shadow-purple-500/10',
-          accentColor: 'text-purple-400',
-        };
-      case 'solo':
-      default:
-        return {
-          icon: <Gamepad2 className="w-4 h-4 text-blue-400" />,
-          badge: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
-          borderHover: 'hover:border-blue-500/60 hover:shadow-blue-500/10',
-          accentColor: 'text-blue-400',
-        };
+  const getCategoryTheme = (id: string, name?: string, tier?: string) => {
+    const key = `${id} ${name || ''} ${tier || ''}`.toLowerCase();
+    if (key.includes('car') || key.includes('sim')) {
+      return {
+        icon: <Sparkles className="w-4 h-4 text-amber-400" />,
+        badge: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
+        borderHover: 'hover:border-amber-500/60 hover:shadow-amber-500/10',
+        accentColor: 'text-amber-400',
+      };
     }
+    if (key.includes('vr')) {
+      return {
+        icon: <Cpu className="w-4 h-4 text-teal-400" />,
+        badge: 'bg-teal-500/10 text-teal-400 border-teal-500/30',
+        borderHover: 'hover:border-teal-500/60 hover:shadow-teal-500/10',
+        accentColor: 'text-teal-400',
+      };
+    }
+    if (key.includes('multi')) {
+      return {
+        icon: <Users className="w-4 h-4 text-purple-400" />,
+        badge: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
+        borderHover: 'hover:border-purple-500/60 hover:shadow-purple-500/10',
+        accentColor: 'text-purple-400',
+      };
+    }
+    return {
+      icon: <Gamepad2 className="w-4 h-4 text-blue-400" />,
+      badge: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
+      borderHover: 'hover:border-blue-500/60 hover:shadow-blue-500/10',
+      accentColor: 'text-blue-400',
+    };
   };
 
-  const theme = getCategoryTheme(category.id);
+  const theme = getCategoryTheme(category.id, category.name, category.tier);
 
   // Fallback Pricing Tiers if not provided
   const pricingTiers: PricingTier[] = Array.isArray(category.pricing_tiers) && category.pricing_tiers.length > 0

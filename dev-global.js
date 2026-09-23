@@ -168,7 +168,7 @@ async function main() {
   }
 
   const backendPublicUrl = backendTunnel.url;
-  const wsPublicUrl      = backendPublicUrl.replace(/^http/, 'wss');
+  const wsPublicUrl      = backendPublicUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
   console.log(`  \x1b[32m  ✓ Backend public URL: \x1b[4m${backendPublicUrl}\x1b[0m`);
 
   // ── 5. Write frontend/.env.local so Vite uses the public backend URL ──────

@@ -1,6 +1,6 @@
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional
 import uuid
 
@@ -296,16 +296,28 @@ async def create_station(
             first_tier = payload.pricing_tiers[0]
             rate = Decimal(str(first_tier.price)) * Decimal(str(60 / first_tier.duration_min))
         else:
-            rate = Decimal("150.00")
+            rate = Decimal("180.00")
 
     tiers_data = [t.model_dump(mode="json") for t in payload.pricing_tiers] if payload.pricing_tiers else []
     station = Station(
         name=payload.name,
-        tier=payload.tier,
+        tier=payload.tier or "CONSOLE",
         hourly_rate=rate,
         pricing_tiers=tiers_data,
     )
     db.add(station)
+    buffer_ws_event(
+        db,
+        channel="admin",
+        event_type="STATION_UPDATED",
+        payload={"station_id": str(station.id), "name": station.name, "action": "CREATE"},
+    )
+    buffer_ws_event(
+        db,
+        channel="customer",
+        event_type="STATION_UPDATED",
+        payload={"station_id": str(station.id), "name": station.name, "action": "CREATE"},
+    )
     await db.commit()
     await db.refresh(station)
     return station
@@ -345,6 +357,18 @@ async def update_station(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Status must be one of {allowed_statuses}")
         station.status = payload.status
 
+    buffer_ws_event(
+        db,
+        channel="admin",
+        event_type="STATION_UPDATED",
+        payload={"station_id": str(station.id), "name": station.name, "action": "UPDATE"},
+    )
+    buffer_ws_event(
+        db,
+        channel="customer",
+        event_type="STATION_UPDATED",
+        payload={"station_id": str(station.id), "name": station.name, "action": "UPDATE"},
+    )
     await db.commit()
     await db.refresh(station)
     return station
@@ -375,6 +399,18 @@ async def delete_station(
             detail="Cannot delete a station with an active session. Check out first.",
         )
 
+    buffer_ws_event(
+        db,
+        channel="admin",
+        event_type="STATION_UPDATED",
+        payload={"station_id": str(station_id), "action": "DELETE"},
+    )
+    buffer_ws_event(
+        db,
+        channel="customer",
+        event_type="STATION_UPDATED",
+        payload={"station_id": str(station_id), "action": "DELETE"},
+    )
     await db.delete(station)
     await db.commit()
 

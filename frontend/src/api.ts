@@ -36,12 +36,7 @@ async function getAuthHeaders(url?: string): Promise<Record<string, string>> {
   }
 
   const isAdminRoute = url ? url.includes('/admin/') : state.currentPortal === 'admin';
-  let token = (isAdminRoute && state.adminToken) ? state.adminToken : (state.token || state.adminToken || state.customerToken);
-
-  // If calling an admin route and no admin token is currently set, auto-acquire it!
-  if (isAdminRoute && !token) {
-    token = await useAuthStore.getState().ensureAdminToken();
-  }
+  const token = (isAdminRoute && state.adminToken) ? state.adminToken : (state.token || state.adminToken || state.customerToken);
 
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -71,23 +66,15 @@ async function safeFetch(
   }
 
   try {
-    let res = await fetch(url, {
+    const res = await fetch(url, {
       ...options,
       headers,
       signal: mergedSignal,
     });
 
-    // Auto-retry once on 401 if calling an admin endpoint
+    // If calling an admin endpoint with expired/invalid credentials, cleanly log out
     if (res.status === 401 && url.includes('/admin/')) {
-      const freshToken = await useAuthStore.getState().ensureAdminToken(true);
-      if (freshToken) {
-        headers.set('Authorization', `Bearer ${freshToken}`);
-        res = await fetch(url, {
-          ...options,
-          headers,
-          signal: mergedSignal,
-        });
-      }
+      useAuthStore.getState().logout();
     }
 
     return res;

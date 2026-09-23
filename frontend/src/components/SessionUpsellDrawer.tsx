@@ -187,9 +187,11 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
           setSelectedDeviceId('PS3');
         } else if (effectiveCategory.id.toLowerCase() === 'vr_sim' || effectiveCategory.id.toLowerCase() === 'vr') {
           setSelectedDeviceId('VR1');
-        } else {
+        } else if (Array.isArray(effectiveCategory.devices) && effectiveCategory.devices.length > 0) {
           const firstFree = effectiveCategory.devices.find((d) => !d.is_occupied);
-          setSelectedDeviceId(firstFree ? firstFree.id : 'PS1');
+          setSelectedDeviceId(firstFree ? firstFree.id : effectiveCategory.devices[0].id);
+        } else {
+          setSelectedDeviceId(effectiveCategory.name || 'PS1');
         }
       }
     }
@@ -254,7 +256,7 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
       let targetStationId: string;
       let targetStationName: string;
 
-      const targetCatId = effectiveCategory?.id || (station?.name.toLowerCase().includes('multi') ? 'multiplayer' : station?.name.toLowerCase().includes('car') ? 'car_sim' : station?.name.toLowerCase().includes('vr') ? 'vr_sim' : 'solo');
+      const targetCatId = effectiveCategory?.id || station?.id || (station?.name.toLowerCase().includes('multi') ? 'multiplayer' : station?.name.toLowerCase().includes('car') ? 'car_sim' : station?.name.toLowerCase().includes('vr') ? 'vr_sim' : 'solo');
 
       // Shared-resource device allocation route
       try {

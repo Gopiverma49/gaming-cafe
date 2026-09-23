@@ -1,4 +1,4 @@
-export type StationTier = 'STANDARD' | 'VIP' | 'SIMULATOR' | 'CONSOLE';
+export type StationTier = 'STANDARD' | 'VIP' | 'SIMULATOR' | 'CONSOLE' | 'VR' | 'PC_RIG';
 
 export type StationStatus = 'AVAILABLE' | 'OCCUPIED' | 'RESERVED' | 'MAINTENANCE';
 
@@ -128,7 +128,7 @@ export interface CustomerRecord {
 
 export interface WebSocketEvent {
   channel: string;
-  event_type: 'SESSION_UPDATED' | 'SESSION_STARTED' | 'SESSION_COMPLETED' | 'SESSION_TRANSFERRED' | 'SESSION_CANCELLED' | 'ORDER_STATUS_CHANGED' | 'ORDER_CREATED' | 'STATION_LOCKED';
+  event_type: 'SESSION_UPDATED' | 'SESSION_STARTED' | 'SESSION_COMPLETED' | 'SESSION_TRANSFERRED' | 'SESSION_CANCELLED' | 'ORDER_STATUS_CHANGED' | 'ORDER_CREATED' | 'STATION_LOCKED' | 'STATION_UPDATED';
   payload: any;
   timestamp: string;
 }
