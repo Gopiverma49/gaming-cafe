@@ -372,25 +372,25 @@ export const AdminOrdersDispatcher: React.FC = () => {
       {/* ========================================================================= */}
       {/* HEADER DISPATCH TOOLBAR (SUBTITLE TEXT REMOVED) */}
       {/* ========================================================================= */}
-      <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4 sm:p-5 backdrop-blur-xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-[#FFFFFF] border border-[#E2E8F0] rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
-          <div className="relative p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
+          <div className="relative p-3 rounded-xl bg-[#FFF7ED] border border-[#FED7AA] text-[#EA580C]">
             <BellRing className={`w-6 h-6 ${pendingOrders.length > 0 ? 'animate-bounce' : ''}`} />
             {pendingOrders.length > 0 && (
-              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-amber-500 rounded-full animate-ping" />
+              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-[#EA580C] rounded-full animate-ping" />
             )}
           </div>
           <div>
             <div className="flex items-center gap-2.5">
-              <h2 className="text-lg sm:text-xl font-black text-white font-display uppercase tracking-wide">
+              <h2 className="text-lg sm:text-xl font-black text-[#172554] font-display uppercase tracking-wide">
                 Live Orders Dispatch
               </h2>
               {pendingOrders.length > 0 ? (
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono-code font-bold bg-amber-500/20 text-amber-300 border border-amber-500 animate-pulse-border">
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono-code font-bold bg-[#FEF3C7] text-[#D97706] border border-[#FCD34D] animate-pulse">
                   {pendingOrders.length} Pending
                 </span>
               ) : (
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono-code text-slate-400 bg-slate-800/60 border border-slate-700/60">
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono-code text-[#64748B] bg-[#F1F5F9] border border-[#E2E8F0]">
                   All Clear
                 </span>
               )}
@@ -403,10 +403,11 @@ export const AdminOrdersDispatcher: React.FC = () => {
           {/* Sound Alert Toggle */}
           <button
             onClick={handleToggleMute}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${muted
-                ? 'bg-rose-950/40 border-rose-800/60 text-rose-300 hover:bg-rose-900/50'
-                : 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300 hover:bg-emerald-900/50'
-              }`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+              muted
+                ? 'bg-[#FEE2E2] border-[#FECACA] text-[#DC2626] hover:bg-[#FCA5A5]/30'
+                : 'bg-[#DCFCE7] border-[#BBF7D0] text-[#16A34A] hover:bg-[#86EFAC]/30'
+            }`}
             title={muted ? 'Unmute Audio Alerts' : 'Mute Audio Alerts'}
           >
             {muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
@@ -416,7 +417,7 @@ export const AdminOrdersDispatcher: React.FC = () => {
           {/* Test Chime */}
           <button
             onClick={handleTestChime}
-            className="px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/70 transition-all cursor-pointer"
+            className="px-3 py-1.5 rounded-xl text-xs font-medium bg-[#F8FAFC] hover:bg-[#F1F5F9] text-[#172554] border border-[#E2E8F0] transition-all cursor-pointer shadow-xs"
             title="Test Two-Tone Cafe Chime"
           >
             Test Chime
@@ -434,21 +435,21 @@ export const AdminOrdersDispatcher: React.FC = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between px-1">
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
-              <h3 className="text-sm font-black text-amber-400 font-display uppercase tracking-wider">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#EA580C]" />
+              <h3 className="text-sm font-black text-[#EA580C] font-display uppercase tracking-wider">
                 Incoming Orders Awaiting Action
               </h3>
             </div>
-            <span className="px-2.5 py-0.5 rounded-lg text-xs font-mono-code font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+            <span className="px-2.5 py-0.5 rounded-lg text-xs font-mono-code font-bold bg-[#FEF3C7] text-[#D97706] border border-[#FCD34D]">
               {pendingOrders.length}
             </span>
           </div>
 
           {pendingOrders.length === 0 ? (
-            <div className="bg-slate-900/50 border border-slate-800/80 rounded-2xl p-8 text-center backdrop-blur-sm">
-              <CheckCircle2 className="w-10 h-10 text-emerald-400/60 mx-auto mb-2.5" />
-              <h4 className="text-sm font-bold text-slate-200">No Pending Orders</h4>
-              <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
+            <div className="bg-[#FFFFFF] border border-[#E2E8F0] rounded-2xl p-8 text-center shadow-xs">
+              <CheckCircle2 className="w-10 h-10 text-[#16A34A] mx-auto mb-2.5" />
+              <h4 className="text-sm font-bold text-[#172554]">No Pending Orders</h4>
+              <p className="text-xs text-[#64748B] mt-1 max-w-xs mx-auto">
                 All customer orders have been acknowledged. New station orders will chime automatically.
               </p>
             </div>
@@ -459,28 +460,28 @@ export const AdminOrdersDispatcher: React.FC = () => {
                 return (
                   <div
                     key={ticket.id}
-                    className="relative bg-slate-950/90 rounded-2xl border-2 border-amber-500 p-4 sm:p-5 animate-pulse-border hover:border-amber-400"
+                    className="relative bg-[#FFFFFF] rounded-2xl border-2 border-[#F97316] p-4 sm:p-5 shadow-xs"
                   >
                     {/* Header */}
-                    <div className="flex items-start justify-between gap-2 border-b border-slate-800/80 pb-3">
+                    <div className="flex items-start justify-between gap-2 border-b border-[#E2E8F0] pb-3">
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="px-2.5 py-1 rounded-lg text-xs font-bold font-display uppercase tracking-wider bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                          <span className="px-2.5 py-1 rounded-lg text-xs font-bold font-display uppercase tracking-wider bg-[#DBEAFE] text-[#1E40AF] border border-[#BFDBFE]">
                             {ticket.stationName}
                           </span>
-                          <span className="text-xs font-bold text-slate-300">
+                          <span className="text-xs font-bold text-[#0F172A]">
                             {ticket.customerName}
                           </span>
                         </div>
-                        <div className="flex items-center gap-1.5 text-[11px] text-amber-400/90 font-mono-code mt-1.5">
+                        <div className="flex items-center gap-1.5 text-[11px] text-[#EA580C] font-mono-code mt-1.5">
                           <Clock className="w-3 h-3" />
                           <span>Placed {getRelativeTime(ticket.createdAt as string)}</span>
                         </div>
                       </div>
 
                       <div className="text-right">
-                        <span className="text-xs font-medium text-slate-400 block">Total Bill</span>
-                        <span className="text-lg font-black text-white font-mono-code">
+                        <span className="text-xs font-medium text-[#64748B] block">Total Bill</span>
+                        <span className="text-lg font-black text-[#0F172A] font-mono-code">
                           ₹{ticket.totalAmount.toFixed(2)}
                         </span>
                       </div>
@@ -488,7 +489,7 @@ export const AdminOrdersDispatcher: React.FC = () => {
 
                     {/* Itemized Body */}
                     <div className="py-3 space-y-2">
-                      <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider font-display">
+                      <p className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider font-display">
                         Order Items
                       </p>
                       <div className="space-y-1.5">
@@ -499,20 +500,20 @@ export const AdminOrdersDispatcher: React.FC = () => {
                           return (
                             <div
                               key={idx}
-                              className="flex items-center justify-between text-xs py-1.5 px-3 rounded-lg bg-slate-900/80 border border-slate-800/60"
+                              className="flex items-center justify-between text-xs py-1.5 px-3 rounded-lg bg-[#FFF7ED] border border-[#FED7AA]"
                             >
                               <div className="flex items-center gap-2">
-                                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono-code font-bold text-[11px]">
+                                <span className="px-1.5 py-0.5 rounded bg-[#FEF3C7] text-[#D97706] font-mono-code font-bold text-[11px]">
                                   x{it.quantity}
                                 </span>
-                                <span className="font-medium text-slate-200">{it.name}</span>
+                                <span className="font-medium text-[#0F172A]">{it.name}</span>
                                 {isLowStock && (
-                                  <span className="px-1.5 py-0.2 rounded text-[10px] font-mono-code bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-0.5">
+                                  <span className="px-1.5 py-0.2 rounded text-[10px] font-mono-code bg-[#FEE2E2] text-[#DC2626] border border-[#FECACA] flex items-center gap-0.5">
                                     <AlertTriangle className="w-2.5 h-2.5" /> Stock: {stock}
                                   </span>
                                 )}
                               </div>
-                              <span className="font-mono-code text-slate-300">
+                              <span className="font-mono-code text-[#0F172A] font-bold">
                                 ₹{(it.subtotal || it.unitPrice * it.quantity).toFixed(2)}
                               </span>
                             </div>
@@ -522,12 +523,12 @@ export const AdminOrdersDispatcher: React.FC = () => {
                     </div>
 
                     {/* Action Controls */}
-                    <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-3">
+                    <div className="pt-3 border-t border-[#E2E8F0] flex items-center justify-between gap-3">
                       {/* Reject Button (Red Outline) */}
                       <button
                         onClick={() => handleRejectClick(rawOrder)}
                         disabled={statusMutation.isPending}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl border border-rose-500/60 text-rose-300 hover:bg-rose-950/50 hover:border-rose-400 text-xs font-bold font-display uppercase tracking-wider transition-all cursor-pointer active:scale-98"
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl border border-[#EF4444] text-[#DC2626] hover:bg-[#FEE2E2] text-xs font-bold font-display uppercase tracking-wider transition-all cursor-pointer active:scale-98"
                       >
                         <Ban className="w-3.5 h-3.5" />
                         <span>Reject Order</span>
@@ -537,7 +538,7 @@ export const AdminOrdersDispatcher: React.FC = () => {
                       <button
                         onClick={() => handleAcceptClick(rawOrder)}
                         disabled={statusMutation.isPending}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs font-display uppercase tracking-wider shadow-[0_0_15px_rgba(16,185,129,0.35)] transition-all cursor-pointer active:scale-98"
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-[#16A34A] hover:bg-[#15803D] text-white font-black text-xs font-display uppercase tracking-wider shadow-sm transition-all cursor-pointer active:scale-98"
                       >
                         <Check className="w-4 h-4 stroke-[3]" />
                         <span>Accept & Complete</span>
@@ -557,21 +558,22 @@ export const AdminOrdersDispatcher: React.FC = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between px-1">
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
-              <h3 className="text-sm font-black text-emerald-400 font-display uppercase tracking-wider">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#16A34A]" />
+              <h3 className="text-sm font-black text-[#16A34A] font-display uppercase tracking-wider">
                 Completed / Served Orders
               </h3>
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowPastSessions(!showPastSessions)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold font-display uppercase tracking-wider transition-all border cursor-pointer ${showPastSessions
-                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm'
-                    : 'bg-slate-800/90 hover:bg-slate-700 text-slate-200 border-slate-700/80 shadow-sm hover:border-slate-600'
-                  }`}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold font-display uppercase tracking-wider transition-all border cursor-pointer ${
+                  showPastSessions
+                    ? 'bg-[#DCFCE7] text-[#16A34A] border-[#BBF7D0] shadow-xs'
+                    : 'bg-[#FFFFFF] hover:bg-[#F8FAFC] text-[#64748B] border-[#E2E8F0] shadow-xs'
+                }`}
                 title="View Past Session Orders History"
               >
-                <History className="w-3.5 h-3.5 text-slate-400" />
+                <History className="w-3.5 h-3.5 text-[#64748B]" />
                 <span>{showPastSessions ? 'Hide History' : `History (${pastServedSessions.length})`}</span>
               </button>
             </div>
@@ -579,10 +581,10 @@ export const AdminOrdersDispatcher: React.FC = () => {
 
           {/* If no active sessions have served orders */}
           {activeServedSessions.length === 0 && (!showPastSessions || pastServedSessions.length === 0) ? (
-            <div className="bg-slate-900/50 border border-slate-800/80 rounded-2xl p-8 text-center backdrop-blur-sm">
-              <ShoppingBag className="w-10 h-10 text-slate-500/60 mx-auto mb-2.5" />
-              <h4 className="text-sm font-bold text-slate-300">No Active Served Orders</h4>
-              <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
+            <div className="bg-[#FFFFFF] border border-[#E2E8F0] rounded-2xl p-8 text-center shadow-xs">
+              <ShoppingBag className="w-10 h-10 text-[#94A3B8] mx-auto mb-2.5" />
+              <h4 className="text-sm font-bold text-[#172554]">No Active Served Orders</h4>
+              <p className="text-xs text-[#64748B] mt-1 max-w-xs mx-auto">
                 When incoming orders are accepted, they will be cleanly grouped here by active station session.
               </p>
             </div>
@@ -592,24 +594,24 @@ export const AdminOrdersDispatcher: React.FC = () => {
               {activeServedSessions.map((session) => (
                 <div
                   key={session.sessionId}
-                  className="bg-slate-950/80 rounded-xl border border-emerald-500/35 p-3.5 shadow-md hover:border-emerald-500/60 transition-all space-y-2.5"
+                  className="bg-[#FFFFFF] rounded-xl border border-[#BBF7D0] p-3.5 shadow-xs hover:border-[#86EFAC] transition-all space-y-2.5"
                 >
                   {/* Compact Header: Station Name & User Name */}
-                  <div className="flex items-center justify-between gap-2 border-b border-slate-800/70 pb-2">
+                  <div className="flex items-center justify-between gap-2 border-b border-[#E2E8F0] pb-2">
                     <div className="flex items-center gap-2">
-                      <span className="px-2 py-0.5 rounded-md text-xs font-bold font-mono-code bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      <span className="px-2 py-0.5 rounded-md text-xs font-bold font-mono-code bg-[#DCFCE7] text-[#16A34A] border border-[#BBF7D0]">
                         {session.stationName}
                       </span>
-                      <span className="text-xs font-bold text-slate-200 truncate max-w-[140px] sm:max-w-[180px]">
+                      <span className="text-xs font-bold text-[#0F172A] truncate max-w-[140px] sm:max-w-[180px]">
                         {session.customerName}
                       </span>
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono-code font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono-code font-semibold bg-[#DCFCE7] text-[#16A34A] border border-[#BBF7D0]">
                         <Zap className="w-2.5 h-2.5" /> Active Session
                       </span>
-                      <span className="text-xs font-black text-white font-mono-code">
+                      <span className="text-xs font-black text-[#0F172A] font-mono-code">
                         ₹{session.totalAmount.toFixed(2)}
                       </span>
                     </div>
@@ -620,15 +622,15 @@ export const AdminOrdersDispatcher: React.FC = () => {
                     {session.items.map((it, idx) => (
                       <div
                         key={idx}
-                        className="flex items-center justify-between py-0.5 px-2 rounded bg-slate-900/50 text-slate-300"
+                        className="flex items-center justify-between py-1 px-2 rounded bg-[#F8FAFC] border border-[#F1F5F9] text-[#0F172A]"
                       >
                         <div className="flex items-center gap-1.5 truncate">
-                          <span className="font-mono-code text-emerald-400 font-bold text-[11px]">
+                          <span className="font-mono-code text-[#16A34A] font-bold text-[11px]">
                             x{it.quantity}
                           </span>
                           <span className="truncate">{it.name}</span>
                         </div>
-                        <span className="font-mono-code text-slate-300 shrink-0 ml-2">
+                        <span className="font-mono-code text-[#64748B] shrink-0 ml-2">
                           ₹{it.subtotal.toFixed(2)}
                         </span>
                       </div>
@@ -639,28 +641,28 @@ export const AdminOrdersDispatcher: React.FC = () => {
 
               {/* Past / Ended Sessions (Only displayed if staff toggles 'Show Past') */}
               {showPastSessions && pastServedSessions.length > 0 && (
-                <div className="pt-2 border-t border-slate-800 space-y-2">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-1">
+                <div className="pt-2 border-t border-[#E2E8F0] space-y-2">
+                  <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider px-1">
                     Past Completed Sessions
                   </span>
                   {pastServedSessions.map((session) => (
                     <div
                       key={session.sessionId}
-                      className="bg-slate-950/50 rounded-xl border border-slate-800/80 p-3 space-y-2 opacity-80 hover:opacity-100 transition-opacity"
+                      className="bg-[#FFFFFF] rounded-xl border border-[#E2E8F0] p-3 space-y-2 opacity-80 hover:opacity-100 transition-opacity shadow-xs"
                     >
-                      <div className="flex items-center justify-between text-xs border-b border-slate-800/60 pb-1.5">
+                      <div className="flex items-center justify-between text-xs border-b border-[#E2E8F0] pb-1.5">
                         <div className="flex items-center gap-1.5">
-                          <span className="px-1.5 py-0.5 rounded text-[11px] font-mono-code bg-slate-800 text-slate-300">
+                          <span className="px-1.5 py-0.5 rounded text-[11px] font-mono-code bg-[#F1F5F9] text-[#172554] border border-[#E2E8F0]">
                             {session.stationName}
                           </span>
-                          <span className="font-medium text-slate-300">{session.customerName}</span>
+                          <span className="font-medium text-[#0F172A]">{session.customerName}</span>
                         </div>
-                        <span className="font-mono-code font-bold text-slate-300">
+                        <span className="font-mono-code font-bold text-[#0F172A]">
                           ₹{session.totalAmount.toFixed(2)}
                         </span>
                       </div>
 
-                      <div className="space-y-0.5 text-xs text-slate-400">
+                      <div className="space-y-0.5 text-xs text-[#64748B]">
                         {session.items.map((it, idx) => (
                           <div key={idx} className="flex justify-between px-1">
                             <span>x{it.quantity} {it.name}</span>
@@ -681,51 +683,51 @@ export const AdminOrdersDispatcher: React.FC = () => {
       {/* OUT-OF-STOCK WARNING MODAL */}
       {/* ========================================================================= */}
       {outOfStockModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-amber-500/50 rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-[#FFFFFF] border border-[#E2E8F0] rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-4">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400">
+              <div className="p-2.5 rounded-xl bg-[#FEF3C7] text-[#D97706]">
                 <AlertTriangle className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white font-display uppercase tracking-wide">
+                <h3 className="text-base font-bold text-[#172554] font-display uppercase tracking-wide">
                   Low Inventory Warning
                 </h3>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-[#64748B]">
                   Some items in this order exceed current stock levels
                 </p>
               </div>
             </div>
 
-            <div className="bg-slate-950/80 rounded-xl border border-slate-800 p-3 space-y-2">
-              <p className="text-xs font-semibold text-slate-300">Stock shortfall details:</p>
+            <div className="bg-[#FFF7ED] rounded-xl border border-[#FED7AA] p-3 space-y-2">
+              <p className="text-xs font-semibold text-[#172554]">Stock shortfall details:</p>
               {outOfStockModal.lowStockItems.map((item, idx) => (
                 <div
                   key={idx}
-                  className="flex items-center justify-between text-xs py-1 px-2 rounded bg-amber-950/30 border border-amber-800/40 text-amber-200"
+                  className="flex items-center justify-between text-xs py-1 px-2 rounded bg-[#FFFFFF] border border-[#FED7AA] text-[#0F172A]"
                 >
                   <span className="font-medium">{item.name}</span>
                   <span className="font-mono-code text-[11px]">
-                    Available: <b className="text-rose-400">{item.available}</b> | Ordered: <b>{item.requested}</b>
+                    Available: <b className="text-[#DC2626]">{item.available}</b> | Ordered: <b>{item.requested}</b>
                   </span>
                 </div>
               ))}
             </div>
 
-            <p className="text-xs text-slate-300 leading-relaxed">
+            <p className="text-xs text-[#64748B] leading-relaxed">
               Accepting this order will decrement stock to 0 and mark the order as Completed/Served. Do you wish to continue?
             </p>
 
-            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#E2E8F0]">
               <button
                 onClick={() => setOutOfStockModal(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#64748B] transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 onClick={() => executeAccept(outOfStockModal.order)}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-black transition-colors cursor-pointer"
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-[#EA580C] hover:bg-[#C2410C] text-white transition-colors cursor-pointer shadow-sm"
               >
                 Accept Anyway
               </button>
@@ -738,36 +740,36 @@ export const AdminOrdersDispatcher: React.FC = () => {
       {/* REJECT CONFIRMATION MODAL */}
       {/* ========================================================================= */}
       {rejectConfirmModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-rose-500/50 rounded-2xl max-w-sm w-full p-5 sm:p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-[#FFFFFF] border border-[#E2E8F0] rounded-2xl max-w-sm w-full p-5 sm:p-6 shadow-2xl space-y-4">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-rose-500/20 text-rose-400">
+              <div className="p-2.5 rounded-xl bg-[#FEE2E2] text-[#DC2626]">
                 <XCircle className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white font-display uppercase tracking-wide">
+                <h3 className="text-base font-bold text-[#172554] font-display uppercase tracking-wide">
                   Reject Order?
                 </h3>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-[#64748B]">
                   {rejectConfirmModal.station_name || 'Desk'} ({rejectConfirmModal.customer_name || 'Guest'})
                 </p>
               </div>
             </div>
 
-            <p className="text-xs text-slate-300 leading-relaxed">
+            <p className="text-xs text-[#64748B] leading-relaxed">
               Are you sure you want to reject this order? This will cancel the ticket, notify the customer on their screen, and avoid charging their station tab.
             </p>
 
-            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#E2E8F0]">
               <button
                 onClick={() => setRejectConfirmModal(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#64748B] transition-colors cursor-pointer"
               >
                 Keep Order
               </button>
               <button
                 onClick={() => executeReject(rejectConfirmModal)}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition-colors cursor-pointer"
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-[#DC2626] hover:bg-[#B91C1C] text-white transition-colors cursor-pointer shadow-sm"
               >
                 Confirm Reject
               </button>

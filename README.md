@@ -6,10 +6,13 @@ A modern, full-stack management platform for gaming cafes and esports lounges. E
 
 ## ⚡ Features
 
-- 🖥️ **Station Management**: Real-time status of all gaming PCs and consoles (Available, Occupied, Reserved, Maintenance).
-- ⏱️ **Live Session Tracking**: Accurate, per-minute billing with grace periods and automatic elapsed time calculation.
-- 🍔 **Kitchen & Snack Orders (Kanban)**: Customers can order food and drinks directly from their desk; staff track preparation in real-time.
-- 💳 **Seamless Billing**: Consolidated checkout combining station play time and kitchen orders with instant UPI QR code & cash options.
+- 🖥️ **Station Management**: Real-time status of all gaming PCs and consoles (Available, Occupied, Reserved, Maintenance) with a 2D Console Allocation Matrix.
+- 📱 **Customer Check-In with Phone & Name**: Front-desk check-in supports customer name and mobile phone number, stored securely in the database (`sessions.customer_phone`) with full indexing.
+- 📋 **Customer Logs Directory**: Complete session audit trail and searchable history with real-time filtering by player name, phone number, station, and session status.
+- ⏱️ **Live Session Tracking**: Accurate, per-minute billing with grace periods, automatic elapsed time calculation, and quick duration extensions.
+- 🍔 **Kitchen & Snack Orders (Kanban)**: Customers can order food and drinks directly from their desk; staff track preparation in real-time with out-of-stock guards.
+- 💳 **Seamless Settle & Billing**: Consolidated checkout combining station play time and kitchen orders with itemized breakdown, customer phone metadata, and instant UPI QR code & cash options.
+- 🎨 **High-Contrast Cream Design System**: Clean soft cream background (`#FFF7ED`) and crisp `#FFFFFF` panels with high-visibility navy (`#172554`), dark slate (`#0F172A`), and slate-grey (`#64748B`) typography.
 - 🔄 **Real-Time Sync**: Instant updates across admin dashboard and customer screens powered by WebSockets.
 - 🛡️ **Desk-Scoped Access**: Secure, token-based desk access for customers without exposing administrative controls.
 - 🚀 **Cloud & Hosting Ready**: Preconfigured Docker Compose, health check monitors, Nginx caching & security headers, and CORS control.
@@ -249,3 +252,33 @@ gaming-cafe/
 - **Backend**: FastAPI, Python 3.12+, SQLAlchemy 2.0 (Async), PostgreSQL, Alembic, WebSockets.
 - **Frontend**: React 19, TypeScript 5.5+, Vite, Tailwind CSS v4, Lucide Icons, TanStack Query, Zustand.
 - **DevOps & Production**: Docker, Docker Compose, Nginx, Healthchecks, Uvloop.
+
+---
+
+## 📱 Customer Check-In & Logs Workflow
+
+### 1. Front-Desk Check-In
+When an administrator checks in a customer at the console matrix or session drawer:
+- **Customer Name**: Full name or alias (defaults to "Walk-in Gamer").
+- **Phone Number**: Optional 10-digit mobile number, validated and sanitized on entry.
+- **Persistence**: Stored directly in the `sessions` database table under `customer_phone` (`VARCHAR(20)`), indexed with `ix_sessions_customer_phone` for high-performance querying.
+
+### 2. Multi-Point Visibility
+The customer's phone number is consistently reflected throughout the operations lifecycle:
+- **Console Matrix**: Displayed alongside player names on occupied console cards and column allocation pills.
+- **Customer Logs**: Highlighted in dedicated phone pill badges with quick search and filter by phone number or name.
+- **Settle Invoice Modal**: Rendered in the final bill header before payment settlement and thermal receipt printing.
+- **Customer Directory**: Groups historical play time, total spend, and visited stations by customer phone.
+
+---
+
+## 🎨 Design System & Contrast Standards
+
+The application uses an accessible, modern, high-contrast light theme engineered for busy gaming lounge ambient lighting:
+- **Background**: Soft warm cream (`#FFF7ED`).
+- **Surface Cards**: Pure clean white (`#FFFFFF`) with subtle slate borders (`#E2E8F0`).
+- **Primary Typography**: Deep navy (`#172554`) for main headings and titles, ensuring 100% legibility against cream and white surfaces.
+- **Body & Player Text**: High-contrast dark slate (`#0F172A`) for names, item descriptions, and table rows.
+- **Secondary & Meta**: Slate grey (`#64748B`) for timestamps, badges, and field hints.
+- **Brand Accents**: Vibrant gaming amber (`#EA580C`) and forest emerald (`#15803D`) for live statuses and CTAs.
+

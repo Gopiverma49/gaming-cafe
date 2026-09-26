@@ -251,7 +251,7 @@ async def test_shared_hardware_allocation_and_conflict_rejection(test_db):
             )
 
         # 1. Check initial fleet categories availability (all free)
-        cat_res = await client.get("/api/fleet/categories")
+        cat_res = await client.get("/api/v1/fleet/categories")
         assert cat_res.status_code == 200
         cats = {c["id"]: c for c in cat_res.json()}
 
@@ -273,7 +273,7 @@ async def test_shared_hardware_allocation_and_conflict_rejection(test_db):
 
         # 2. Customer A books PS3 under Solo Experience
         book_res1 = await client.post(
-            "/api/sessions/start",
+            "/api/v1/sessions/start",
             json={
                 "category_id": "solo",
                 "device_id": "PS3",
@@ -287,7 +287,7 @@ async def test_shared_hardware_allocation_and_conflict_rejection(test_db):
         assert sess1["device_name"] == "PS3"
 
         # 3. Check categories: CAR Simulator MUST now be BUSY because PS3 is occupied!
-        cat_res2 = await client.get("/api/fleet/categories")
+        cat_res2 = await client.get("/api/v1/fleet/categories")
         cats2 = {c["id"]: c for c in cat_res2.json()}
 
         assert cats2["solo"]["available_units"] == 2  # PS1, PS2
@@ -298,7 +298,7 @@ async def test_shared_hardware_allocation_and_conflict_rejection(test_db):
 
         # 4. Customer B attempts to book CAR Simulator -> MUST REJECT WITH 409 CONFLICT
         car_fail = await client.post(
-            "/api/sessions/start",
+            "/api/v1/sessions/start",
             json={
                 "category_id": "car_sim",
                 "duration_minutes": 60,
@@ -310,7 +310,7 @@ async def test_shared_hardware_allocation_and_conflict_rejection(test_db):
 
         # 5. Customer B attempts to book Multiplayer on PS3 -> MUST REJECT WITH 409 CONFLICT
         mp_fail = await client.post(
-            "/api/sessions/start",
+            "/api/v1/sessions/start",
             json={
                 "category_id": "multiplayer",
                 "device_id": "PS3",
@@ -323,7 +323,7 @@ async def test_shared_hardware_allocation_and_conflict_rejection(test_db):
 
         # 6. Customer B books Multiplayer on available PS1 -> MUST SUCCEED (201)
         mp_ok = await client.post(
-            "/api/sessions/start",
+            "/api/v1/sessions/start",
             json={
                 "category_id": "multiplayer",
                 "device_id": "PS1",
@@ -336,7 +336,7 @@ async def test_shared_hardware_allocation_and_conflict_rejection(test_db):
 
         # 7. Customer C books VR Simulator (VR1) -> MUST SUCCEED (201)
         vr_ok = await client.post(
-            "/api/sessions/start",
+            "/api/v1/sessions/start",
             json={
                 "category_id": "vr_sim",
                 "duration_minutes": 60,
@@ -347,14 +347,14 @@ async def test_shared_hardware_allocation_and_conflict_rejection(test_db):
         assert vr_ok.json()["device_name"] == "VR1"
 
         # 8. Check categories: VR1 is now also occupied
-        cat_res3 = await client.get("/api/fleet/categories")
+        cat_res3 = await client.get("/api/v1/fleet/categories")
         cats3 = {c["id"]: c for c in cat_res3.json()}
         assert cats3["vr_sim"]["available_units"] == 0
         assert cats3["vr_sim"]["is_available"] is False
 
         # Attempting second VR booking fails with 409
         vr_fail = await client.post(
-            "/api/sessions/start",
+            "/api/v1/sessions/start",
             json={
                 "category_id": "vr_sim",
                 "duration_minutes": 60,
@@ -379,7 +379,7 @@ async def test_canonical_station_and_console_room_hierarchy(test_db):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         # Book Solo on PS1
         res1 = await client.post(
-            "/api/sessions/start",
+            "/api/v1/sessions/start",
             json={"category_id": "solo", "device_id": "PS1", "customer_name": "Alice"},
         )
         assert res1.status_code == 201
@@ -390,7 +390,7 @@ async def test_canonical_station_and_console_room_hierarchy(test_db):
 
         # Book Multiplayer on PS2 concurrently -> Must SUCCEED
         res2 = await client.post(
-            "/api/sessions/start",
+            "/api/v1/sessions/start",
             json={"category_id": "multiplayer", "device_id": "PS2", "customer_name": "Bob"},
         )
         assert res2.status_code == 201
@@ -401,7 +401,7 @@ async def test_canonical_station_and_console_room_hierarchy(test_db):
 
         # Book Car Simulator (locks PS3) -> Must SUCCEED
         res3 = await client.post(
-            "/api/sessions/start",
+            "/api/v1/sessions/start",
             json={"category_id": "car_sim", "customer_name": "Charlie"},
         )
         assert res3.status_code == 201
@@ -411,7 +411,7 @@ async def test_canonical_station_and_console_room_hierarchy(test_db):
 
         # Book VR (locks VR1) -> Must SUCCEED
         res4 = await client.post(
-            "/api/sessions/start",
+            "/api/v1/sessions/start",
             json={"category_id": "vr_sim", "customer_name": "Dave"},
         )
         assert res4.status_code == 201
@@ -421,7 +421,7 @@ async def test_canonical_station_and_console_room_hierarchy(test_db):
 
         # Attempt to book Solo on occupied PS1 -> 409 Conflict
         res_fail = await client.post(
-            "/api/sessions/start",
+            "/api/v1/sessions/start",
             json={"category_id": "solo", "device_id": "PS1", "customer_name": "Eve"},
         )
         assert res_fail.status_code == 409
@@ -449,7 +449,7 @@ async def test_custom_admin_created_station_lifecycle(test_db):
         st_id = st_data["id"]
 
         # 2. Verify it reflects immediately on customer fleet categories
-        fleet_res = await client.get("/api/fleet/categories")
+        fleet_res = await client.get("/api/v1/fleet/categories")
         assert fleet_res.status_code == 200
         categories = fleet_res.json()
         custom_cat = next((c for c in categories if c["id"] == st_id or c["name"] == "Cockpit Flight Rig"), None)
@@ -461,7 +461,7 @@ async def test_custom_admin_created_station_lifecycle(test_db):
 
         # 3. Customer starts session on this custom station
         start_res = await client.post(
-            "/api/sessions/start",
+            "/api/v1/sessions/start",
             json={
                 "category_id": st_id,
                 "duration_minutes": 60,
@@ -475,7 +475,7 @@ async def test_custom_admin_created_station_lifecycle(test_db):
         sess_id = sess_data["id"]
 
         # 4. Verify it is now OCCUPIED on customer fleet categories
-        fleet_res2 = await client.get("/api/fleet/categories")
+        fleet_res2 = await client.get("/api/v1/fleet/categories")
         categories2 = fleet_res2.json()
         custom_cat2 = next((c for c in categories2 if c["id"] == st_id), None)
         assert custom_cat2 is not None

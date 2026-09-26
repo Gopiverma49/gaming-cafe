@@ -22,7 +22,7 @@ from app.models.enums import (
     PaymentMethod,
 )
 from app.services.billing_engine import calculate_station_charge, generate_upi_qr_string
-from app.services.order_service import ensure_utc, CURRENCY_QUANTIZATION
+from app.services.order_service import ensure_utc, CURRENCY_QUANTIZATION, sum_order_charges
 from app.services.ws_notifier import buffer_ws_event
 
 logger = logging.getLogger("session_service")
@@ -997,16 +997,12 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
                 reference_time=now,
             )
 
-            orders_charge = Decimal("0.00")
-            active_orders_count = 0
-            for o in active_s.orders:
-                if o.status != OrderStatus.CANCELLED.value:
-                    if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value):
-                        active_orders_count += 1
-                    for item in o.items:
-                        orders_charge += (item.unit_price * Decimal(str(item.quantity))).quantize(
-                            CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
-                        )
+            orders_charge = sum_order_charges(active_s.orders, statuses=["SERVED"])
+
+            active_orders_count = sum(
+                1 for o in active_s.orders
+                if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value)
+            )
 
             running_total = (time_charge + orders_charge).quantize(CURRENCY_QUANTIZATION)
 
@@ -1083,16 +1079,12 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
             reference_time=now,
         )
 
-        vr_orders_charge = Decimal("0.00")
-        vr_active_orders_count = 0
-        for o in vr_active_s.orders:
-            if o.status != OrderStatus.CANCELLED.value:
-                if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value):
-                    vr_active_orders_count += 1
-                for item in o.items:
-                    vr_orders_charge += (item.unit_price * Decimal(str(item.quantity))).quantize(
-                        CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
-                    )
+        vr_orders_charge = sum_order_charges(vr_active_s.orders, statuses=["SERVED"])
+
+        vr_active_orders_count = sum(
+            1 for o in vr_active_s.orders
+            if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value)
+        )
 
         vr_running_total = (vr_time_charge + vr_orders_charge).quantize(CURRENCY_QUANTIZATION)
 

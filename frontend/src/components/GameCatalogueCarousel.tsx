@@ -338,28 +338,22 @@ export const GameCatalogueCarousel: React.FC<GameCatalogueCarouselProps> = ({
   };
 
   return (
-    <div className="relative w-full rounded-2xl sm:rounded-3xl bg-gradient-to-br from-slate-900/90 via-[#0a0f1d]/90 to-slate-950/95 border border-slate-800/80 p-4 sm:p-6 lg:p-7 shadow-2xl overflow-hidden backdrop-blur-xl">
-      {/* Ambient background glow & atmospheric star sparks */}
-      <div className="absolute top-0 left-1/4 w-96 h-64 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-0 right-1/4 w-96 h-64 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute top-4 right-10 text-cyan-400/40 text-xs animate-pulse pointer-events-none">✦</div>
-      <div className="absolute bottom-6 left-12 text-blue-400/30 text-sm animate-pulse pointer-events-none delay-500">✦</div>
-
+    <div className="relative w-full rounded-2xl sm:rounded-3xl bg-[#FFFFFF] border border-[#E2E8F0] p-4 sm:p-6 lg:p-7 shadow-sm overflow-hidden">
       {/* Layout & Positioning: Desktop side-by-side (45% left / 55% right); Mobile stacked (100% full width) */}
       <div className="relative z-10 flex flex-col lg:flex-row items-center gap-6 lg:gap-8">
         
         {/* LEFT PANEL (~45% on desktop, stacks on mobile) */}
         <div className="w-full lg:w-[45%] shrink-0 flex flex-col justify-center space-y-3">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/15 border border-blue-400/30 text-blue-300 text-xs font-semibold tracking-wide w-fit">
-            <Disc3 className="w-3.5 h-3.5 text-cyan-400 animate-spin" style={{ animationDuration: '6s' }} />
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#FFFFFF] border border-[#E2E8F0] text-[#172554] text-xs font-semibold tracking-wide w-fit shadow-xs">
+            <Disc3 className="w-3.5 h-3.5 text-[#EA580C] animate-spin" style={{ animationDuration: '6s' }} />
             <span>PS5 Ultra 4K Game Vault</span>
           </div>
 
-          <h2 className="text-2xl sm:text-3xl lg:text-4xl font-black font-display tracking-tight text-white leading-tight">
-            Welcome to the Lounge, <span className="text-cyan-400 uppercase">{userName}!</span>
+          <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold font-display tracking-tight text-[#172554] leading-tight">
+            Welcome to the Lounge, <span className="text-[#EA580C] uppercase">{userName}!</span>
           </h2>
 
-          <p className="text-xs sm:text-sm text-slate-300 leading-relaxed max-w-lg">
+          <p className="text-xs sm:text-sm text-[#64748B] leading-relaxed max-w-lg font-sans">
             High-performance 4K PS5 gaming meets elevated comfort food. Savor gourmet snacks, craft coffee, and chilled refreshments brought directly to your setup.
           </p>
         </div>
@@ -409,7 +403,7 @@ const GameCard: React.FC<GameCardProps> = ({ game }) => {
       className="group shrink-0 select-none snap-start transition-transform duration-300 hover:-translate-y-1"
     >
       <div
-        className="relative h-[130px] sm:h-[165px] aspect-[250/350] rounded-[8px] overflow-hidden border border-slate-700/80 bg-slate-900 transition-all duration-300 group-hover:border-cyan-400 group-hover:shadow-[0_0_22px_rgba(6,182,212,0.65),0_0_40px_rgba(59,130,246,0.35)] pointer-events-none"
+        className="relative h-[130px] sm:h-[165px] aspect-[250/350] rounded-[8px] overflow-hidden border border-[#E2E8F0] bg-[#F8FAFC] transition-all duration-300 group-hover:border-[#EA580C] group-hover:shadow-md pointer-events-none"
         style={{
           backgroundImage: "url('/games/games_sprite_strip.webp')",
           backgroundSize: '2100% 100%',
@@ -417,11 +411,8 @@ const GameCard: React.FC<GameCardProps> = ({ game }) => {
           backgroundRepeat: 'no-repeat',
         }}
       >
-        {/* Gloss diagonal light sheen over the case sleeve */}
-        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/10 to-transparent pointer-events-none" />
-
-        {/* Floor sheen overlay */}
-        <div className="absolute inset-0 bg-cyan-400/0 group-hover:bg-cyan-400/10 transition-colors duration-300 pointer-events-none" />
+        {/* Clean diagonal sheen over the case sleeve */}
+        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/20 to-transparent pointer-events-none" />
       </div>
     </div>
   );

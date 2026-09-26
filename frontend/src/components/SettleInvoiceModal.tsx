@@ -38,6 +38,7 @@ export interface SettleInvoiceModalProps {
   onSettle: (payload: SettleInvoicePayload) => Promise<void> | void;
   stationName: string;
   customerName?: string | null;
+  customerPhone?: string | null;
   timeCharge: number;
   elapsedMinutes?: number;
   allocatedMinutes?: number;
@@ -53,6 +54,7 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
   onSettle,
   stationName,
   customerName,
+  customerPhone,
   timeCharge = 0,
   elapsedMinutes,
   allocatedMinutes,
@@ -140,31 +142,36 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200"
       role="dialog"
       aria-modal="true"
       aria-labelledby="settle-invoice-title"
     >
-      <div className="bg-[#0e131f] border border-slate-800/90 max-w-lg w-full rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl relative animate-in slide-in-from-bottom-5 duration-200 max-h-[92vh] flex flex-col pb-safe">
+      <div className="bg-[#FFFFFF] border border-[#E2E8F0] max-w-lg w-full rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl relative animate-in slide-in-from-bottom-5 duration-200 max-h-[92vh] flex flex-col pb-safe">
         {/* Header */}
-        <div className="flex justify-between items-center pb-3.5 mb-3.5 border-b border-slate-800/90 shrink-0">
+        <div className="flex justify-between items-center pb-3.5 mb-3.5 border-b border-[#E2E8F0] shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+            <div className="w-9 h-9 rounded-xl bg-[#FFF7ED] border border-[#FED7AA] flex items-center justify-center text-[#EA580C]">
               <Receipt className="w-5 h-5" />
             </div>
             <div>
               <h3
                 id="settle-invoice-title"
-                className="text-base sm:text-lg font-bold text-white font-display flex items-center gap-2"
+                className="text-base sm:text-lg font-bold text-[#172554] font-display flex items-center gap-2"
               >
                 <span>Settle Invoice</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-emerald-400 font-mono-code font-semibold border border-slate-700">
+                <span className="text-xs px-2 py-0.5 rounded-full bg-[#EFF6FF] text-[#172554] font-semibold border border-[#BFDBFE]">
                   {stationName}
                 </span>
               </h3>
-              {customerName && (
-                <p className="text-[11px] text-slate-400 truncate max-w-[260px]">
-                  Customer: <span className="text-slate-200 font-medium">{customerName}</span>
+              {(customerName || customerPhone) && (
+                <p className="text-[11px] text-[#64748B] truncate max-w-[280px] flex items-center gap-1.5">
+                  {customerName && (
+                    <span>Customer: <span className="text-[#0F172A] font-medium">{customerName}</span></span>
+                  )}
+                  {customerPhone && (
+                    <span className="font-mono-code text-[#64748B]">({customerPhone})</span>
+                  )}
                 </p>
               )}
             </div>
@@ -174,7 +181,7 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
             onClick={onClose}
             disabled={isSubmitting}
             aria-label="Close modal"
-            className="text-slate-400 hover:text-white hover:bg-slate-800/60 p-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+            className="text-[#64748B] hover:text-[#0F172A] p-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
           >
             <XCircle className="w-5 h-5" />
           </button>
@@ -183,43 +190,43 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
         {/* Scrollable Content */}
         <div className="space-y-4 overflow-y-auto pr-1 text-xs flex-1">
           {/* Top Receipt Breakdown Card */}
-          <div className="p-4 bg-[#141b2d] rounded-2xl border border-slate-800/90 space-y-3 shadow-inner">
-            <div className="flex items-center justify-between text-slate-300 font-semibold border-b border-slate-800/70 pb-2">
-              <span className="uppercase tracking-wider text-[10px] text-slate-400">
+          <div className="p-4 bg-[#F8FAFC] rounded-2xl border border-[#E2E8F0] space-y-3 shadow-xs">
+            <div className="flex items-center justify-between text-[#64748B] font-semibold border-b border-[#E2E8F0] pb-2">
+              <span className="uppercase tracking-wider text-[10px] text-[#64748B]">
                 Itemized Summary
               </span>
-              <span className="text-[10px] font-mono-code text-slate-400">
+              <span className="text-[10px] text-[#64748B]">
                 Currency (₹ INR)
               </span>
             </div>
 
             {/* 1. Console Play Time Breakdown */}
             <div className="space-y-1">
-              <div className="flex items-center justify-between text-slate-300">
+              <div className="flex items-center justify-between text-[#0F172A]">
                 <div className="flex items-center gap-2">
-                  <Gamepad2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span className="font-medium text-slate-200">Console Play Time</span>
+                  <Gamepad2 className="w-4 h-4 text-[#172554] shrink-0" />
+                  <span className="font-medium text-[#0F172A]">Console Play Time</span>
                   {elapsedMinutes !== undefined && (
-                    <span className="text-[10px] text-slate-400 font-mono-code bg-slate-800/70 px-1.5 py-0.5 rounded">
+                    <span className="text-[10px] text-[#64748B] bg-[#E2E8F0] px-1.5 py-0.5 rounded font-mono-code">
                       {elapsedMinutes}m{allocatedMinutes ? ` / ${allocatedMinutes}m` : ''}
                     </span>
                   )}
                 </div>
-                <span className="font-mono-code font-bold text-white">
+                <span className="font-bold text-[#172554] font-mono-code">
                   ₹{safeTimeCharge.toFixed(2)}
                 </span>
               </div>
             </div>
 
             {/* 2. Itemized Food & Drink Receipts */}
-            <div className="pt-2 border-t border-slate-800/60 space-y-2">
-              <div className="flex items-center justify-between text-[11px] text-slate-400">
+            <div className="pt-2 border-t border-[#E2E8F0] space-y-2">
+              <div className="flex items-center justify-between text-[11px] text-[#64748B]">
                 <span className="flex items-center gap-1.5 font-medium">
-                  <UtensilsCrossed className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <UtensilsCrossed className="w-3.5 h-3.5 text-[#EA580C] shrink-0" />
                   <span>Food &amp; Beverage Orders:</span>
                 </span>
                 {orderedItems.length > 0 && (
-                  <span className="font-mono-code text-[10px] text-slate-400">
+                  <span className="text-[10px] text-[#64748B]">
                     {orderedItems.length} item{orderedItems.length > 1 ? 's' : ''}
                   </span>
                 )}
@@ -230,17 +237,17 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
                   {orderedItems.map((item, idx) => (
                     <div
                       key={item.id || `${item.name}-${idx}`}
-                      className="flex items-center justify-between py-1 px-2 rounded-lg bg-slate-900/60 border border-slate-800/50 text-[11px]"
+                      className="flex items-center justify-between py-1 px-2 rounded-lg bg-[#FFFFFF] border border-[#E2E8F0] text-[11px] shadow-xs"
                     >
                       <div className="flex items-center gap-2 truncate pr-2">
-                        <span className="text-slate-200 font-medium truncate">
+                        <span className="text-[#0F172A] font-medium truncate">
                           {item.name}
                         </span>
-                        <span className="font-mono-code text-amber-400/90 text-[10px] shrink-0 font-bold bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">
+                        <span className="text-[#EA580C] text-[10px] shrink-0 font-bold bg-[#FFF7ED] px-1.5 py-0.2 rounded border border-[#FED7AA]">
                           x{item.quantity}
                         </span>
                       </div>
-                      <span className="font-mono-code font-semibold text-slate-100 shrink-0">
+                      <span className="font-semibold text-[#0F172A] font-mono-code shrink-0">
                         ₹{(Number(item.totalPrice) || 0).toFixed(2)}
                       </span>
                     </div>
@@ -248,53 +255,53 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
                 </div>
               ) : computedOrdersTotal > 0 ? (
                 /* Fallback if individual items are not expanded but orders charge is present */
-                <div className="flex items-center justify-between py-1 px-2 rounded-lg bg-slate-900/60 border border-slate-800/50 text-[11px]">
-                  <span className="text-slate-300">Food &amp; Beverage Orders</span>
-                  <span className="font-mono-code font-semibold text-slate-100">
+                <div className="flex items-center justify-between py-1 px-2 rounded-lg bg-[#FFFFFF] border border-[#E2E8F0] text-[11px]">
+                  <span className="text-[#0F172A]">Food &amp; Beverage Orders</span>
+                  <span className="font-semibold text-[#0F172A] font-mono-code">
                     ₹{computedOrdersTotal.toFixed(2)}
                   </span>
                 </div>
               ) : (
-                <div className="text-[11px] text-slate-500 italic pl-5 py-0.5">
+                <div className="text-[11px] text-[#94A3B8] italic pl-5 py-0.5">
                   No food or drink items ordered.
                 </div>
               )}
             </div>
 
             {/* Subtotal line */}
-            <div className="pt-2 border-t border-slate-800/70 flex justify-between text-slate-400 text-xs">
+            <div className="pt-2 border-t border-[#E2E8F0] flex justify-between text-[#64748B] text-xs">
               <span>Subtotal:</span>
-              <span className="font-mono-code text-slate-200 font-semibold">
+              <span className="text-[#0F172A] font-semibold font-mono-code">
                 ₹{subTotal.toFixed(2)}
               </span>
             </div>
 
             {/* Applied Flat Discount Deduction Line */}
             {effectiveDiscountAmount > 0 && !isDiscountInvalid && (
-              <div className="flex justify-between items-center text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 px-2.5 py-1.5 rounded-xl font-medium">
+              <div className="flex justify-between items-center text-[#15803D] bg-[#DCFCE7] border border-[#BBF7D0] px-2.5 py-1.5 rounded-xl font-medium">
                 <span className="flex items-center gap-1.5 text-xs font-semibold">
                   <Tag className="w-3.5 h-3.5" />
                   <span>Discount Applied:</span>
-                  <span className="text-[10px] text-emerald-400/80 font-mono-code">
+                  <span className="text-[10px] font-mono-code">
                     ({discountPercent.toFixed(1)}% OFF)
                   </span>
                 </span>
-                <span className="font-mono-code font-bold text-sm">
+                <span className="font-bold text-sm font-mono-code">
                   - ₹{effectiveDiscountAmount.toFixed(2)}
                 </span>
               </div>
             )}
 
             {/* Prominent Grand Total Due */}
-            <div className="flex justify-between items-center pt-2.5 border-t border-slate-800 text-white">
+            <div className="flex justify-between items-center pt-2.5 border-t border-[#E2E8F0] text-[#0F172A]">
               <div>
-                <span className="text-xs uppercase tracking-wider text-slate-300 font-bold block">
+                <span className="text-xs uppercase tracking-wider text-[#172554] font-bold block">
                   Grand Total Due
                 </span>
-                <span className="text-[10px] text-slate-500">Includes all charges &amp; discounts</span>
+                <span className="text-[10px] text-[#64748B]">Includes all charges &amp; discounts</span>
               </div>
               <div className="text-right">
-                <span className="font-mono-code text-xl sm:text-2xl font-black text-[#00e599] tracking-tight drop-shadow-[0_0_12px_rgba(0,229,153,0.35)]">
+                <span className="font-mono-code text-xl sm:text-2xl font-black text-[#172554] tracking-tight">
                   ₹{grandTotal.toFixed(2)}
                 </span>
               </div>
@@ -302,20 +309,20 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
           </div>
 
           {/* Flat Cash Discount Input Section */}
-          <div className="p-3.5 bg-[#141b2d]/70 rounded-2xl border border-slate-800/80 space-y-2">
+          <div className="p-3.5 bg-[#FFF7ED] rounded-2xl border border-[#FED7AA] space-y-2">
             <div className="flex items-center justify-between">
               <label
                 htmlFor={discountInputId}
-                className="font-semibold text-slate-200 flex items-center gap-1.5 text-xs"
+                className="font-semibold text-[#0F172A] flex items-center gap-1.5 text-xs"
               >
-                <Tag className="w-3.5 h-3.5 text-amber-400" />
+                <Tag className="w-3.5 h-3.5 text-[#EA580C]" />
                 <span>Flat Cash Discount:</span>
               </label>
               {effectiveDiscountAmount > 0 && !isDiscountInvalid && (
                 <button
                   type="button"
                   onClick={() => setDiscountInput('')}
-                  className="text-[10px] text-slate-400 hover:text-slate-200 underline cursor-pointer"
+                  className="text-[10px] text-[#EA580C] hover:text-[#C2410C] underline cursor-pointer"
                 >
                   Clear discount
                 </button>
@@ -324,7 +331,7 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
 
             {/* Rupee Input Group */}
             <div className="relative flex items-center">
-              <span className="absolute left-3 font-mono-code font-bold text-slate-400 select-none text-sm">
+              <span className="absolute left-3 font-mono-code font-bold text-[#64748B] select-none text-sm">
                 ₹
               </span>
               <input
@@ -334,13 +341,13 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
                 value={discountInput}
                 onChange={handleDiscountChange}
                 placeholder="0.00"
-                className={`w-full pl-8 pr-20 py-2.5 rounded-xl bg-slate-950 border font-mono-code text-sm font-bold text-white placeholder-slate-600 focus:outline-none transition-all ${
+                className={`w-full pl-8 pr-20 py-2.5 rounded-xl bg-[#FFFFFF] border font-mono-code text-sm font-bold text-[#0F172A] placeholder-[#94A3B8] focus:outline-none transition-all ${
                   isDiscountInvalid && touchedDiscount
-                    ? 'border-red-500/80 ring-2 ring-red-500/20 text-red-200'
-                    : 'border-slate-800 focus:border-emerald-500/70 focus:ring-2 focus:ring-emerald-500/20'
+                    ? 'border-[#B91C1C] ring-2 ring-[#B91C1C]/20 text-[#B91C1C]'
+                    : 'border-[#E2E8F0] focus:border-[#EA580C] focus:ring-2 focus:ring-[#EA580C]/20'
                 }`}
               />
-              <span className="absolute right-3 text-[11px] text-slate-500 font-mono-code uppercase">
+              <span className="absolute right-3 text-[11px] text-[#64748B] uppercase font-semibold">
                 Flat Off
               </span>
             </div>
@@ -348,7 +355,7 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
             {/* Quick Flat Rupee Shortcut Buttons */}
             {quickPresets.length > 0 && (
               <div className="flex items-center gap-1.5 pt-1">
-                <span className="text-[10px] text-slate-500 shrink-0">Quick:</span>
+                <span className="text-[10px] text-[#64748B] shrink-0">Quick:</span>
                 <div className="flex flex-wrap gap-1">
                   {quickPresets.map((val) => {
                     const isActive = effectiveDiscountAmount === val;
@@ -359,8 +366,8 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
                         onClick={() => handleApplyPreset(val)}
                         className={`px-2 py-0.5 rounded-lg border text-[10px] font-mono-code font-bold transition-all cursor-pointer ${
                           isActive
-                            ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 ring-1 ring-emerald-400/40'
-                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                            ? 'bg-[#EA580C] border-[#EA580C] text-white shadow-xs'
+                            : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
                         }`}
                       >
                         ₹{val}
@@ -373,13 +380,13 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
 
             {/* Validation Feedback */}
             {isNegative && (
-              <p className="text-[11px] text-red-400 flex items-center gap-1 pt-0.5">
+              <p className="text-[11px] text-[#B91C1C] flex items-center gap-1 pt-0.5">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                 <span>Discount cannot be negative.</span>
               </p>
             )}
             {exceedsSubtotal && (
-              <p className="text-[11px] text-red-400 flex items-center gap-1 pt-0.5">
+              <p className="text-[11px] text-[#B91C1C] flex items-center gap-1 pt-0.5">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                 <span>
                   Discount cannot exceed subtotal (₹{subTotal.toFixed(2)}).
@@ -390,7 +397,7 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
 
           {/* Payment Method Selector */}
           <div className="space-y-1.5">
-            <label className="block font-semibold text-slate-200 text-xs">
+            <label className="block font-semibold text-[#0F172A] text-xs">
               Payment Method:
             </label>
             <div className="grid grid-cols-2 gap-2.5">
@@ -399,14 +406,14 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
                 onClick={() => setPaymentMethod('UPI')}
                 className={`p-3 rounded-xl border flex items-center justify-center gap-2 font-bold text-xs transition-all cursor-pointer ${
                   paymentMethod === 'UPI'
-                    ? 'bg-blue-600/20 border-blue-400 text-blue-300 shadow-[0_0_12px_rgba(59,130,246,0.25)] ring-1 ring-blue-400/50'
-                    : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                    ? 'bg-[#FFF7ED] border-[#EA580C] text-[#EA580C] ring-2 ring-[#EA580C]/20 shadow-xs'
+                    : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
                 }`}
               >
-                <CreditCard className="w-4 h-4 text-blue-400" />
+                <CreditCard className="w-4 h-4 text-[#EA580C]" />
                 <span>UPI / QR</span>
                 {paymentMethod === 'UPI' && (
-                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400 ml-auto" />
+                  <CheckCircle2 className="w-3.5 h-3.5 text-[#EA580C] ml-auto" />
                 )}
               </button>
               <button
@@ -414,14 +421,14 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
                 onClick={() => setPaymentMethod('CASH')}
                 className={`p-3 rounded-xl border flex items-center justify-center gap-2 font-bold text-xs transition-all cursor-pointer ${
                   paymentMethod === 'CASH'
-                    ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.25)] ring-1 ring-emerald-400/50'
-                    : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                    ? 'bg-[#FFF7ED] border-[#EA580C] text-[#EA580C] ring-2 ring-[#EA580C]/20 shadow-xs'
+                    : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
                 }`}
               >
-                <Banknote className="w-4 h-4 text-emerald-400" />
+                <Banknote className="w-4 h-4 text-[#EA580C]" />
                 <span>Cash</span>
                 {paymentMethod === 'CASH' && (
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 ml-auto" />
+                  <CheckCircle2 className="w-3.5 h-3.5 text-[#EA580C] ml-auto" />
                 )}
               </button>
             </div>
@@ -429,20 +436,20 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
 
           {/* Error Message if any */}
           {errorMessage && (
-            <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
+            <div className="p-2.5 rounded-xl bg-[#FEE2E2] border border-[#FECACA] text-[#B91C1C] text-xs flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 text-[#B91C1C] mt-0.5" />
               <span>{errorMessage}</span>
             </div>
           )}
         </div>
 
         {/* Action Buttons */}
-        <div className="pt-3.5 mt-3.5 border-t border-slate-800/90 flex gap-2.5 shrink-0">
+        <div className="pt-3.5 mt-3.5 border-t border-[#E2E8F0] flex gap-2.5 shrink-0">
           <button
             type="button"
             disabled={isSubmitting}
             onClick={onClose}
-            className="flex-1 py-3 px-4 rounded-xl bg-slate-800/90 hover:bg-slate-800 border border-slate-700/60 text-slate-300 font-semibold text-xs transition-colors cursor-pointer disabled:opacity-50"
+            className="flex-1 py-3 px-4 rounded-xl bg-[#F1F5F9] hover:bg-[#E2E8F0] border border-[#E2E8F0] text-[#64748B] font-semibold text-xs transition-colors cursor-pointer disabled:opacity-50"
           >
             Cancel
           </button>
@@ -450,11 +457,11 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
             type="button"
             disabled={isSubmitting || isDiscountInvalid}
             onClick={handleSubmit}
-            className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-[#00e599] hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-bold uppercase tracking-wider text-xs transition-all shadow-[0_0_20px_rgba(0,229,153,0.3)] hover:shadow-[0_0_25px_rgba(0,229,153,0.5)] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-1.5"
+            className="flex-1 py-3 px-4 rounded-xl bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] font-bold uppercase tracking-wider text-xs transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-1.5"
           >
             {isSubmitting ? (
               <>
-                <span className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin mr-1" />
+                <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-1" />
                 <span>Processing...</span>
               </>
             ) : (

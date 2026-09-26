@@ -21,6 +21,7 @@ import {
   Clock,
   ChevronDown,
   ChevronUp,
+  Phone,
 } from 'lucide-react';
 import {
   MatrixSession,
@@ -75,6 +76,8 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
   const [selectedDurations, setSelectedDurations] = useState<Record<string, number>>({});
   // Optional customer name per cell: map key `${modeId}-${stationId}` -> name
   const [customerNames, setCustomerNames] = useState<Record<string, string>>({});
+  // Optional customer phone per cell: map key `${modeId}-${stationId}` -> phone
+  const [customerPhones, setCustomerPhones] = useState<Record<string, string>>({});
   // Starting session loading state: `${modeId}-${stationId}`
   const [initiatingCell, setInitiatingCell] = useState<string | null>(null);
   // Extending session loading state: sessionId
@@ -143,15 +146,17 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
       durationMinutes,
       modeName,
       customerName,
+      customerPhone,
     }: {
       stationId: string;
       modeId: string;
       durationMinutes: number;
       modeName: string;
       customerName?: string;
+      customerPhone?: string;
     }) => {
       setInitiatingCell(`${modeId}-${stationId}`);
-      // Exact payload per spec: { station_id, mode, duration_minutes }
+      // Exact payload: { station_id, mode, duration_minutes, customer_name, customer_phone }
       return startCategorySessionApi({
         station_id: stationId,
         mode: modeName,
@@ -159,9 +164,21 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
         device_id: stationId,
         duration_minutes: durationMinutes,
         customer_name: customerName?.trim() || 'Walk-in Gamer',
+        customer_phone: customerPhone?.trim() || undefined,
       });
     },
     onSuccess: async (_, vars) => {
+      // Clear inputs for this cell
+      setCustomerNames((prev) => {
+        const next = { ...prev };
+        delete next[`${vars.modeId}-${vars.stationId}`];
+        return next;
+      });
+      setCustomerPhones((prev) => {
+        const next = { ...prev };
+        delete next[`${vars.modeId}-${vars.stationId}`];
+        return next;
+      });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['station-matrix'] }),
         queryClient.invalidateQueries({ queryKey: ['stations-live'] }),
@@ -326,10 +343,10 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
   if (isLoading && modes.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center p-20 bg-slate-900/60 rounded-3xl border border-slate-800 space-y-4">
-        <div className="w-10 h-10 rounded-full border-3 border-emerald-400 border-t-transparent animate-spin" />
-        <p className="text-xs font-mono-code text-slate-400 tracking-wider uppercase">
-          Initializing 2D Allocation Matrix...
+      <div className="flex flex-col items-center justify-center p-20 bg-[#FFFFFF] rounded-3xl border border-[#E2E8F0] space-y-4 shadow-sm">
+        <div className="w-10 h-10 rounded-full border-3 border-[#EA580C] border-t-transparent animate-spin" />
+        <p className="text-xs text-[#64748B] tracking-wider uppercase font-semibold">
+          Initializing Station Allocation Matrix...
         </p>
       </div>
     );
@@ -338,23 +355,23 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
   return (
     <div className="space-y-6">
       {/* The 2D Station Allocation Matrix Table */}
-      <div className="bg-slate-900/90 rounded-3xl border border-slate-800 shadow-2xl overflow-hidden backdrop-blur-xl">
+      <div className="bg-[#FFFFFF] rounded-2xl sm:rounded-3xl border border-[#E2E8F0] shadow-sm overflow-hidden">
         <div className="overflow-x-auto pb-2">
           <table className="w-full text-left border-collapse min-w-[850px]">
             {/* Table Header: Columns = Physical Stations */}
             <thead>
-              <tr className="border-b border-slate-800 bg-slate-950/90">
+              <tr className="border-b border-[#E2E8F0] bg-[#FFF7ED]">
                 {/* Top-Left Corner: Game Modes & Categories Label */}
-                <th className="p-4 sm:p-5 w-56 min-w-[200px] border-r border-slate-800 align-middle">
+                <th className="p-4 sm:p-5 w-56 min-w-[200px] border-r border-[#E2E8F0] align-middle bg-[#FFF7ED]">
                   <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shrink-0">
+                    <div className="p-2 rounded-xl bg-[#FFFFFF] border border-[#E2E8F0] text-[#172554] shrink-0 shadow-xs">
                       <Sliders className="w-4 h-4" />
                     </div>
                     <div>
-                      <span className="text-xs font-black uppercase tracking-wider text-white font-display block">
+                      <span className="text-xs font-black uppercase tracking-wider text-[#172554] font-display block">
                         Modes \ Stations
                       </span>
-                      <span className="text-[10px] text-slate-400 font-normal">
+                      <span className="text-[10px] text-[#64748B] font-normal">
                         Experience vs. Console
                       </span>
                     </div>
@@ -371,79 +388,93 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
                   const isFlashing = flashingStationId === station.name.toUpperCase();
 
+                  const stationPendingCount = (inSeatOrders || []).filter(
+                    (o) => o?.stationId?.toUpperCase() === station.name.toUpperCase() && o?.status === 'pending'
+                  ).length;
+
                   return (
                     <th
                       key={station.id}
-                      className={`p-4 sm:p-5 min-w-[280px] border-r last:border-r-0 border-slate-800 align-top transition-all duration-300 ${
+                      className={`p-4 sm:p-5 min-w-[280px] border-r last:border-r-0 border-[#E2E8F0] align-top bg-[#FFFFFF] transition-all duration-300 ${
                         isFlashing
-                          ? 'bg-amber-500/20 ring-2 ring-amber-400 shadow-[0_0_30px_rgba(245,158,11,0.4)]'
-                          : 'bg-slate-950/70'
+                          ? 'bg-[#FFEDD5] ring-2 ring-[#FED7AA]'
+                          : 'bg-[#FFFFFF]'
                       }`}
                     >
                       <div className="space-y-3">
                         {/* Top Line: Station Name & Quick Status */}
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-2.5">
-                            <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300">
-                              <Tv className="w-4 h-4 text-slate-400" />
+                            <div className="p-2 rounded-xl bg-[#FFF7ED] border border-[#E2E8F0] text-[#172554]">
+                              <Tv className="w-4 h-4 text-[#172554]" />
                             </div>
                             <div>
-                              <span className="text-base font-black text-white font-display tracking-wide block leading-none">
+                              <span className="text-base font-black text-[#172554] font-display tracking-wide block leading-none">
                                 {station.name}
                               </span>
-                              <span className="text-[10px] font-mono-code text-slate-500 uppercase">
+                              <span className="text-[10px] text-[#64748B] uppercase">
                                 {station.device_type || 'Console'}
                               </span>
                             </div>
                           </div>
-                          <span
-                            className={`text-[10px] font-mono-code font-bold uppercase px-2.5 py-1 rounded-full border ${
-                              hasActive
-                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                                : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                            }`}
-                          >
-                            {hasActive ? 'Occupied' : 'Free'}
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                            {stationPendingCount > 0 && (
+                              <span className="text-[10px] font-bold uppercase px-2.5 py-1 rounded-full border bg-[#FFEDD5] text-[#C2410C] border-[#FED7AA] animate-pulse">
+                                {stationPendingCount} New Order{stationPendingCount > 1 ? 's' : ''}
+                              </span>
+                            )}
+                            <span
+                              className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-full border ${
+                                hasActive
+                                  ? 'bg-[#FEF3C7] text-[#B45309] border-[#FDE68A]'
+                                  : 'bg-[#DCFCE7] text-[#15803D] border-[#BBF7D0]'
+                              }`}
+                            >
+                              {hasActive ? 'Occupied' : 'FREE'}
+                            </span>
+                          </div>
                         </div>
 
                         {/* Common Station Availability Header Pill */}
                         {!hasActive || !activeSession || !availInfo ? (
-                          <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
+                          <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#F1F5F9] border border-[#E2E8F0]">
                             <div className="flex items-center gap-2">
-                              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                              <span className="font-mono-code font-bold text-xs text-emerald-300">
+                              <span className="w-2 h-2 rounded-full bg-[#15803D] shrink-0" />
+                              <span className="font-bold text-xs text-[#15803D]">
                                 Available Now
                               </span>
                             </div>
-                            <span className="inline-flex items-center gap-1 text-[10px] font-mono-code font-semibold text-emerald-400/90">
-                              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#15803D]">
+                              <CheckCircle2 className="w-3 h-3 text-[#15803D]" />
                               <span>Ready</span>
                             </span>
                           </div>
                         ) : (
-                          <div className="px-3 py-2 rounded-xl bg-slate-900/90 border border-amber-500/40 space-y-1">
+                          <div className="px-3 py-2 rounded-xl bg-[#FFF7ED] border border-[#FED7AA] space-y-1">
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-1.5 min-w-0">
-                                <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                                <span className="font-mono-code font-bold text-xs text-white truncate">
+                                <Clock className="w-3.5 h-3.5 text-[#EA580C] shrink-0" />
+                                <span className="font-bold text-xs text-[#172554] truncate">
                                   Available at {availInfo.timeStr}
                                 </span>
                               </div>
                               <span
-                                className={`text-[9px] font-mono-code font-bold px-2 py-0.5 rounded-full shrink-0 border ${
+                                className={`text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0 border ${
                                   availInfo.isOvertime
-                                    ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
-                                    : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                                    ? 'bg-[#FEE2E2] text-[#B91C1C] border-[#FECACA]'
+                                    : 'bg-[#FFEDD5] text-[#C2410C] border-[#FED7AA]'
                                 }`}
                               >
                                 {availInfo.remainingBadge}
                               </span>
                             </div>
                             {activeSession.customer_name && (
-                              <div className="text-[10px] font-mono-code text-slate-400 truncate flex items-center gap-1">
-                                <span className="text-slate-500">Player:</span>
-                                <span className="text-slate-200 font-semibold truncate">{activeSession.customer_name}</span>
+                              <div className="text-[10px] text-[#64748B] truncate flex items-center gap-1.5">
+                                <span className="text-[#64748B]">Player:</span>
+                                <span className="text-[#0F172A] font-semibold truncate">{activeSession.customer_name}</span>
+                                {activeSession.customer_phone && (
+                                  <span className="text-[#64748B] font-mono font-medium">({activeSession.customer_phone})</span>
+                                )}
                               </div>
                             )}
                           </div>
@@ -456,23 +487,23 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
             </thead>
 
             {/* Table Body: Rows = Game Modes/Categories ("Solo", "Multiplayer", "Car Simulator") */}
-            <tbody className="divide-y divide-slate-800/80">
+            <tbody className="divide-y divide-[#E2E8F0]">
               {modes.map((mode) => {
                 const modeTheme = getModeTheme(mode.id, mode.name);
 
                 return (
-                  <tr key={mode.id} className="hover:bg-slate-800/20 transition-colors">
+                  <tr key={mode.id} className="hover:bg-[#FFF7ED]/40 transition-colors">
                     {/* Row Header: Game Mode Title & Tier */}
-                    <td className="p-4 sm:p-5 border-r border-slate-800 align-top bg-slate-950/40 w-56 min-w-[200px]">
+                    <td className="p-4 sm:p-5 border-r border-[#E2E8F0] align-top bg-[#FFFFFF] w-56 min-w-[200px]">
                       <div className="flex items-center gap-2.5">
-                        <span className={`p-2 rounded-xl border ${modeTheme.badge}`}>
+                        <span className="p-2 rounded-xl border border-[#E2E8F0] bg-[#FFF7ED] text-[#172554] shadow-xs">
                           {modeTheme.icon}
                         </span>
                         <div>
-                          <h4 className="text-base font-black text-white font-display tracking-wide">
+                          <h4 className="text-base font-black text-[#172554] font-display tracking-wide">
                             {mode.name}
                           </h4>
-                          <span className="text-[10px] font-mono-code font-bold uppercase text-slate-400">
+                          <span className="text-[10px] font-bold uppercase text-[#64748B]">
                             {mode.tier}
                           </span>
                         </div>
@@ -480,43 +511,323 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                     </td>
 
                     {/* Matrix Cells: (Row: Mode, Column: Station) */}
-                    {stations.map((station, stationIndex) => {
+                    {(() => {
                       const isVrRow = mode.id.toLowerCase().includes('vr') || mode.name.toLowerCase().includes('vr');
 
-                      // VR Row Decoupling: Only rendered in Column 1 (stationIndex === 0). Columns 2 & 3 are dedicated rig slots.
-                      if (isVrRow && stationIndex > 0) {
+                      if (isVrRow) {
+                        const vrActiveSession = matrixData?.vr_session;
+                        const hasVrSession = !!vrActiveSession;
+                        const vrCellKey = `${mode.id}-VR1`;
+                        const isFocused = focusedCellKey === vrCellKey;
+                        const vrPricingTiers: PricingTier[] =
+                          Array.isArray(mode.pricing_tiers) && mode.pricing_tiers.length > 0
+                            ? mode.pricing_tiers
+                            : [
+                                {
+                                  duration_min: 30,
+                                  price: Math.round(Number(mode.hourly_rate || 300) * 0.55),
+                                  label: '30 mins',
+                                },
+                                {
+                                  duration_min: 60,
+                                  price: Number(mode.hourly_rate || 300),
+                                  label: '1 hr',
+                                },
+                                {
+                                  duration_min: 120,
+                                  price: Math.round(Number(mode.hourly_rate || 300) * 1.8),
+                                  label: '2 hrs',
+                                },
+                              ];
+                        const defaultTier = vrPricingTiers.find((t) => t.duration_min === 60) || vrPricingTiers[0];
+                        const selectedDuration = selectedDurations[vrCellKey] ?? defaultTier?.duration_min ?? 60;
+                        const isInitiating = initiatingCell === vrCellKey;
+
                         return (
                           <td
-                            key={station.id}
-                            className="p-3.5 sm:p-4 border-r last:border-r-0 border-slate-800 align-middle bg-slate-950/20"
+                            colSpan={stations.length}
+                            ref={(el) => {
+                              cellRefs.current[vrCellKey] = el;
+                            }}
+                            className={`p-3.5 sm:p-5 align-top transition-all duration-300 relative bg-[#FFFFFF] ${
+                              isFocused ? 'ring-2 ring-[#EA580C] bg-[#FFF7ED] z-20 shadow-xl' : ''
+                            }`}
                           >
-                            <div className="p-4 rounded-2xl bg-slate-950/30 border border-dashed border-slate-800/60 flex flex-col items-center justify-center text-center select-none py-8 space-y-2">
-                              <Cpu className="w-5 h-5 text-teal-400/40" />
-                              <span className="text-[10px] font-mono-code uppercase text-slate-400 font-bold">
-                                Dedicated VR Rig
-                              </span>
-                              <p className="text-[10px] text-slate-500">
-                                VR Headset Station operates in Column 1
-                              </p>
-                            </div>
+                            {hasVrSession && vrActiveSession ? (
+                              /* STATE A: VR RIG ACTIVE */
+                              <div className="p-4 sm:p-5 rounded-2xl bg-[#FFFFFF] border border-[#BBF7D0] shadow-sm relative overflow-hidden space-y-4">
+                                <div className="absolute top-0 left-0 right-0 h-1 bg-[#15803D]" />
+
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-center">
+                                  {/* 1. Player Info */}
+                                  <div className="space-y-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-bold font-mono-code uppercase bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
+                                        <Radio className="w-3 h-3 animate-pulse text-[#15803D]" />
+                                        <span>VR Rig Active</span>
+                                      </span>
+                                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono-code font-bold bg-[#EFF6FF] text-[#1E40AF] border border-[#BFDBFE]">
+                                        Station: VR1
+                                      </span>
+                                    </div>
+
+                                    <div>
+                                      <span className="text-base font-black text-[#0F172A] font-display block">
+                                        {vrActiveSession.customer_name}
+                                      </span>
+                                      {vrActiveSession.customer_phone && (
+                                        <span className="text-xs text-[#64748B] font-mono-code flex items-center gap-1.5 mt-1 font-semibold">
+                                          <Phone className="w-3 h-3 text-[#EA580C]" />
+                                          <span>{vrActiveSession.customer_phone}</span>
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div className="text-[11px] text-[#64748B] font-mono-code">
+                                      Started: {new Date(vrActiveSession.started_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })}
+                                    </div>
+                                  </div>
+
+                                  {/* 2. Live Countdown Timer & Progress */}
+                                  {(() => {
+                                    const countdown = formatLiveCountdown(
+                                      vrActiveSession.started_at,
+                                      vrActiveSession.allocated_minutes
+                                    );
+                                    return (
+                                      <div className="p-3.5 rounded-xl bg-[#FFF7ED] border border-[#FED7AA]/60 space-y-2 text-center">
+                                        <div className="flex items-center justify-between text-xs text-[#64748B]">
+                                          <div className="flex items-center gap-1">
+                                            <Timer className="w-3.5 h-3.5 text-[#15803D]" />
+                                            <span className="font-semibold text-[11px]">Time Left:</span>
+                                          </div>
+                                          <span className="font-mono-code text-[11px]">{vrActiveSession.allocated_minutes}m booked</span>
+                                        </div>
+
+                                        <div className={`text-2xl font-black font-mono-code ${countdown.isOvertime ? 'text-[#B91C1C] animate-pulse' : 'text-[#15803D]'}`}>
+                                          {countdown.remainingStr}
+                                        </div>
+
+                                        <div className="w-full bg-[#E2E8F0] h-2 rounded-full overflow-hidden">
+                                          <div
+                                            className={`h-full transition-all duration-1000 ${countdown.isOvertime ? 'bg-[#B91C1C]' : 'bg-[#15803D]'}`}
+                                            style={{ width: `${countdown.progressPercent}%` }}
+                                          />
+                                        </div>
+
+                                        <div className="text-[11px] text-[#64748B] font-mono-code">
+                                          Elapsed: {countdown.elapsedStr}
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
+
+                                  {/* 3. Financials & Actions */}
+                                  <div className="space-y-3">
+                                    <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0]">
+                                      <span className="text-xs text-[#64748B] font-medium">Running Total:</span>
+                                      <span className="text-base font-black font-mono-code text-[#172554]">
+                                        ₹{Number(vrActiveSession.running_total || vrActiveSession.time_charge || 0).toFixed(2)}
+                                      </span>
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        onClick={() => onOrderFood(vrActiveSession, 'VR1')}
+                                        className="flex-1 py-2 px-2.5 rounded-xl bg-[#FFF7ED] hover:bg-[#FFEDD5] border border-[#FED7AA] text-[#EA580C] font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                                      >
+                                        <UtensilsCrossed className="w-3.5 h-3.5 text-[#EA580C]" />
+                                        <span>Order Food</span>
+                                      </button>
+
+                                      <button
+                                        onClick={() => onCheckout(vrActiveSession, 'VR1')}
+                                        className="flex-1 py-2 px-2.5 rounded-xl bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                                      >
+                                        <Receipt className="w-3.5 h-3.5 text-white" />
+                                        <span>Settle Bill</span>
+                                      </button>
+                                    </div>
+
+                                    {/* Quick extend buttons */}
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[10px] text-[#64748B] font-bold uppercase shrink-0">Extend:</span>
+                                      <button
+                                        disabled={extendingSessionId === vrActiveSession.session_id}
+                                        onClick={() => handleExtend(vrActiveSession, 30)}
+                                        className="flex-1 py-1 px-2 rounded-xl bg-[#FFFFFF] hover:bg-[#F8FAFC] border border-[#E2E8F0] text-[#0F172A] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                                      >
+                                        <PlusCircle className="w-3 h-3 text-[#15803D]" />
+                                        <span>+30m</span>
+                                      </button>
+                                      <button
+                                        disabled={extendingSessionId === vrActiveSession.session_id}
+                                        onClick={() => handleExtend(vrActiveSession, 60)}
+                                        className="flex-1 py-1 px-2 rounded-xl bg-[#FFFFFF] hover:bg-[#F8FAFC] border border-[#E2E8F0] text-[#0F172A] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                                      >
+                                        <PlusCircle className="w-3 h-3 text-[#15803D]" />
+                                        <span>+1h</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              /* STATE B: VR RIG AVAILABLE / CHECK-IN */
+                              <div className="p-4 sm:p-5 rounded-2xl bg-[#FFFFFF] border border-[#E2E8F0] shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                                {/* Left: Dedicated Rig Info */}
+                                <div className="space-y-2.5 max-w-sm">
+                                  <div className="flex items-center gap-2">
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold font-mono-code uppercase bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
+                                      <CheckCircle2 className="w-3.5 h-3.5" />
+                                      <span>VR Rig: READY</span>
+                                    </span>
+                                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono-code font-bold bg-[#EFF6FF] text-[#1E40AF] border border-[#BFDBFE]">
+                                      Station: VR1
+                                    </span>
+                                  </div>
+
+                                  <div>
+                                    <h4 className="text-base font-black text-[#172554] font-display">
+                                      Dedicated Virtual Reality Rig (VR1)
+                                    </h4>
+                                    <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+                                      High-performance tethered PC-VR headset with room-scale 6DoF tracking and 4K optics. Standalone gaming rig decoupled from PS consoles.
+                                    </p>
+                                  </div>
+
+                                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                                    <span className="px-2.5 py-1 rounded-lg text-[10px] font-mono-code font-semibold bg-[#FFF7ED] text-[#EA580C] border border-[#FED7AA]">
+                                      Room-Scale 6DoF
+                                    </span>
+                                    <span className="px-2.5 py-1 rounded-lg text-[10px] font-mono-code font-semibold bg-[#F8FAFC] text-[#64748B] border border-[#E2E8F0]">
+                                      Meta Quest 3 / PC-VR
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Right: Check-In Form */}
+                                <div className="flex-1 max-w-lg bg-[#FFF7ED]/40 p-4 sm:p-5 rounded-2xl border border-[#FED7AA]/60 space-y-3">
+                                  {/* Inputs */}
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                    <div>
+                                      <label className="text-[10px] uppercase text-[#64748B] font-bold block mb-1">
+                                        CUSTOMER NAME:
+                                      </label>
+                                      <input
+                                        type="text"
+                                        placeholder="Walk-in Gamer"
+                                        value={customerNames[vrCellKey] || ''}
+                                        onChange={(e) =>
+                                          setCustomerNames((prev) => ({
+                                            ...prev,
+                                            [vrCellKey]: e.target.value,
+                                          }))
+                                        }
+                                        className="w-full px-3 py-2 rounded-xl bg-[#FFFFFF] border border-[#E2E8F0] text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] transition-colors shadow-xs"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] uppercase text-[#64748B] font-bold block mb-1">
+                                        PHONE NUMBER (OPTIONAL):
+                                      </label>
+                                      <input
+                                        type="tel"
+                                        placeholder="10-digit Phone"
+                                        maxLength={10}
+                                        value={customerPhones[vrCellKey] || ''}
+                                        onChange={(e) =>
+                                          setCustomerPhones((prev) => ({
+                                            ...prev,
+                                            [vrCellKey]: e.target.value.replace(/\D/g, '').slice(0, 10),
+                                          }))
+                                        }
+                                        className="w-full px-3 py-2 rounded-xl bg-[#FFFFFF] border border-[#E2E8F0] text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] font-mono transition-colors shadow-xs"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  {/* Duration Selector & Start Button */}
+                                  <div className="flex flex-col sm:flex-row sm:items-end gap-3 pt-0.5">
+                                    <div className="flex-1 space-y-1.5">
+                                      <label className="text-[10px] uppercase text-[#64748B] font-bold block">
+                                        Select Duration:
+                                      </label>
+                                      <div className="grid grid-cols-3 gap-1.5">
+                                        {vrPricingTiers.map((tier) => {
+                                          const isSelected = selectedDuration === tier.duration_min;
+                                          return (
+                                            <button
+                                              key={tier.duration_min}
+                                              type="button"
+                                              onClick={() =>
+                                                setSelectedDurations((prev) => ({
+                                                  ...prev,
+                                                  [vrCellKey]: tier.duration_min,
+                                                }))
+                                              }
+                                              className={`py-2 px-1.5 rounded-xl text-center transition-all font-display border cursor-pointer ${
+                                                isSelected
+                                                  ? 'bg-[#EA580C] border-[#EA580C] text-[#FFFFFF] shadow-sm'
+                                                  : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
+                                              }`}
+                                            >
+                                              <div className={`text-xs font-bold tracking-tight ${isSelected ? 'text-white' : 'text-[#0F172A]'}`}>
+                                                {tier.label || `${tier.duration_min}m`}
+                                              </div>
+                                              <div className={`text-[10px] font-bold ${isSelected ? 'text-white/90' : 'text-[#172554]'}`}>
+                                                ₹{Number(tier.price).toFixed(0)}
+                                              </div>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+
+                                    <button
+                                      disabled={isInitiating}
+                                      onClick={() =>
+                                        startSessionMutation.mutate({
+                                          stationId: 'VR1',
+                                          modeId: mode.id,
+                                          durationMinutes: selectedDuration,
+                                          modeName: mode.name,
+                                          customerName: customerNames[vrCellKey],
+                                          customerPhone: customerPhones[vrCellKey],
+                                        })
+                                      }
+                                      className="sm:w-44 py-3 px-3 rounded-xl bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-98 cursor-pointer disabled:opacity-50 shrink-0"
+                                    >
+                                      {isInitiating ? (
+                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                      ) : (
+                                        <>
+                                          <Play className="w-3.5 h-3.5 fill-current" />
+                                          <span>Start VR</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                           </td>
                         );
                       }
 
-                      // Effective Station & Session details
-                      const effectiveStationId = isVrRow ? 'VR1' : station.id;
-                      const effectiveStationName = isVrRow ? 'VR1' : station.name;
-                      const cellKey = `${mode.id}-${effectiveStationId}`;
-                      const isFocused = focusedCellKey === cellKey;
-                      const activeSession = isVrRow ? matrixData.vr_session : station.active_session;
-                      const hasActiveSession = !!activeSession;
+                      return stations.map((station) => {
+                        // Effective Station & Session details
+                        const effectiveStationId = station.id;
+                        const effectiveStationName = station.name;
+                        const cellKey = `${mode.id}-${effectiveStationId}`;
+                        const isFocused = focusedCellKey === cellKey;
+                        const activeSession = station.active_session;
+                        const hasActiveSession = !!activeSession;
 
-                      // Check if supported hardware
-                      const isSupportedHardware = isVrRow
-                        ? true
-                        : mode.supported_stations.some(
-                            (stName) => stName.toUpperCase() === station.name.toUpperCase()
-                          );
+                        // Check if supported hardware
+                        const isSupportedHardware = mode.supported_stations.some(
+                          (stName) => stName.toUpperCase() === station.name.toUpperCase()
+                        );
 
                       // Normalize mode matching
                       const sessionModeRaw = (activeSession?.mode || '').toLowerCase();
@@ -567,11 +878,11 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                           ref={(el) => {
                             cellRefs.current[cellKey] = el;
                           }}
-                          className={`p-3.5 sm:p-4 border-r last:border-r-0 border-slate-800 align-top transition-all duration-300 relative ${
-                            flashingStationId === station.name.toUpperCase() ? 'bg-amber-500/10' : ''
+                          className={`p-3.5 sm:p-4 border-r last:border-r-0 border-[#E2E8F0] align-top transition-all duration-300 relative ${
+                            flashingStationId === station.name.toUpperCase() ? 'bg-[#FFEDD5]/40' : ''
                           } ${
                             isFocused
-                              ? 'ring-2 ring-emerald-400 bg-emerald-950/30 scale-[1.01] z-20 shadow-2xl'
+                              ? 'ring-2 ring-[#EA580C] bg-[#FFF7ED] scale-[1.01] z-20 shadow-xl'
                               : ''
                           }`}
                         >
@@ -579,24 +890,25 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                           {/* STATE A: ACTIVE HERE */}
                           {/* ========================================================================= */}
                           {isStateA && activeSession && (
-                            <div className="p-3.5 rounded-2xl bg-slate-950/95 border border-emerald-500/50 shadow-lg space-y-3 relative overflow-hidden">
+                            <div className="p-3.5 rounded-2xl bg-[#FFFFFF] border border-[#BBF7D0] shadow-sm space-y-3 relative overflow-hidden">
                               {/* Glowing top line */}
-                              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400" />
+                              <div className="absolute top-0 left-0 right-0 h-1 bg-[#15803D]" />
 
                               {/* Customer Header & Active Pill */}
                               <div className="flex items-center justify-between gap-1.5 pt-1">
                                 <div className="truncate">
-                                  <span className="text-xs font-black text-white font-display truncate block">
+                                  <span className="text-xs font-black text-[#0F172A] font-display truncate block">
                                     {activeSession.customer_name}
                                   </span>
                                   {activeSession.customer_phone && (
-                                    <span className="text-[10px] font-mono-code text-slate-400">
-                                      {activeSession.customer_phone}
+                                    <span className="text-[10px] font-mono-code text-[#64748B] font-medium flex items-center gap-1">
+                                      <span>📞</span>
+                                      <span>{activeSession.customer_phone}</span>
                                     </span>
                                   )}
                                 </div>
-                                <span className="inline-flex items-center gap-1 text-[10px] font-mono-code font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                                  <Radio className="w-2.5 h-2.5 animate-pulse text-emerald-400" />
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
+                                  <Radio className="w-2.5 h-2.5 animate-pulse text-[#15803D]" />
                                   <span>{isVrRow ? 'VR Active' : 'Active Here'}</span>
                                 </span>
                               </div>
@@ -608,15 +920,15 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                   activeSession.allocated_minutes
                                 );
                                 return (
-                                  <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1.5">
+                                  <div className="p-2.5 rounded-xl bg-[#FFF7ED] border border-[#E2E8F0] space-y-1.5">
                                     <div className="flex items-center justify-between text-xs">
-                                      <div className="flex items-center gap-1.5 text-slate-400">
-                                        <Timer className="w-3.5 h-3.5 text-emerald-400" />
-                                        <span className="font-mono-code text-[11px]">Time Left:</span>
+                                      <div className="flex items-center gap-1.5 text-[#64748B]">
+                                        <Timer className="w-3.5 h-3.5 text-[#15803D]" />
+                                        <span className="text-[11px] font-medium">Time Left:</span>
                                       </div>
                                       <span
-                                        className={`font-mono-code font-black text-sm ${
-                                          countdown.isOvertime ? 'text-rose-400 animate-pulse' : 'text-emerald-400'
+                                        className={`font-black text-sm font-mono-code ${
+                                          countdown.isOvertime ? 'text-[#B91C1C] animate-pulse' : 'text-[#15803D]'
                                         }`}
                                       >
                                         {countdown.remainingStr}
@@ -624,18 +936,18 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                     </div>
 
                                     {/* Progress Bar */}
-                                    <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden">
+                                    <div className="w-full bg-[#E2E8F0] rounded-full h-1.5 overflow-hidden">
                                       <div
                                         className={`h-full transition-all duration-1000 ${
                                           countdown.isOvertime
-                                            ? 'bg-rose-500'
-                                            : 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                                            ? 'bg-[#B91C1C]'
+                                            : 'bg-[#15803D]'
                                         }`}
                                         style={{ width: `${countdown.progressPercent}%` }}
                                       />
                                     </div>
 
-                                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono-code">
+                                    <div className="flex items-center justify-between text-[10px] text-[#64748B]">
                                       <span>Elapsed: {countdown.elapsedStr}</span>
                                       <span>Booked: {activeSession.allocated_minutes}m</span>
                                     </div>
@@ -668,13 +980,13 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                 if (sessionOrders.length === 0) return null;
 
                                 return (
-                                  <div className="p-2.5 rounded-xl bg-slate-900/95 border border-amber-500/40 space-y-2">
-                                    <div className="flex items-center justify-between text-xs pb-1.5 border-b border-slate-800">
-                                      <div className="flex items-center gap-1.5 font-bold text-amber-300 font-display">
-                                        <UtensilsCrossed className="w-3.5 h-3.5 text-amber-400" />
+                                  <div className="p-2.5 rounded-xl bg-[#FFF7ED] border border-[#FED7AA] space-y-2">
+                                    <div className="flex items-center justify-between text-xs pb-1.5 border-b border-[#FED7AA]">
+                                      <div className="flex items-center gap-1.5 font-bold text-[#EA580C] font-display">
+                                        <UtensilsCrossed className="w-3.5 h-3.5 text-[#EA580C]" />
                                         <span>In-Seat Orders ({sessionOrders.length})</span>
                                       </div>
-                                      <span className="text-[10px] font-mono-code text-amber-400 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30">
+                                      <span className="text-[10px] text-[#EA580C] bg-[#FFEDD5] px-1.5 py-0.5 rounded border border-[#FED7AA] font-bold">
                                         {sessionOrders.filter((o) => o.status === 'pending').length} pending
                                       </span>
                                     </div>
@@ -687,13 +999,13 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                         return (
                                           <div
                                             key={ord.orderId}
-                                            className="p-2 rounded-lg bg-slate-950 border border-slate-800/80 space-y-1.5 text-[11px]"
+                                            className="p-2 rounded-lg bg-[#FFFFFF] border border-[#E2E8F0] space-y-1.5 text-[11px] shadow-xs"
                                           >
                                             {/* Header: Customer Name & Status Toggle */}
                                             <div className="flex items-center justify-between gap-1.5">
-                                              <span className="font-bold text-slate-200 truncate flex items-center gap-1">
-                                                <span className="text-slate-500 text-[10px]">Gamer:</span>
-                                                <span className="text-white truncate font-display">{ord.customerName}</span>
+                                              <span className="font-bold text-[#0F172A] truncate flex items-center gap-1">
+                                                <span className="text-[#64748B] text-[10px]">Gamer:</span>
+                                                <span className="text-[#0F172A] truncate font-display">{ord.customerName}</span>
                                               </span>
 
                                               {/* Status Toggle Button (Pending ➔ Preparing ➔ Delivered) */}
@@ -701,12 +1013,12 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                                 type="button"
                                                 onClick={() => handleToggleOrderStatus(ord.orderId, ord.status)}
                                                 title="Click to advance order status: Pending ➔ Preparing ➔ Delivered"
-                                                className={`px-2 py-0.5 rounded-full text-[9px] font-mono-code font-bold uppercase transition-all border cursor-pointer ${
+                                                className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase transition-all border cursor-pointer ${
                                                   ord.status === 'pending'
-                                                    ? 'bg-amber-500/20 text-amber-300 border-amber-400/50 hover:bg-amber-500/30'
+                                                    ? 'bg-[#FFEDD5] text-[#C2410C] border-[#FED7AA] hover:bg-[#FED7AA]'
                                                     : ord.status === 'preparing'
-                                                    ? 'bg-blue-500/20 text-blue-300 border-blue-400/50 hover:bg-blue-500/30'
-                                                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-400/50 hover:bg-emerald-500/30'
+                                                    ? 'bg-[#EFF6FF] text-[#1E3A8A] border-[#BFDBFE] hover:bg-[#DBEAFE]'
+                                                    : 'bg-[#DCFCE7] text-[#15803D] border-[#BBF7D0] hover:bg-[#BBF7D0]'
                                                 }`}
                                               >
                                                 ● {ord.status}
@@ -714,19 +1026,19 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                             </div>
 
                                             {/* Item Summary line */}
-                                            <p className="text-[10px] text-slate-400 truncate">
+                                            <p className="text-[10px] text-[#64748B] truncate">
                                               {itemSummaryStr}
                                             </p>
 
                                             {/* Expand / Collapse Button & Price */}
-                                            <div className="flex items-center justify-between pt-1 border-t border-slate-900 text-[10px]">
-                                              <span className="font-mono-code font-bold text-emerald-400">
+                                            <div className="flex items-center justify-between pt-1 border-t border-[#E2E8F0] text-[10px]">
+                                              <span className="font-bold text-[#172554] font-mono-code">
                                                 ₹{ord.totalAmount.toFixed(2)}
                                               </span>
                                               <button
                                                 type="button"
                                                 onClick={() => toggleOrderExpand(ord.orderId)}
-                                                className="flex items-center gap-0.5 text-slate-400 hover:text-slate-200 cursor-pointer"
+                                                className="flex items-center gap-0.5 text-[#64748B] hover:text-[#0F172A] cursor-pointer"
                                               >
                                                 <span>{isExpanded ? 'Hide Items' : 'View Bill'}</span>
                                                 {isExpanded ? (
@@ -739,13 +1051,13 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
                                             {/* Expandable Itemized Bill */}
                                             {isExpanded && (
-                                              <div className="pt-1.5 space-y-1 border-t border-slate-900/90 text-[10px] font-mono-code">
+                                              <div className="pt-1.5 space-y-1 border-t border-[#E2E8F0] text-[10px]">
                                                 {ord.items.map((it, idx) => (
-                                                  <div key={idx} className="flex justify-between text-slate-300">
+                                                  <div key={idx} className="flex justify-between text-[#0F172A]">
                                                     <span>
-                                                      {it.name} <span className="text-amber-400">x{it.qty}</span>
+                                                      {it.name} <span className="text-[#EA580C] font-bold">x{it.qty}</span>
                                                     </span>
-                                                    <span>₹{(it.price * it.qty).toFixed(2)}</span>
+                                                    <span className="font-mono-code font-medium">₹{(it.price * it.qty).toFixed(2)}</span>
                                                   </div>
                                                 ))}
                                               </div>
@@ -759,22 +1071,22 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                               })()}
 
                               {/* 2. Billing Metrics: Play Charges, Snack Charges, Total Billable Amount */}
-                              <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1 text-[11px] font-mono-code">
-                                <div className="flex justify-between text-slate-400">
+                              <div className="p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1 text-[11px]">
+                                <div className="flex justify-between text-[#64748B]">
                                   <span>Play Charges:</span>
-                                  <span className="text-white font-bold">
+                                  <span className="text-[#0F172A] font-bold font-mono-code">
                                     ₹{Number(activeSession.time_charge || 0).toFixed(2)}
                                   </span>
                                 </div>
-                                <div className="flex justify-between text-slate-400">
+                                <div className="flex justify-between text-[#64748B]">
                                   <span>Snack Charges:</span>
-                                  <span className="text-white font-bold">
+                                  <span className="text-[#0F172A] font-bold font-mono-code">
                                     ₹{Number(activeSession.orders_charge || 0).toFixed(2)}
                                   </span>
                                 </div>
-                                <div className="flex justify-between font-bold text-white pt-1 border-t border-slate-800/80">
-                                  <span className="text-emerald-300">Total Billable:</span>
-                                  <span className="text-emerald-400 font-black text-xs">
+                                <div className="flex justify-between font-bold text-[#0F172A] pt-1 border-t border-[#E2E8F0]">
+                                  <span className="text-[#172554]">Total Billable:</span>
+                                  <span className="text-[#172554] font-black text-xs font-mono-code">
                                     ₹{Number(activeSession.running_total || 0).toFixed(2)}
                                   </span>
                                 </div>
@@ -785,18 +1097,18 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                 {/* Order Food & Drinks */}
                                 <button
                                   onClick={() => onOrderFood(activeSession, effectiveStationName)}
-                                  className="w-full py-2 px-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                                  className="w-full py-2 px-2.5 rounded-xl bg-[#FFF7ED] hover:bg-[#FFEDD5] border border-[#FED7AA] text-[#EA580C] font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
                                 >
-                                  <UtensilsCrossed className="w-3.5 h-3.5 text-amber-400" />
+                                  <UtensilsCrossed className="w-3.5 h-3.5 text-[#EA580C]" />
                                   <span>Order Food &amp; Drinks</span>
                                 </button>
 
                                 {/* Generate Bill & Checkout */}
                                 <button
                                   onClick={() => onCheckout(activeSession, effectiveStationName)}
-                                  className="w-full py-2 px-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                                  className="w-full py-2 px-2.5 rounded-xl bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
                                 >
-                                  <Receipt className="w-3.5 h-3.5 text-emerald-400" />
+                                  <Receipt className="w-3.5 h-3.5 text-white" />
                                   <span>Generate Bill &amp; Checkout</span>
                                 </button>
 
@@ -804,30 +1116,30 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                 <div className="grid grid-cols-3 gap-1.5 pt-0.5">
                                   <button
                                     onClick={() => onTransfer(activeSession, effectiveStationName)}
-                                    className="py-1.5 px-2 rounded-xl bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/30 text-blue-300 font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer"
+                                    className="py-1.5 px-2 rounded-xl bg-[#EFF6FF] hover:bg-[#DBEAFE] border border-[#BFDBFE] text-[#172554] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer"
                                     title="Transfer player to another station"
                                   >
-                                    <ArrowRightLeft className="w-3 h-3 text-blue-400" />
+                                    <ArrowRightLeft className="w-3 h-3 text-[#172554]" />
                                     <span>Transfer</span>
                                   </button>
 
                                   <button
                                     disabled={extendingSessionId === activeSession.session_id}
                                     onClick={() => handleExtend(activeSession, 30)}
-                                    className="py-1.5 px-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-mono-code font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                                    className="py-1.5 px-2 rounded-xl bg-[#FFFFFF] hover:bg-[#F8FAFC] border border-[#E2E8F0] text-[#0F172A] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
                                     title="Add 30 minutes to this session"
                                   >
-                                    <PlusCircle className="w-3 h-3 text-emerald-400" />
+                                    <PlusCircle className="w-3 h-3 text-[#15803D]" />
                                     <span>+30m</span>
                                   </button>
 
                                   <button
                                     disabled={extendingSessionId === activeSession.session_id}
                                     onClick={() => handleExtend(activeSession, 60)}
-                                    className="py-1.5 px-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-mono-code font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                                    className="py-1.5 px-2 rounded-xl bg-[#FFFFFF] hover:bg-[#F8FAFC] border border-[#E2E8F0] text-[#0F172A] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
                                     title="Add 1 hour to this session"
                                   >
-                                    <PlusCircle className="w-3 h-3 text-teal-400" />
+                                    <PlusCircle className="w-3 h-3 text-[#15803D]" />
                                     <span>+1h</span>
                                   </button>
                                 </div>
@@ -839,40 +1151,60 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                           {/* STATE B: AVAILABLE */}
                           {/* ========================================================================= */}
                           {isStateB && (
-                            <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 hover:border-slate-700 transition-all space-y-3">
+                            <div className="p-3.5 rounded-2xl bg-[#FFFFFF] border border-[#E2E8F0] shadow-xs space-y-3">
                               {/* Station Availability Status */}
                               <div className="flex items-center justify-between text-xs">
-                                <span className="text-slate-400 font-medium">
-                                  {isVrRow ? 'VR Rig Ready:' : 'Console Free:'}
+                                <span className="text-[#15803D] font-bold">
+                                  {isVrRow ? 'VR Rig Ready: READY' : 'Console Free: READY'}
                                 </span>
-                                <span className="inline-flex items-center gap-1 text-[10px] font-mono-code font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
                                   <CheckCircle2 className="w-2.5 h-2.5" />
-                                  <span>Ready</span>
+                                  <span>READY</span>
                                 </span>
                               </div>
 
-                              {/* Optional Customer Name Input */}
-                              <div className="space-y-1">
-                                <label className="text-[10px] font-mono-code uppercase text-slate-400 font-bold block">
-                                  Customer Name:
-                                </label>
-                                <input
-                                  type="text"
-                                  placeholder="Walk-in Gamer"
-                                  value={customerNames[cellKey] || ''}
-                                  onChange={(e) =>
-                                    setCustomerNames((prev) => ({
-                                      ...prev,
-                                      [cellKey]: e.target.value,
-                                    }))
-                                  }
-                                  className="w-full px-2.5 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/70 font-mono-code transition-colors"
-                                />
+                              {/* Customer Name & Phone Number Inputs */}
+                              <div className="space-y-2">
+                                <div>
+                                  <label className="text-[10px] uppercase text-[#64748B] font-bold block mb-1">
+                                    CUSTOMER NAME:
+                                  </label>
+                                  <input
+                                    type="text"
+                                    placeholder="Walk-in Gamer"
+                                    value={customerNames[cellKey] || ''}
+                                    onChange={(e) =>
+                                      setCustomerNames((prev) => ({
+                                        ...prev,
+                                        [cellKey]: e.target.value,
+                                      }))
+                                    }
+                                    className="w-full px-2.5 py-1.5 rounded-xl bg-[#FFF7ED] border border-[#E2E8F0] text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] transition-colors"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] uppercase text-[#64748B] font-bold block mb-1">
+                                    PHONE NUMBER (OPTIONAL):
+                                  </label>
+                                  <input
+                                    type="tel"
+                                    placeholder="10-digit Phone"
+                                    maxLength={10}
+                                    value={customerPhones[cellKey] || ''}
+                                    onChange={(e) =>
+                                      setCustomerPhones((prev) => ({
+                                        ...prev,
+                                        [cellKey]: e.target.value.replace(/\D/g, '').slice(0, 10),
+                                      }))
+                                    }
+                                    className="w-full px-2.5 py-1.5 rounded-xl bg-[#FFF7ED] border border-[#E2E8F0] text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] font-mono transition-colors"
+                                  />
+                                </div>
                               </div>
 
                               {/* Duration Selector Buttons: [30 mins], [1 hr], [2 hrs] */}
                               <div className="space-y-1.5">
-                                <div className="text-[10px] font-mono-code uppercase text-slate-400 font-bold">
+                                <div className="text-[10px] uppercase text-[#64748B] font-bold">
                                   Select Duration:
                                 </div>
 
@@ -891,14 +1223,14 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                         }
                                         className={`py-2 px-1 rounded-xl text-center transition-all font-display border cursor-pointer ${
                                           isSelected
-                                            ? 'bg-emerald-500/25 border-emerald-400 text-white shadow-sm ring-1 ring-emerald-400/50'
-                                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
+                                            ? 'bg-[#EA580C] border-[#EA580C] text-[#FFFFFF] shadow-sm'
+                                            : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
                                         }`}
                                       >
-                                        <div className="text-[11px] font-bold tracking-tight">
+                                        <div className={`text-[11px] font-bold tracking-tight ${isSelected ? 'text-white' : 'text-[#0F172A]'}`}>
                                           {tier.label || `${tier.duration_min}m`}
                                         </div>
-                                        <div className="text-[10px] font-mono-code text-emerald-400 font-bold">
+                                        <div className={`text-[10px] font-bold ${isSelected ? 'text-white/90' : 'text-[#172554]'}`}>
                                           ₹{Number(tier.price).toFixed(0)}
                                         </div>
                                       </button>
@@ -917,16 +1249,17 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                     durationMinutes: selectedDuration,
                                     modeName: mode.name,
                                     customerName: customerNames[cellKey],
+                                    customerPhone: customerPhones[cellKey],
                                   })
                                 }
-                                className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-md active:scale-98 cursor-pointer disabled:opacity-50"
+                                className="w-full py-2.5 px-3 rounded-xl bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-98 cursor-pointer disabled:opacity-50"
                               >
                                 {isInitiating ? (
-                                  <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                                 ) : (
                                   <>
                                     <Play className="w-3.5 h-3.5 fill-current" />
-                                    <span>Start {mode.name}</span>
+                                    <span>▶ START {mode.name.toUpperCase()}</span>
                                   </>
                                 )}
                               </button>
@@ -939,27 +1272,30 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                           {isStateC && activeSession && (
                             <div
                               onClick={() => handleFocusActiveCell(activeSession.mode, station.id)}
-                              className="p-3.5 rounded-2xl bg-slate-950/40 border border-slate-800/80 opacity-60 hover:opacity-100 hover:border-blue-500/50 transition-all duration-200 cursor-pointer space-y-2.5 group"
+                              className="p-3.5 rounded-2xl bg-[#F8FAFC] border border-[#E2E8F0] opacity-80 hover:opacity-100 hover:border-[#172554]/50 transition-all duration-200 cursor-pointer space-y-2.5 group"
                               title={`Click to focus active session on ${activeSession.mode_name}`}
                             >
                               <div className="flex items-center justify-between text-xs">
-                                <span className="text-slate-500 font-medium">Console In Use</span>
-                                <Lock className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 transition-colors" />
+                                <span className="text-[#64748B] font-medium">Console In Use</span>
+                                <Lock className="w-3.5 h-3.5 text-[#64748B] group-hover:text-[#172554] transition-colors" />
                               </div>
 
                               {/* Status Pill: "Active in [Other Mode]" */}
-                              <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 group-hover:border-blue-500/40 transition-colors space-y-1.5">
-                                <span className="inline-flex items-center gap-1 text-[10px] font-mono-code font-bold uppercase px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                              <div className="p-2.5 rounded-xl bg-[#FFFFFF] border border-[#E2E8F0] group-hover:border-[#172554]/40 transition-colors space-y-1.5">
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-[#EFF6FF] text-[#1E3A8A] border border-[#BFDBFE]">
                                   <span>Active in {activeSession.mode_name}</span>
                                 </span>
 
-                                <p className="text-[11px] text-slate-400 truncate">
-                                  Player: <strong className="text-white">{activeSession.customer_name}</strong>
+                                <p className="text-[11px] text-[#64748B] truncate">
+                                  Player: <strong className="text-[#0F172A]">{activeSession.customer_name}</strong>
+                                  {activeSession.customer_phone && (
+                                    <span className="ml-1 text-[#64748B] font-mono font-medium">({activeSession.customer_phone})</span>
+                                  )}
                                 </p>
                               </div>
 
                               {/* Quick link to focus active cell */}
-                              <div className="flex items-center justify-center gap-1 text-[11px] text-blue-400 font-semibold group-hover:text-blue-300 pt-0.5">
+                              <div className="flex items-center justify-center gap-1 text-[11px] text-[#172554] font-semibold group-hover:text-[#1E3A8A] pt-0.5">
                                 <span>Focus Active Session</span>
                                 <ExternalLink className="w-3 h-3" />
                               </div>
@@ -968,19 +1304,20 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
                           {/* Hardware Incompatible Fallback */}
                           {!isSupportedHardware && (
-                            <div className="p-3.5 rounded-2xl bg-slate-950/30 border border-dashed border-slate-800/60 opacity-40 space-y-2 flex flex-col items-center justify-center text-center select-none">
-                              <ShieldAlert className="w-5 h-5 text-slate-600" />
-                              <div className="text-[10px] font-mono-code uppercase text-slate-500 font-bold">
+                            <div className="p-3.5 rounded-2xl bg-[#F8FAFC] border border-dashed border-[#E2E8F0] opacity-60 space-y-2 flex flex-col items-center justify-center text-center select-none">
+                              <ShieldAlert className="w-5 h-5 text-[#94A3B8]" />
+                              <div className="text-[10px] uppercase text-[#94A3B8] font-bold">
                                 Rig Incompatible
                               </div>
-                              <p className="text-[10px] text-slate-600">
+                              <p className="text-[10px] text-[#94A3B8]">
                                 {mode.name} requires {mode.supported_stations.join(', ')}
                               </p>
                             </div>
                           )}
                         </td>
                       );
-                    })}
+                    });
+                  })()}
                   </tr>
                 );
               })}

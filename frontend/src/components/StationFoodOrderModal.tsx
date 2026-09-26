@@ -152,26 +152,26 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="bg-slate-900 border border-amber-500/40 max-w-lg w-full rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl relative animate-in slide-in-from-bottom-5 sm:zoom-in-95 max-h-[90vh] flex flex-col pb-safe">
+    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-[#FFFFFF] border border-[#E2E8F0] max-w-lg w-full rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl relative animate-in slide-in-from-bottom-5 sm:zoom-in-95 max-h-[90vh] flex flex-col pb-safe">
         {/* Modal Header */}
-        <div className="flex justify-between items-center pb-3 border-b border-slate-800 shrink-0">
+        <div className="flex justify-between items-center pb-3 border-b border-[#E2E8F0] shrink-0">
           <div className="flex items-center space-x-2.5">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+            <div className="w-10 h-10 rounded-xl bg-[#FFF7ED] border border-[#FED7AA] flex items-center justify-center text-[#EA580C]">
               <Utensils className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base sm:text-lg font-bold text-white font-display">
+              <h3 className="text-base sm:text-lg font-bold text-[#0F172A] font-['Plus_Jakarta_Sans',sans-serif]">
                 Order Food & Drinks
               </h3>
-              <p className="text-xs text-amber-400/90 font-mono-code">
-                Station: <strong className="text-white">{station.name}</strong>
+              <p className="text-xs text-[#64748B]">
+                Station: <strong className="text-[#172554]">{station.name}</strong>
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+            className="text-[#64748B] hover:text-[#0F172A] p-1 rounded-lg hover:bg-[#F8FAFC] transition-colors"
           >
             <XCircle className="w-6 h-6" />
           </button>
@@ -179,8 +179,8 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
 
         {/* Error Alert */}
         {error && (
-          <div className="mt-3 p-2.5 rounded-xl bg-rose-950/80 border border-rose-600/70 text-rose-300 text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+          <div className="mt-3 p-2.5 rounded-xl bg-red-50 border border-red-200 text-[#B91C1C] text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-[#B91C1C]" />
             <span>{error}</span>
           </div>
         )}
@@ -195,8 +195,8 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
                 onClick={() => setSelectedCategory(cat)}
                 className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                   selectedCategory === cat
-                    ? 'bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20'
-                    : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+                    ? 'bg-[#EA580C] text-white font-bold shadow-sm'
+                    : 'bg-[#FFFFFF] text-[#64748B] hover:text-[#0F172A] border border-[#E2E8F0]'
                 }`}
               >
                 {cat === 'ALL' ? 'All Items' : cat}
@@ -205,13 +205,13 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
           </div>
 
           <div className="relative flex-1">
-            <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500" />
+            <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-[#94A3B8]" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search snacks, drinks..."
-              className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500"
+              className="w-full pl-8 pr-3 py-1.5 bg-[#FFFFFF] border border-[#E2E8F0] rounded-xl text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C]"
             />
           </div>
         </div>
@@ -219,8 +219,8 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
         {/* Menu Items List */}
         <div className="flex-1 overflow-y-auto space-y-2 py-2 pr-1 min-h-[220px] max-h-[360px]">
           {availableItems.length === 0 ? (
-            <div className="text-center py-10 text-slate-500 text-xs flex flex-col items-center justify-center space-y-2">
-              <ShoppingBag className="w-7 h-7 text-slate-600" />
+            <div className="text-center py-10 text-[#64748B] text-xs flex flex-col items-center justify-center space-y-2">
+              <ShoppingBag className="w-7 h-7 text-[#94A3B8]" />
               <p>No food or drink items available in this category.</p>
             </div>
           ) : (
@@ -229,30 +229,30 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
               return (
                 <div
                   key={item.id}
-                  className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
+                  className={`p-3 rounded-xl border transition-all flex items-center justify-between gap-3 ${
                     qty > 0
-                      ? 'bg-amber-950/40 border-amber-500/50'
-                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                      ? 'bg-[#FFF7ED] border-[#EA580C]'
+                      : 'bg-[#FFFFFF] border-[#E2E8F0] hover:border-[#CBD5E1]'
                   }`}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-white truncate">
+                      <span className="text-xs font-bold text-[#0F172A] truncate">
                         {item.name}
                       </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono-code">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#F1F5F9] text-[#64748B] font-mono">
                         {item.category}
                       </span>
                     </div>
                     <div className="flex items-center gap-3 mt-1 text-xs">
-                      <span className="font-mono-code font-bold text-amber-400">
+                      <span className="font-mono font-bold text-[#172554]">
                         ₹{Number(item.price).toFixed(2)}
                       </span>
-                      <span className="text-[10px] text-slate-400">
+                      <span className="text-[10px] text-[#64748B]">
                         {item.stock !== undefined && item.stock !== null && item.stock > 0 ? (
-                          <>Stock: <strong className="text-emerald-400 font-mono-code">{item.stock}</strong></>
+                          <>Stock: <strong className="text-[#15803D] font-mono">{item.stock}</strong></>
                         ) : (
-                          <span className="text-amber-400/90 font-medium">Kitchen Prepared</span>
+                          <span className="text-[#EA580C] font-medium">Kitchen Prepared</span>
                         )}
                       </span>
                     </div>
@@ -261,21 +261,21 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
                   {/* Quantity Stepper */}
                   <div className="flex items-center gap-2 shrink-0">
                     {qty > 0 ? (
-                      <div className="flex items-center gap-2 bg-slate-900 p-1 rounded-xl border border-amber-500/40">
+                      <div className="flex items-center gap-2 bg-[#FFFFFF] p-1 rounded-xl border border-[#FED7AA]">
                         <button
                           type="button"
                           onClick={() => handleUpdateQuantity(item.id, -1)}
-                          className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-white flex items-center justify-center transition-colors"
+                          className="w-7 h-7 rounded-lg bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0F172A] flex items-center justify-center transition-colors"
                         >
                           <Minus className="w-3.5 h-3.5" />
                         </button>
-                        <span className="w-5 text-center text-xs font-bold font-mono-code text-white">
+                        <span className="w-5 text-center text-xs font-bold font-mono text-[#0F172A]">
                           {qty}
                         </span>
                         <button
                           type="button"
                           onClick={() => handleUpdateQuantity(item.id, 1)}
-                          className="w-7 h-7 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center justify-center transition-colors font-bold"
+                          className="w-7 h-7 rounded-lg bg-[#EA580C] hover:bg-[#C2410C] text-white flex items-center justify-center transition-colors font-bold"
                         >
                           <Plus className="w-3.5 h-3.5" />
                         </button>
@@ -284,7 +284,7 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
                       <button
                         type="button"
                         onClick={() => handleUpdateQuantity(item.id, 1)}
-                        className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 text-xs font-bold transition-colors flex items-center gap-1 border border-slate-700 hover:border-amber-500"
+                        className="px-3.5 py-1.5 rounded-xl bg-[#FFF7ED] hover:bg-[#EA580C] text-[#EA580C] hover:text-white text-xs font-bold transition-colors flex items-center gap-1 border border-[#FED7AA] hover:border-[#EA580C]"
                       >
                         <Plus className="w-3.5 h-3.5" />
                         <span>Add</span>
@@ -298,13 +298,13 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="pt-3 border-t border-slate-800 shrink-0 space-y-3 mt-2">
-          <div className="flex justify-between items-center text-xs bg-slate-950/90 p-3 rounded-xl border border-slate-800">
-            <span className="text-slate-400">
-              Selected: <strong className="text-white font-mono-code">{totalItemsCount} item(s)</strong>
+        <div className="pt-3 border-t border-[#E2E8F0] shrink-0 space-y-3 mt-2">
+          <div className="flex justify-between items-center text-xs bg-[#F8FAFC] p-3 rounded-xl border border-[#E2E8F0]">
+            <span className="text-[#64748B]">
+              Selected: <strong className="text-[#0F172A] font-mono">{totalItemsCount} item(s)</strong>
             </span>
-            <span className="text-slate-400">
-              Total: <strong className="text-amber-400 text-base font-mono-code">₹{totalCost.toFixed(2)}</strong>
+            <span className="text-[#64748B]">
+              Total: <strong className="text-[#172554] text-base font-mono font-bold">₹{totalCost.toFixed(2)}</strong>
             </span>
           </div>
 
@@ -312,7 +312,7 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 py-3 min-h-[44px] rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700 transition-colors"
+              className="flex-1 py-3 min-h-[44px] rounded-xl bg-[#FFFFFF] hover:bg-[#F1F5F9] text-[#64748B] text-xs font-semibold border border-[#E2E8F0] transition-colors"
             >
               Cancel
             </button>
@@ -320,9 +320,9 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
               type="button"
               disabled={totalItemsCount === 0 || orderMutation.isPending}
               onClick={handleConfirmOrder}
-              className="flex-1 py-3 min-h-[44px] rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2"
+              className="flex-1 py-3 min-h-[44px] rounded-xl bg-[#EA580C] hover:bg-[#C2410C] text-white font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-sm flex items-center justify-center gap-2"
             >
-              <Utensils className="w-4 h-4 text-slate-950" />
+              <Utensils className="w-4 h-4 text-white" />
               <span>
                 {orderMutation.isPending
                   ? 'Placing Order...'

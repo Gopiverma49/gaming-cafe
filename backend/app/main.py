@@ -335,19 +335,16 @@ app.include_router(admin_router, prefix=settings.API_V1_STR)
 app.include_router(customer_router, prefix=settings.API_V1_STR)
 
 
-@app.get("/api/fleet/categories", response_model=List[CategoryAvailabilityResponse], tags=["Fleet Categories"])
 @app.get("/api/v1/fleet/categories", response_model=List[CategoryAvailabilityResponse], tags=["Fleet Categories"])
 async def public_fleet_categories(db: AsyncSession = Depends(get_db)):
     return await get_fleet_categories(db)
 
 
-@app.get("/api/fleet/matrix", response_model=StationMatrixResponse, tags=["Fleet Categories"])
 @app.get("/api/v1/fleet/matrix", response_model=StationMatrixResponse, tags=["Fleet Categories"])
 async def public_fleet_matrix(db: AsyncSession = Depends(get_db)):
     return await get_fleet_matrix(db)
 
 
-@app.post("/api/sessions/start", response_model=SessionResponse, status_code=status.HTTP_201_CREATED, tags=["Fleet Categories"])
 @app.post("/api/v1/sessions/start", response_model=SessionResponse, status_code=status.HTTP_201_CREATED, tags=["Fleet Categories"])
 async def public_start_session(
     payload: SessionStartRequest,

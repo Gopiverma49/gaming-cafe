@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from app.models.entities import Order, OrderItem
 from app.schemas.api_schemas import OrderResponse, OrderItemResponse
@@ -41,6 +41,37 @@ def calculate_order_subtotals(items: List[OrderItem]) -> Tuple[Decimal, List[Ord
         )
 
     return total.quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP), items_out
+
+
+def sum_order_charges(
+    orders: List["Order"],
+    statuses: Optional[List[str]] = None,
+) -> Decimal:
+    """
+    DRY helper: sums ``unit_price × quantity`` across order items.
+
+    Args:
+        orders:   List of Order ORM objects (items must be loaded).
+        statuses: Optional whitelist of order statuses to include.
+                  If None, all non-CANCELLED orders are included.
+                  Pass ``['SERVED']`` to match checkout billing logic.
+    Returns:
+        Total charge as a 2-decimal Decimal.
+    """
+    total = Decimal("0.00")
+    for order in orders:
+        if statuses is not None:
+            if order.status not in statuses:
+                continue
+        else:
+            # Default: exclude only CANCELLED
+            if order.status == "CANCELLED":
+                continue
+        for item in order.items:
+            total += (item.unit_price * Decimal(str(item.quantity))).quantize(
+                CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
+            )
+    return total.quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
 
 
 def serialize_order(order: Order) -> OrderResponse:

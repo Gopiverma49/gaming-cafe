@@ -42,10 +42,6 @@ class Station(Base):
     pricing_tiers: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON, nullable=True, default=list)
     status: Mapped[str] = mapped_column(String(20), default=StationStatus.AVAILABLE.value, nullable=False)
 
-    @property
-    def default_hourly_rate(self) -> Decimal:
-        return self.hourly_rate
-
     __table_args__ = (
         CheckConstraint(
             "status IN ('AVAILABLE', 'OCCUPIED', 'RESERVED', 'MAINTENANCE')",

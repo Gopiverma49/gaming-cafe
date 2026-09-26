@@ -101,10 +101,10 @@ export const SlideToConfirm: React.FC<SlideToConfirmProps> = ({
       ref={containerRef}
       className={`relative w-full h-14 rounded-2xl p-1 select-none overflow-hidden transition-all duration-300 ${
         disabled
-          ? 'bg-slate-900/60 border border-slate-800 opacity-60 cursor-not-allowed'
+          ? 'bg-[#F1F5F9] border border-[#E2E8F0] opacity-60 cursor-not-allowed'
           : isConfirmed
-          ? 'bg-emerald-950/80 border border-emerald-500/80 shadow-[0_0_20px_rgba(16,185,129,0.3)]'
-          : 'bg-slate-950 border border-slate-800 hover:border-slate-700 shadow-inner'
+          ? 'bg-emerald-50 border border-emerald-500 shadow-sm'
+          : 'bg-[#F8FAFC] border border-[#E2E8F0] hover:border-[#CBD5E1] shadow-inner'
       }`}
     >
       {/* Background Fill Progress Bar */}
@@ -113,8 +113,8 @@ export const SlideToConfirm: React.FC<SlideToConfirmProps> = ({
           isDragging ? 'duration-0' : 'duration-300'
         } ${
           isConfirmed
-            ? 'bg-gradient-to-r from-emerald-600 via-teal-500 to-emerald-400 opacity-90'
-            : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 opacity-40'
+            ? 'bg-[#15803D] opacity-90'
+            : 'bg-[#EA580C] opacity-20'
         }`}
         style={{ width: `${Math.max(0, Math.min(100, (dragProgress * 100) + 8))}%` }}
       />
@@ -122,22 +122,22 @@ export const SlideToConfirm: React.FC<SlideToConfirmProps> = ({
       {/* Shimmer / Action Label */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-12">
         <span
-          className={`text-xs sm:text-sm font-black font-display tracking-widest uppercase transition-opacity duration-200 ${
+          className={`text-xs sm:text-sm font-bold font-['Plus_Jakarta_Sans',sans-serif] tracking-widest uppercase transition-opacity duration-200 ${
             isConfirmed
               ? 'text-white'
               : dragProgress > 0.4
-              ? 'text-white/40'
-              : 'text-slate-300 animate-pulse'
+              ? 'text-[#172554]/40'
+              : 'text-[#172554]'
           }`}
         >
           {isLoading ? (
             <span className="flex items-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+              <Loader2 className="w-4 h-4 animate-spin text-[#15803D]" />
               <span>LAUNCHING SESSION...</span>
             </span>
           ) : isConfirmed ? (
-            <span className="flex items-center gap-1.5 text-emerald-300">
-              <Sparkles className="w-4 h-4 text-emerald-400" />
+            <span className="flex items-center gap-1.5 text-white">
+              <Sparkles className="w-4 h-4 text-white" />
               <span>{confirmedLabel}</span>
             </span>
           ) : (
@@ -161,10 +161,10 @@ export const SlideToConfirm: React.FC<SlideToConfirmProps> = ({
           isDragging ? 'duration-0' : 'duration-300 ease-out'
         } ${
           isConfirmed
-            ? 'bg-emerald-400 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.8)]'
+            ? 'bg-[#15803D] text-white shadow-md'
             : disabled
-            ? 'bg-slate-800 text-slate-500'
-            : 'bg-gradient-to-br from-blue-500 via-indigo-500 to-cyan-400 text-white shadow-lg shadow-blue-500/40 hover:scale-105'
+            ? 'bg-[#E2E8F0] text-[#94A3B8]'
+            : 'bg-[#172554] hover:bg-[#1E3A8A] text-white shadow-md hover:scale-105'
         }`}
       >
         {isLoading ? (
@@ -173,7 +173,7 @@ export const SlideToConfirm: React.FC<SlideToConfirmProps> = ({
           <Check className="w-6 h-6 stroke-[3]" />
         ) : (
           <div className="flex items-center -space-x-1">
-            <ChevronRight className="w-5 h-5 text-white animate-pulse" />
+            <ChevronRight className="w-5 h-5 text-white" />
           </div>
         )}
       </div>

@@ -390,27 +390,27 @@ export const StationGrid: React.FC = () => {
   return (
     <div className="space-y-6 relative z-10">
       {/* 1. Sub-navigation Header Toolbar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-[#E2E8F0]">
         <div>
           <div className="flex items-center gap-2.5">
-            <Monitor className="w-6 h-6 text-emerald-400" />
-            <h2 className="text-xl sm:text-2xl font-bold font-display text-white tracking-wide">
+            <Monitor className="w-6 h-6 text-[#172554]" />
+            <h2 className="text-xl sm:text-2xl font-bold font-display text-[#172554] tracking-wide">
               Station Management & Operations
             </h2>
           </div>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs text-[#64748B] mt-1 font-sans">
             Console fleet operations, customer directory logs, and station configuration.
           </p>
         </div>
 
-        {/* Sub-options Switcher: Customer Logs, Manage Station, Console Stations */}
-        <div className="flex items-center bg-slate-950/90 p-1.5 rounded-2xl border border-slate-800/90 shadow-inner gap-1 flex-wrap self-start md:self-auto">
+        {/* Sub-options Switcher: Console Stations, Customer Logs, Manage Station */}
+        <div className="flex items-center bg-[#FFFFFF] p-1.5 rounded-2xl border border-[#E2E8F0] shadow-xs gap-1 flex-wrap self-start md:self-auto">
           <button
             onClick={() => setActiveSubTab('stations')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold font-display tracking-wider transition-all ${
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold font-display tracking-wider transition-all cursor-pointer ${
               activeSubTab === 'stations'
-                ? 'bg-emerald-500 text-slate-950 shadow-md font-black'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-[#172554] text-[#FFFFFF] shadow-xs font-bold'
+                : 'bg-[#FFFFFF] border border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A]'
             }`}
           >
             <Gamepad2 className="w-4 h-4" />
@@ -419,10 +419,10 @@ export const StationGrid: React.FC = () => {
 
           <button
             onClick={() => setActiveSubTab('customer_logs')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold font-display tracking-wider transition-all ${
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold font-display tracking-wider transition-all cursor-pointer ${
               activeSubTab === 'customer_logs'
-                ? 'bg-cyan-500 text-slate-950 shadow-md font-black'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-[#172554] text-[#FFFFFF] shadow-xs font-bold'
+                : 'bg-[#FFFFFF] border border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A]'
             }`}
           >
             <Users className="w-4 h-4" />
@@ -431,10 +431,10 @@ export const StationGrid: React.FC = () => {
 
           <button
             onClick={() => setActiveSubTab('manage_station')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold font-display tracking-wider transition-all ${
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold font-display tracking-wider transition-all cursor-pointer ${
               activeSubTab === 'manage_station'
-                ? 'bg-amber-500 text-slate-950 shadow-md font-black'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-[#172554] text-[#FFFFFF] shadow-xs font-bold'
+                : 'bg-[#FFFFFF] border border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A]'
             }`}
           >
             <SlidersHorizontal className="w-4 h-4" />
@@ -445,12 +445,12 @@ export const StationGrid: React.FC = () => {
 
       {/* Global Error Banner */}
       {actionError && (
-        <div className="p-3.5 rounded-xl bg-rose-950/90 border border-rose-600/80 text-rose-200 flex items-center justify-between text-xs">
+        <div className="p-3.5 rounded-xl bg-[#FEE2E2] border border-[#FECACA] text-[#B91C1C] flex items-center justify-between text-xs">
           <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <AlertCircle className="w-4 h-4 text-[#B91C1C] shrink-0" />
             <span>{actionError}</span>
           </div>
-          <button onClick={() => setActionError(null)} className="text-rose-400 hover:text-white p-1">
+          <button onClick={() => setActionError(null)} className="text-[#B91C1C] hover:text-[#7F1D1D] p-1">
             <XCircle className="w-4 h-4" />
           </button>
         </div>
@@ -507,34 +507,34 @@ export const StationGrid: React.FC = () => {
 
       {/* 3. Transfer Session Modal */}
       {transferStationTarget && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 max-w-md w-full rounded-2xl p-6 shadow-2xl space-y-4">
-            <div className="flex justify-between items-center pb-2 border-b border-slate-800">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[#FFFFFF] border border-[#E2E8F0] max-w-md w-full rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b border-[#E2E8F0]">
               <div className="flex items-center gap-2">
-                <ArrowRightLeft className="w-5 h-5 text-blue-400" />
-                <h3 className="font-bold text-white font-display">Transfer Active Session</h3>
+                <ArrowRightLeft className="w-5 h-5 text-[#172554]" />
+                <h3 className="font-bold text-[#172554] font-display">Transfer Active Session</h3>
               </div>
               <button
                 onClick={() => setTransferStationTarget(null)}
-                className="text-slate-400 hover:text-white"
+                className="text-[#64748B] hover:text-[#0F172A]"
               >
                 <XCircle className="w-5 h-5" />
               </button>
             </div>
 
-            <p className="text-xs text-slate-300">
-              Moving player from <strong className="text-white">{transferStationTarget.name}</strong> to:
+            <p className="text-xs text-[#64748B]">
+              Moving player from <strong className="text-[#0F172A]">{transferStationTarget.name}</strong> to:
             </p>
 
             {transferOptions.length === 0 ? (
-              <p className="text-xs text-rose-400 bg-rose-950/40 p-3 rounded-xl border border-rose-900/50">
+              <p className="text-xs text-[#B91C1C] bg-[#FEE2E2] p-3 rounded-xl border border-[#FECACA]">
                 No available PS consoles (PS1, PS2, PS3) are free to receive transfer right now.
               </p>
             ) : (
               <select
                 value={targetStationId}
                 onChange={(e) => setTargetStationId(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-blue-500"
+                className="w-full bg-[#FFF7ED] border border-[#E2E8F0] rounded-xl p-3 text-xs text-[#0F172A] focus:outline-none focus:border-[#EA580C]"
               >
                 <option value="">Select Destination Console (PS1, PS2, PS3)</option>
                 {transferOptions.map((opt) => (
@@ -548,14 +548,14 @@ export const StationGrid: React.FC = () => {
             <div className="flex gap-2 pt-2">
               <button
                 onClick={() => setTransferStationTarget(null)}
-                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold"
+                className="flex-1 py-2.5 bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#64748B] border border-[#E2E8F0] rounded-xl text-xs font-semibold cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 disabled={!targetStationId || transferMutation.isPending}
                 onClick={() => transferMutation.mutate()}
-                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+                className="flex-1 py-2.5 bg-[#172554] hover:bg-[#1E3A8A] text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-sm"
               >
                 {transferMutation.isPending ? 'Transferring...' : targetStationId ? `Transfer to ${targetStationId}` : 'Confirm Transfer'}
               </button>
@@ -575,6 +575,7 @@ export const StationGrid: React.FC = () => {
           onSettle={handleExecuteCheckout}
           stationName={checkoutStationTarget.name}
           customerName={checkoutStationTarget.customer_name}
+          customerPhone={checkoutStationTarget.customer_phone}
           timeCharge={Number(checkoutStationTarget.time_charge || 0)}
           ordersCharge={Number(checkoutStationTarget.orders_charge || 0)}
           elapsedMinutes={checkoutStationTarget.elapsed_minutes}

@@ -123,13 +123,21 @@ async def test_menu_and_inventory_crud(test_db):
         assert patch_res.json()["stock"] == 28
         assert float(patch_res.json()["price"]) == 155.00
 
-        # 3. Restock inventory
+        # 3. Restock inventory (positive addition)
         restock_res = await client.post(
             "/api/v1/admin/inventory/restock",
             json={"item_id": item_id, "amount": 10},
         )
         assert restock_res.status_code == 200
         assert restock_res.json()["stock"] == 38
+
+        # 3b. Deduct inventory (negative delta from '-' sign button)
+        deduct_res = await client.post(
+            "/api/v1/admin/inventory/restock",
+            json={"item_id": item_id, "amount": -3},
+        )
+        assert deduct_res.status_code == 200
+        assert deduct_res.json()["stock"] == 35
 
         # 4. Get admin menu
         list_res = await client.get("/api/v1/admin/menu")

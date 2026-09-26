@@ -25,9 +25,19 @@ export type StockStatusType = 'CRITICAL' | 'MODERATE' | 'ENOUGH';
 
 export interface StockStatusInfo {
   label: string;
-  color: string;
-  dot: string;
+  /** Hex background color for the badge */
+  bg: string;
+  /** Hex text color for the badge */
+  fg: string;
+  /** Hex border color for the badge */
+  border: string;
+  /** Whether to show a pulsing dot */
+  pulse: boolean;
   status: StockStatusType;
+  /** @deprecated Use bg/fg/border instead of Tailwind class strings */
+  color: string;
+  /** @deprecated Use pulse flag instead */
+  dot: string;
 }
 
 export function evaluateStockStatus(stock: number | null | undefined): StockStatusInfo {
@@ -35,24 +45,37 @@ export function evaluateStockStatus(stock: number | null | undefined): StockStat
   if (safeStock <= STOCK_LEVEL.CRITICAL) {
     return {
       label: 'Critical',
-      color: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
-      dot: 'bg-rose-500 animate-pulse',
+      bg: '#FEF2F2',
+      fg: '#B91C1C',
+      border: '#FECACA',
+      pulse: true,
       status: 'CRITICAL',
+      // legacy compat
+      color: 'bg-rose-50 text-rose-700 border-rose-200',
+      dot: 'bg-rose-500 animate-pulse',
     };
   }
   if (safeStock <= STOCK_LEVEL.MODERATE) {
     return {
       label: 'Moderate',
-      color: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
-      dot: 'bg-amber-400',
+      bg: '#FFFBEB',
+      fg: '#B45309',
+      border: '#FDE68A',
+      pulse: false,
       status: 'MODERATE',
+      color: 'bg-amber-50 text-amber-700 border-amber-200',
+      dot: 'bg-amber-400',
     };
   }
   return {
     label: 'Enough',
-    color: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
-    dot: 'bg-emerald-400',
+    bg: '#F0FDF4',
+    fg: '#15803D',
+    border: '#BBF7D0',
+    pulse: false,
     status: 'ENOUGH',
+    color: 'bg-green-50 text-green-700 border-green-200',
+    dot: 'bg-green-400',
   };
 }
 
@@ -83,30 +106,31 @@ export function getStationTierVisuals(tier?: string | null): TierVisualInfo {
     case 'CONSOLE':
       return {
         label: 'PS5 Console',
-        badge: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+        badge: 'bg-blue-50 text-blue-700 border-blue-200',
         display: '65″ 4K 120Hz OLED + DualSense',
-        accentColor: 'text-blue-400',
+        accentColor: 'text-blue-700',
       };
     case 'SIMULATOR':
       return {
         label: 'Simulator Rig',
-        badge: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+        badge: 'bg-amber-50 text-amber-700 border-amber-200',
         display: 'Triple 32″ Curved + DirectDrive',
-        accentColor: 'text-amber-400',
+        accentColor: 'text-amber-700',
       };
     case 'VIP':
       return {
         label: 'VIP Station',
-        badge: 'bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20',
+        badge: 'bg-purple-50 text-purple-700 border-purple-200',
         display: 'Private Acoustic Pod + RTX 4090',
-        accentColor: 'text-fuchsia-400',
+        accentColor: 'text-purple-700',
       };
     default:
       return {
         label: 'Gaming PC',
-        badge: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
+        badge: 'bg-sky-50 text-sky-700 border-sky-200',
         display: '240Hz Fast IPS + RTX 4080',
-        accentColor: 'text-cyan-400',
+        accentColor: 'text-sky-700',
       };
   }
 }
+

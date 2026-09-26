@@ -39,7 +39,7 @@ from app.schemas.api_schemas import (
     StationMatrixResponse,
     SessionExtendRequest,
 )
-from app.services.order_service import serialize_order, ensure_utc, calculate_order_subtotals, CURRENCY_QUANTIZATION
+from app.services.order_service import serialize_order, ensure_utc, calculate_order_subtotals, CURRENCY_QUANTIZATION, sum_order_charges
 from app.services.session_service import (
     check_in,
     transfer_station,
@@ -154,7 +154,7 @@ async def get_live_stations(
     stmt = (
         select(Station)
         .options(
-            selectinload(Station.sessions)
+            selectinload(Station.sessions.and_(Session.status == SessionStatus.ACTIVE.value))
             .selectinload(Session.orders)
             .selectinload(Order.items)
             .selectinload(OrderItem.menu_item)
@@ -264,14 +264,11 @@ async def get_live_stations(
                     reference_time=now,
                 )
 
-                orders_charge = Decimal("0.00")
-                active_orders_count = 0
-                for o in active_session.orders:
-                    if o.status != OrderStatus.CANCELLED.value:
-                        if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value):
-                            active_orders_count += 1
-                        subtotal, _ = calculate_order_subtotals(o.items)
-                        orders_charge += subtotal
+                orders_charge = sum_order_charges(active_session.orders)
+                active_orders_count = sum(
+                    1 for o in active_session.orders
+                    if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value)
+                )
 
                 running_total = (time_charge + orders_charge).quantize(
                     CURRENCY_QUANTIZATION
@@ -722,13 +719,15 @@ async def restock_inventory_item(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Restock item quantity in inventory.
+    Adjust item quantity in inventory (supports positive additions or negative deductions).
+    Clamps stock to minimum 0.
     """
     item = await db.get(MenuItem, payload.item_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Menu item not found")
 
-    item.stock += payload.amount
+    new_stock = item.stock + payload.amount
+    item.stock = max(0, new_stock)
     await db.commit()
     await db.refresh(item)
     return item
@@ -937,20 +936,18 @@ async def get_customer_directory(db: AsyncSession = Depends(get_db)):
 
         visit_count = len(u_sessions)
         last_visit_str = None
-        total_spent = Decimal("0.00")
-
+        total_spent = sum_order_charges(
+            [o for s in u_sessions for o in s.orders],
+            statuses=["PREPARING", "SERVED"],
+        )
         if u_sessions:
             sorted_s = sorted(u_sessions, key=lambda s: s.started_at, reverse=True)
             last_visit_str = sorted_s[0].started_at.strftime("%d %b, %I:%M %p")
-            for s in u_sessions:
-                if s.total_amount:
-                    total_spent += s.total_amount
-                elif s.tier_price:
-                    total_spent += s.tier_price
-                for o in s.orders:
-                    if o.status != OrderStatus.CANCELLED.value:
-                        for itm in o.items:
-                            total_spent += itm.unit_price * Decimal(str(itm.quantity))
+        for s in u_sessions:
+            if s.total_amount:
+                total_spent += s.total_amount
+            elif s.tier_price:
+                total_spent += s.tier_price
 
         out.append(
             CustomerProfileResponse(
@@ -986,16 +983,12 @@ async def get_customer_directory(db: AsyncSession = Depends(get_db)):
         phone = primary_s.customer_phone or "Walk-in"
         last_visit_str = primary_s.started_at.strftime("%d %b, %I:%M %p")
 
-        total_spent = Decimal("0.00")
-        for s in s_list:
-            if s.total_amount:
-                total_spent += s.total_amount
-            elif s.tier_price:
-                total_spent += s.tier_price
-            for o in s.orders:
-                if o.status != OrderStatus.CANCELLED.value:
-                    for itm in o.items:
-                        total_spent += itm.unit_price * Decimal(str(itm.quantity))
+        total_spent = sum(
+            (s.total_amount or s.tier_price or Decimal("0.00")) for s in s_list
+        ) + sum_order_charges(
+            [o for s in s_list for o in s.orders],
+            statuses=["PREPARING", "SERVED"],
+        )
 
         out.append(
             CustomerProfileResponse(
@@ -1062,11 +1055,11 @@ async def get_revenue_analytics(
         day_key = started_at.strftime("%Y-%m-%d")
 
         s_time_charge = s.total_amount or Decimal("0.00")
-        s_food_charge = Decimal("0.00")
+        s_food_charge = sum_order_charges(s.orders)
+        # Track item-level counts for top-selling report (requires item loop)
         for o in s.orders:
             if o.status != OrderStatus.CANCELLED.value:
                 for itm in o.items:
-                    s_food_charge += itm.unit_price * Decimal(str(itm.quantity))
                     name = itm.menu_item.name if itm.menu_item else "Item"
                     item_counts[name] += itm.quantity
 

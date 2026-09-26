@@ -311,7 +311,7 @@ class MenuItemUpdate(BaseModel):
 
 class InventoryRestockRequest(BaseModel):
     item_id: uuid.UUID
-    amount: int = Field(..., gt=0)
+    amount: int = Field(..., description="Delta to adjust stock by: positive to restock, negative to deduct")
 
 
 class OrderItemCreate(BaseModel):

@@ -355,24 +355,24 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
   const displayName = effectiveCategory?.name || category?.name || station?.name || 'Station';
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
-      <div className="bg-[#0b101d] border border-slate-800/90 max-w-xl w-full rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden relative">
+    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
+      <div className="bg-[#FFFFFF] border border-[#E2E8F0] max-w-xl w-full rounded-t-3xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden relative">
         {/* Drawer Header */}
-        <div className="p-4 sm:p-5 border-b border-slate-800/90 bg-slate-950/80 flex items-center justify-between shrink-0">
+        <div className="p-4 sm:p-5 border-b border-[#E2E8F0] bg-[#FFF7ED] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
-              <Gamepad2 className="w-5 h-5" />
+            <div className="w-10 h-10 rounded-xl bg-[#172554] flex items-center justify-center text-white shadow-sm">
+              <Gamepad2 className="w-5 h-5 text-white" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base sm:text-lg font-black font-display text-white tracking-wide">
+                <h3 className="text-base sm:text-lg font-bold font-['Plus_Jakarta_Sans',sans-serif] text-[#172554] tracking-wide">
                   Enhance Your Session
                 </h3>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-300 font-mono-code font-bold uppercase">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#FFF7ED] border border-[#FED7AA] text-[#EA580C] font-mono font-bold uppercase">
                   {displayName}
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-[#64748B]">
                 Pre-loaded with {durationMinutes} mins (₹{baseStationPrice}). Grab drinks or snacks below!
               </p>
             </div>
@@ -380,7 +380,7 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
 
           <button
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors"
+            className="p-1.5 text-[#64748B] hover:text-[#0F172A] rounded-xl hover:bg-[#F1F5F9] transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -389,22 +389,22 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
         {/* Scrollable Content Body */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
           {errorMessage && (
-            <div className="p-3 rounded-2xl bg-rose-950/80 border border-rose-600/60 text-rose-200 text-xs flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-[#B91C1C] text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-[#B91C1C] shrink-0" />
               <span>{errorMessage}</span>
             </div>
           )}
 
           {/* Hardware Console / Rig Selector for Experience Categories */}
           {effectiveCategory && (
-            <div className="bg-slate-950/80 p-3.5 rounded-2xl border border-slate-800 space-y-2.5">
+            <div className="bg-[#F8FAFC] p-3.5 rounded-xl border border-[#E2E8F0] space-y-2.5">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-300 font-bold uppercase tracking-wider font-mono-code flex items-center gap-1.5">
-                  <Gamepad2 className="w-3.5 h-3.5 text-blue-400" />
+                <span className="text-[#172554] font-bold uppercase tracking-wider font-mono flex items-center gap-1.5">
+                  <Gamepad2 className="w-3.5 h-3.5 text-[#EA580C]" />
                   <span>HARDWARE ASSET ALLOCATION:</span>
                 </span>
                 {isConsoleCategory && (
-                  <span className="text-[11px] text-slate-500">Pick an available console room</span>
+                  <span className="text-[11px] text-[#64748B]">Pick an available console room</span>
                 )}
               </div>
 
@@ -421,21 +421,21 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
                         onClick={() => setSelectedDeviceId(dev.id)}
                         className={`py-2 px-2.5 rounded-xl border font-bold text-xs flex flex-col items-center justify-center gap-0.5 transition-all ${
                           isBusy
-                            ? 'bg-slate-950/60 border-slate-800 text-slate-600 cursor-not-allowed line-through'
+                            ? 'bg-[#F1F5F9] border-[#E2E8F0] text-[#94A3B8] cursor-not-allowed line-through'
                             : isSelected
-                            ? 'bg-blue-600/30 border-blue-400 text-cyan-300 shadow-md shadow-blue-500/20'
-                            : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500 cursor-pointer'
+                            ? 'bg-[#FFF7ED] border-[#EA580C] text-[#EA580C] shadow-sm'
+                            : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#0F172A] hover:border-[#CBD5E1] cursor-pointer'
                         }`}
                       >
                         <div className="flex items-center gap-1.5">
                           <span
                             className={`w-2 h-2 rounded-full ${
-                              isBusy ? 'bg-rose-500' : isSelected ? 'bg-cyan-400 animate-pulse' : 'bg-emerald-400'
+                              isBusy ? 'bg-[#B91C1C]' : isSelected ? 'bg-[#EA580C] animate-pulse' : 'bg-[#15803D]'
                             }`}
                           />
-                          <span className="font-display">{dev.name}</span>
+                          <span className="font-['Plus_Jakarta_Sans',sans-serif]">{dev.name}</span>
                         </div>
-                        <span className="text-[10px] font-mono-code font-normal">
+                        <span className="text-[10px] font-mono font-normal">
                           {isBusy ? 'Busy' : isSelected ? 'Selected' : 'Available'}
                         </span>
                       </button>
@@ -445,24 +445,24 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
               )}
 
               {isCarSim && (
-                <div className="flex items-center justify-between p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs">
-                  <span className="text-amber-300 font-semibold flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#FFF7ED] border border-[#FED7AA] text-xs">
+                  <span className="text-[#EA580C] font-semibold flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-[#EA580C]" />
                     <span>Rig Allocation: Dedicated PS3 Racing Simulator</span>
                   </span>
-                  <span className="font-mono-code text-[11px] text-emerald-400 font-bold px-2 py-0.5 rounded bg-emerald-500/20">
+                  <span className="font-mono text-[11px] text-[#15803D] font-bold px-2 py-0.5 rounded bg-emerald-50">
                     Locked to PS3
                   </span>
                 </div>
               )}
 
               {isVrSim && (
-                <div className="flex items-center justify-between p-2.5 rounded-xl bg-teal-500/10 border border-teal-500/20 text-xs">
-                  <span className="text-teal-300 font-semibold flex items-center gap-1.5">
-                    <Cpu className="w-3.5 h-3.5 text-teal-400" />
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-teal-50 border border-teal-200 text-xs">
+                  <span className="text-teal-700 font-semibold flex items-center gap-1.5">
+                    <Cpu className="w-3.5 h-3.5 text-teal-600" />
                     <span>Rig Allocation: Dedicated VR1 Headset</span>
                   </span>
-                  <span className="font-mono-code text-[11px] text-emerald-400 font-bold px-2 py-0.5 rounded bg-emerald-500/20">
+                  <span className="font-mono text-[11px] text-[#15803D] font-bold px-2 py-0.5 rounded bg-emerald-50">
                     Locked to VR1
                   </span>
                 </div>
@@ -471,20 +471,20 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
           )}
 
           {/* Session Overview Banner */}
-          <div className="p-3.5 rounded-2xl bg-slate-950/90 border border-slate-800/80 flex items-center justify-between">
+          <div className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] flex items-center justify-between">
             <div className="flex items-center gap-2.5">
-              <Clock className="w-4 h-4 text-cyan-400" />
+              <Clock className="w-4 h-4 text-[#EA580C]" />
               <div>
-                <span className="text-xs font-bold text-white block">
+                <span className="text-xs font-bold text-[#0F172A] block font-['Plus_Jakarta_Sans',sans-serif]">
                   {selectedTier?.label || `${durationMinutes} mins`} Console Time
                 </span>
-                <span className="text-[10px] text-slate-400 font-mono-code">
+                <span className="text-[10px] text-[#64748B] font-mono">
                   Base Rig Rate: ₹{baseStationPrice}
                 </span>
               </div>
             </div>
             <div className="text-right">
-              <span className="text-base font-black font-mono-code text-emerald-400">
+              <span className="text-base font-black font-mono text-[#172554]">
                 ₹{baseStationPrice}
               </span>
             </div>
@@ -492,29 +492,29 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
 
           {/* Admin Customer Inputs (Or Editable for walk-ins) */}
           {isAdmin && (
-            <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800/70 space-y-2.5">
-              <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider block font-mono-code">
+            <div className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-2.5">
+              <span className="text-[11px] font-bold text-[#172554] uppercase tracking-wider block font-mono">
                 Front-Desk Player Details
               </span>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div className="relative">
-                  <User className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-3" />
+                  <User className="w-3.5 h-3.5 text-[#94A3B8] absolute left-3 top-3" />
                   <input
                     type="text"
                     value={customerName}
                     onChange={(e) => setCustomerName(e.target.value)}
                     placeholder="Customer Name"
-                    className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+                    className="w-full pl-9 pr-3 py-2 bg-[#FFFFFF] border border-[#E2E8F0] rounded-xl text-xs text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#EA580C]"
                   />
                 </div>
                 <div className="relative">
-                  <Phone className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-3" />
+                  <Phone className="w-3.5 h-3.5 text-[#94A3B8] absolute left-3 top-3" />
                   <input
                     type="tel"
                     value={customerPhone}
                     onChange={(e) => setCustomerPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
                     placeholder="10-digit Phone (optional)"
-                    className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 font-mono-code"
+                    className="w-full pl-9 pr-3 py-2 bg-[#FFFFFF] border border-[#E2E8F0] rounded-xl text-xs text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#EA580C] font-mono"
                   />
                 </div>
               </div>
@@ -525,22 +525,22 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
           <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Utensils className="w-4 h-4 text-amber-400" />
-                <h4 className="text-xs sm:text-sm font-bold text-white font-display uppercase tracking-wider">
+                <Utensils className="w-4 h-4 text-[#EA580C]" />
+                <h4 className="text-xs sm:text-sm font-bold text-[#172554] font-['Plus_Jakarta_Sans',sans-serif] uppercase tracking-wider">
                   Quick-Grab Snacks & Drinks
                 </h4>
               </div>
               
               {/* Category Filter Pills */}
-              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px] font-mono-code">
+              <div className="flex items-center gap-1 bg-[#F8FAFC] p-1 rounded-xl border border-[#E2E8F0] text-[11px] font-mono">
                 {(['ALL', 'Drinks', 'Food'] as const).map((cat) => (
                   <button
                     key={cat}
                     onClick={() => setActiveSnackFilter(cat)}
                     className={`px-2.5 py-0.5 rounded-lg font-bold transition-all ${
                       activeSnackFilter === cat
-                        ? 'bg-slate-800 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200'
+                        ? 'bg-[#EA580C] text-white shadow-sm'
+                        : 'text-[#64748B] hover:text-[#0F172A]'
                     }`}
                   >
                     {cat}
@@ -552,7 +552,7 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
             {/* Snacks Grid (Compact cards with 0-5 clamped stepper) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-56 overflow-y-auto pr-1">
               {displayedSnacks.length === 0 ? (
-                <div className="col-span-2 p-6 text-center text-slate-500 font-mono-code text-xs">
+                <div className="col-span-2 p-6 text-center text-[#64748B] font-mono text-xs">
                   No quick snacks currently in stock.
                 </div>
               ) : (
@@ -563,46 +563,46 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
                   return (
                     <div
                       key={item.id}
-                      className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-2 ${
+                      className={`p-3 rounded-xl border transition-all flex items-center justify-between gap-2 ${
                         qty > 0
-                          ? 'bg-slate-900 border-amber-500/40 shadow-sm'
-                          : 'bg-slate-950/80 border-slate-800/80 hover:border-slate-700'
+                          ? 'bg-[#FFF7ED] border-[#FED7AA] shadow-sm'
+                          : 'bg-[#FFFFFF] border-[#E2E8F0] hover:border-[#CBD5E1]'
                       }`}
                     >
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
                           {isDrink ? (
-                            <Coffee className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                            <Coffee className="w-3.5 h-3.5 text-[#172554] shrink-0" />
                           ) : (
-                            <Utensils className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                            <Utensils className="w-3.5 h-3.5 text-[#EA580C] shrink-0" />
                           )}
-                          <span className="font-bold text-white text-xs truncate">
+                          <span className="font-bold text-[#0F172A] text-xs truncate">
                             {item.name}
                           </span>
                         </div>
-                        <div className="text-[11px] font-mono-code text-emerald-400 font-semibold mt-0.5">
+                        <div className="text-[11px] font-mono text-[#172554] font-bold mt-0.5">
                           ₹{Number(item.price).toFixed(0)}
                         </div>
                       </div>
 
                       {/* Stepper (Clamped 0 to 5) */}
-                      <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-xl p-1 shrink-0">
+                      <div className="flex items-center gap-1.5 bg-[#FFFFFF] border border-[#E2E8F0] rounded-xl p-1 shrink-0">
                         <button
                           type="button"
                           onClick={() => handleQuantityChange(item.id, -1)}
                           disabled={qty <= 0}
-                          className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:hover:bg-slate-800 flex items-center justify-center transition-colors"
+                          className="w-6 h-6 rounded-lg bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0F172A] disabled:opacity-30 flex items-center justify-center transition-colors"
                         >
                           <Minus className="w-3 h-3" />
                         </button>
-                        <span className="w-5 text-center font-mono-code text-xs font-bold text-white">
+                        <span className="w-5 text-center font-mono text-xs font-bold text-[#0F172A]">
                           {qty}
                         </span>
                         <button
                           type="button"
                           onClick={() => handleQuantityChange(item.id, 1)}
                           disabled={qty >= 5}
-                          className="w-6 h-6 rounded-lg bg-amber-500/20 hover:bg-amber-500 hover:text-black text-amber-300 disabled:opacity-30 flex items-center justify-center transition-colors"
+                          className="w-6 h-6 rounded-lg bg-[#EA580C] hover:bg-[#C2410C] text-white disabled:opacity-30 flex items-center justify-center transition-colors"
                         >
                           <Plus className="w-3 h-3" />
                         </button>
@@ -616,18 +616,18 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
         </div>
 
         {/* Sticky Drawer Footer with Live Bill Breakdown & Slide-to-Confirm */}
-        <div className="p-4 sm:p-5 border-t border-slate-800/90 bg-slate-950/95 space-y-3 shrink-0">
+        <div className="p-4 sm:p-5 border-t border-[#E2E8F0] bg-[#FFFFFF] space-y-3 shrink-0">
           {/* Live Calculated Breakdown */}
-          <div className="flex items-center justify-between text-xs font-mono-code px-1 text-slate-300">
+          <div className="flex items-center justify-between text-xs font-mono px-1 text-[#64748B]">
             <div>
-              Station: <strong className="text-white">₹{baseStationPrice}</strong>
+              Station: <strong className="text-[#0F172A]">₹{baseStationPrice}</strong>
               {snacksTotalCost > 0 && (
                 <>
-                  {' '}| Snacks: <strong className="text-amber-400">₹{snacksTotalCost}</strong>
+                  {' '}| Snacks: <strong className="text-[#EA580C]">₹{snacksTotalCost}</strong>
                 </>
               )}
             </div>
-            <div className="text-sm font-black text-emerald-400">
+            <div className="text-sm font-black text-[#172554]">
               Total: ₹{grandTotalCost}
             </div>
           </div>

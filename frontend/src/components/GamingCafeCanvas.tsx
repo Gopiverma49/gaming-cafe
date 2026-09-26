@@ -58,25 +58,21 @@ export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = fa
     };
     window.addEventListener('mousemove', handleMouseMove);
 
-    // Color palettes (tuned for high-end neon PlayStation & warm cafe ambiance)
+    // Color palettes (tuned for clean corporate lounge ambiance)
     const lightColors = [
-      '#3b82f6', // PlayStation Blue
-      '#f59e0b', // Cafe Caramel
-      '#10b981', // Fresh Mint
-      '#ec4899', // Berry Soda
-      '#8b5cf6', // Lavender Arcade
-      '#ea580c', // Warm Cinnamon
+       '#172554', // Primary Navy
+       '#1E3A8A', // Primary Hover Navy
+       '#EA580C', // Accent Orange
+       '#15803D', // Success Green
+       '#94A3B8', // Neutral Slate
+       '#CBD5E1', // Border Slate
     ];
 
     const darkColors = [
-      '#38bdf8', // Neon Sky / PS Cyan
-      '#60a5fa', // Electric PS Blue
-      '#fbbf24', // Warm Amber Bar
-      '#f59e0b', // Glowing Caramel
-      '#a78bfa', // Neon Purple / Indigo
-      '#34d399', // Emerald Neon
-      '#f43f5e', // Hot Coral / Cherry
-      '#e2e8f0', // Crisp Starlight
+      '#172554',
+      '#EA580C',
+      '#15803D',
+      '#64748B',
     ];
 
     const colors = isLight ? lightColors : darkColors;
@@ -323,7 +319,7 @@ export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = fa
         style={{
           backgroundImage: `url(${cafeBackgroundImg})`,
           filter: isLight
-            ? 'brightness(0.92) contrast(1.05)'
+            ? 'brightness(1.02) contrast(0.98) opacity(0.04)'
             : 'brightness(0.72) contrast(1.18) saturate(1.12)',
         }}
       />
@@ -333,7 +329,7 @@ export const GamingCafeCanvas: React.FC<GamingCafeCanvasProps> = ({ isLight = fa
         className="absolute inset-0"
         style={{
           background: isLight
-            ? 'radial-gradient(ellipse at center, rgba(248, 250, 252, 0.6) 0%, rgba(241, 245, 249, 0.88) 100%)'
+            ? 'radial-gradient(ellipse at center, rgba(255, 247, 237, 0.7) 0%, rgba(255, 247, 237, 0.95) 100%)'
             : 'radial-gradient(ellipse at 35% 45%, rgba(10, 25, 47, 0.45) 0%, rgba(7, 11, 20, 0.78) 65%, rgba(3, 7, 18, 0.94) 100%), linear-gradient(to right, rgba(3, 7, 18, 0.62) 0%, rgba(15, 23, 42, 0.22) 50%, rgba(28, 14, 5, 0.58) 100%)',
         }}
       />

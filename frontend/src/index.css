@@ -2,13 +2,28 @@
 
 @layer base {
   :root {
-    --font-heading: 'Chakra Petch', sans-serif;
+    --font-heading: 'Plus Jakarta Sans', sans-serif;
     --font-sans: 'Inter', sans-serif;
-    --font-mono: 'JetBrains Mono', monospace;
+    --font-mono: 'Inter', monospace;
+
+    /* Design Tokens */
+    --color-primary: #172554;
+    --color-primary-hover: #1E3A8A;
+    --color-accent: #EA580C;
+    --color-accent-hover: #C2410C;
+    --color-background: #FFF7ED;
+    --color-surface: #FFFFFF;
+    --color-text-main: #0F172A;
+    --color-text-muted: #64748B;
+    --color-border: #E2E8F0;
+    --color-success: #15803D;
+    --color-error: #B91C1C;
   }
 
   body {
     font-family: var(--font-sans);
+    background-color: #FFF7ED;
+    color: #0F172A;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     touch-action: manipulation;
@@ -17,40 +32,38 @@
 
   h1, h2, h3, h4, h5, h6, .font-display {
     font-family: var(--font-heading);
-    letter-spacing: 0.03em;
+    letter-spacing: 0.01em;
   }
 
   .font-mono-code {
-    font-family: var(--font-mono);
+    font-family: var(--font-sans);
   }
 }
 
-/* Custom cyber glow and scrollbar */
+/* Light corporate scrollbar */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #090d16;
+  background: #FFF7ED;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
+  background: #CBD5E1;
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #10b981;
+  background: #94A3B8;
 }
 
-/* Glassmorphism utility - sleek cyber dark lounge aesthetic */
+/* Clean surface panel */
 .glass-panel {
-  background: rgba(13, 20, 36, 0.82);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.6);
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
 }
 
 /* Safe area insets for notched mobile devices */

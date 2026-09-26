@@ -249,30 +249,30 @@ export const CustomerPortal: React.FC = () => {
 
       {/* 2. IN-SEAT FOOD & BEVERAGE ORDERING MENU */}
       <div className="space-y-5">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-3 border-b border-slate-800">
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-3 border-b border-[#E2E8F0]">
           <div>
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+              <div className="w-9 h-9 rounded-xl bg-[#FFF7ED] border border-[#FED7AA] flex items-center justify-center text-[#EA580C]">
                 <UtensilsCrossed className="w-5 h-5" />
               </div>
-              <h2 className="text-xl sm:text-2xl font-black text-white font-display tracking-wide">
+              <h2 className="text-xl sm:text-2xl font-black text-[#172554] font-display tracking-wide">
                 In-Seat Food &amp; Drink Ordering
               </h2>
             </div>
-            <p className="text-xs sm:text-sm text-slate-400 mt-1">
+            <p className="text-xs sm:text-sm text-[#64748B] mt-1 font-sans">
               Select your favorite snacks and refreshments. Freshly prepared and delivered right to PS1, PS2, or PS3.
             </p>
           </div>
 
           {/* Search Bar */}
           <div className="relative w-full md:w-72">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#64748B]" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search snacks, drinks, meals..."
-              className="w-full pl-9 pr-4 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+              className="w-full pl-9 pr-4 py-2 rounded-xl bg-[#FFFFFF] border border-[#E2E8F0] text-xs text-[#0F172A] placeholder-[#64748B] focus:outline-none focus:border-[#EA580C] transition-colors shadow-xs"
             />
           </div>
         </div>
@@ -288,8 +288,8 @@ export const CustomerPortal: React.FC = () => {
                 onClick={() => setSelectedCategory(cat)}
                 className={`px-3.5 py-1.5 rounded-xl text-xs font-bold font-display uppercase tracking-wider transition-all cursor-pointer shrink-0 ${
                   isActive
-                    ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 shadow-md shadow-amber-500/20'
-                    : 'bg-slate-900/90 text-slate-400 hover:text-white border border-slate-800'
+                    ? 'bg-[#EA580C] text-[#FFFFFF] shadow-sm'
+                    : 'bg-[#FFFFFF] text-[#64748B] hover:text-[#0F172A] border border-[#E2E8F0]'
                 }`}
               >
                 {cat}
@@ -300,14 +300,14 @@ export const CustomerPortal: React.FC = () => {
 
         {/* Menu Cards Grid */}
         {isLoading ? (
-          <div className="p-12 text-center bg-slate-900/40 rounded-3xl border border-slate-800 flex justify-center">
-            <div className="w-8 h-8 rounded-full border-2 border-amber-400 border-t-transparent animate-spin" />
+          <div className="p-12 text-center bg-[#FFFFFF] rounded-3xl border border-[#E2E8F0] flex justify-center shadow-xs">
+            <div className="w-8 h-8 rounded-full border-2 border-[#EA580C] border-t-transparent animate-spin" />
           </div>
         ) : filteredItems.length === 0 ? (
-          <div className="p-12 text-center bg-slate-900/40 rounded-3xl border border-dashed border-slate-800 space-y-2">
-            <Coffee className="w-10 h-10 text-slate-600 mx-auto" />
-            <p className="text-sm font-bold text-slate-400">No items match your search.</p>
-            <p className="text-xs text-slate-500">Try changing the category or clearing the search query.</p>
+          <div className="p-12 text-center bg-[#FFFFFF] rounded-3xl border border-dashed border-[#E2E8F0] space-y-2">
+            <Coffee className="w-10 h-10 text-[#64748B] mx-auto" />
+            <p className="text-sm font-bold text-[#0F172A]">No items match your search.</p>
+            <p className="text-xs text-[#64748B]">Try changing the category or clearing the search query.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
@@ -318,48 +318,48 @@ export const CustomerPortal: React.FC = () => {
               return (
                 <div
                   key={item.id}
-                  className={`p-4 rounded-2xl bg-slate-900/80 border transition-all duration-200 flex flex-col justify-between space-y-3 relative overflow-hidden group hover:border-amber-500/40 hover:shadow-lg hover:shadow-amber-500/5 ${
-                    qty > 0 ? 'border-amber-500/60 ring-1 ring-amber-500/30' : 'border-slate-800/90'
+                  className={`p-4 rounded-2xl bg-[#FFFFFF] border border-[#E2E8F0] transition-all duration-200 flex flex-col justify-between space-y-3 relative overflow-hidden group hover:border-[#EA580C]/60 hover:shadow-md ${
+                    qty > 0 ? 'ring-2 ring-[#EA580C]/40 border-[#EA580C]' : 'shadow-xs'
                   }`}
                 >
                   <div className="space-y-1.5">
                     <div className="flex items-start justify-between gap-2">
-                      <h3 className="font-bold text-sm text-white font-display group-hover:text-amber-300 transition-colors">
+                      <h3 className="font-bold text-sm text-[#0F172A] font-display group-hover:text-[#172554] transition-colors">
                         {item.name}
                       </h3>
-                      <span className="text-[10px] font-mono-code font-bold uppercase px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700/60 shrink-0">
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-[#FFF7ED] text-[#EA580C] border border-[#FED7AA] shrink-0">
                         {item.category}
                       </span>
                     </div>
                     {item.description && (
-                      <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed font-sans">
+                      <p className="text-xs text-[#64748B] line-clamp-2 leading-relaxed font-sans">
                         {item.description}
                       </p>
                     )}
                   </div>
 
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-800/80">
-                    <span className="font-mono-code text-base font-black text-emerald-400">
+                  <div className="flex items-center justify-between pt-2 border-t border-[#E2E8F0]">
+                    <span className="font-bold text-base text-[#172554]">
                       ₹{priceNum.toFixed(2)}
                     </span>
 
                     {/* Quantity Selector */}
                     {qty > 0 ? (
-                      <div className="flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                      <div className="flex items-center gap-2 bg-[#FFF7ED] p-1 rounded-xl border border-[#FED7AA]">
                         <button
                           type="button"
                           onClick={() => handleRemoveFromCart(item.id)}
-                          className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center cursor-pointer transition-colors"
+                          className="w-7 h-7 rounded-lg bg-[#FFFFFF] hover:bg-[#F1F5F9] text-[#0F172A] border border-[#E2E8F0] flex items-center justify-center cursor-pointer transition-colors shadow-xs"
                         >
                           <Minus className="w-3.5 h-3.5" />
                         </button>
-                        <span className="font-mono-code text-xs font-black text-white px-1">
+                        <span className="text-xs font-bold text-[#0F172A] px-1 font-mono-code">
                           {qty}
                         </span>
                         <button
                           type="button"
                           onClick={() => handleAddToCart(item.id)}
-                          className="w-7 h-7 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center justify-center cursor-pointer font-bold transition-colors"
+                          className="w-7 h-7 rounded-lg bg-[#EA580C] hover:bg-[#C2410C] text-[#FFFFFF] flex items-center justify-center cursor-pointer font-bold transition-colors shadow-xs"
                         >
                           <Plus className="w-3.5 h-3.5" />
                         </button>
@@ -368,10 +368,10 @@ export const CustomerPortal: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleAddToCart(item.id)}
-                        className="py-1.5 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500 border border-amber-500/30 hover:border-amber-400 text-amber-300 hover:text-slate-950 text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer"
+                        className="py-1.5 px-3 rounded-xl bg-[#EA580C] hover:bg-[#C2410C] text-[#FFFFFF] text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        <span>Add</span>
+                        <span>+ ADD</span>
                       </button>
                     )}
                   </div>
@@ -385,16 +385,16 @@ export const CustomerPortal: React.FC = () => {
       {/* 3. FLOATING CART SUMMARY BAR (When items in cart) */}
       {totalCartCount > 0 && !isCheckoutOpen && (
         <div className="fixed bottom-4 left-3 right-3 sm:left-auto sm:right-8 sm:w-96 z-40 animate-in slide-in-from-bottom-5">
-          <div className="p-3.5 rounded-2xl bg-[#0e131f] border border-amber-500/50 shadow-2xl shadow-black/80 flex items-center justify-between gap-3 backdrop-blur-xl">
+          <div className="p-3.5 rounded-2xl bg-[#FFFFFF] border border-[#E2E8F0] shadow-xl flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black">
+              <div className="w-9 h-9 rounded-xl bg-[#EA580C] text-white flex items-center justify-center font-black shadow-xs">
                 <ShoppingBag className="w-5 h-5" />
               </div>
               <div>
-                <span className="text-xs font-black text-white block">
+                <span className="text-xs font-bold text-[#0F172A] block">
                   {totalCartCount} item{totalCartCount > 1 ? 's' : ''} added
                 </span>
-                <span className="font-mono-code text-xs font-bold text-emerald-400">
+                <span className="text-xs font-bold text-[#172554] font-mono-code">
                   Total: ₹{totalCartAmount.toFixed(2)}
                 </span>
               </div>
@@ -403,7 +403,7 @@ export const CustomerPortal: React.FC = () => {
             <button
               type="button"
               onClick={() => setIsCheckoutOpen(true)}
-              className="py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold uppercase tracking-wider text-xs transition-all shadow-md shadow-amber-500/25 cursor-pointer"
+              className="py-2.5 px-4 rounded-xl bg-[#EA580C] hover:bg-[#C2410C] text-[#FFFFFF] font-bold uppercase tracking-wider text-xs transition-all shadow-sm cursor-pointer"
             >
               Order Now
             </button>
@@ -414,51 +414,51 @@ export const CustomerPortal: React.FC = () => {
       {/* 4. ORDER PLACEMENT & CHECKOUT MODAL */}
       {isCheckoutOpen && (
         <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200"
           role="dialog"
           aria-modal="true"
         >
-          <div className="bg-[#0e131f] border border-slate-800 max-w-lg w-full rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl relative animate-in slide-in-from-bottom-5 duration-200 max-h-[92vh] flex flex-col pb-safe">
+          <div className="bg-[#FFFFFF] border border-[#E2E8F0] max-w-lg w-full rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl relative animate-in slide-in-from-bottom-5 duration-200 max-h-[92vh] flex flex-col pb-safe">
             {orderConfirmed ? (
               /* Success Confirmation Screen */
               <div className="text-center py-6 space-y-4">
-                <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/20">
+                <div className="w-14 h-14 rounded-2xl bg-[#DCFCE7] border border-[#BBF7D0] text-[#15803D] flex items-center justify-center mx-auto shadow-sm">
                   <CheckCircle2 className="w-8 h-8" />
                 </div>
                 <div className="space-y-1">
-                  <h3 className="text-xl font-black text-white font-display">
+                  <h3 className="text-xl font-black text-[#172554] font-display">
                     Order Received!
                   </h3>
-                  <p className="text-xs text-slate-300">
+                  <p className="text-xs text-[#64748B]">
                     Your order has been routed to the kitchen for preparation.
                   </p>
                 </div>
 
-                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2 text-xs font-mono-code text-left max-w-sm mx-auto">
-                  <div className="flex justify-between text-slate-400">
+                <div className="p-4 rounded-xl bg-[#FFF7ED] border border-[#FED7AA] space-y-2 text-xs text-left max-w-sm mx-auto">
+                  <div className="flex justify-between text-[#64748B]">
                     <span>Order ID:</span>
-                    <span className="text-amber-400 font-bold">{orderConfirmed.orderId}</span>
+                    <span className="text-[#EA580C] font-bold font-mono-code">{orderConfirmed.orderId}</span>
                   </div>
-                  <div className="flex justify-between text-slate-400">
+                  <div className="flex justify-between text-[#64748B]">
                     <span>Matrix Allocation:</span>
-                    <span className="text-white font-black px-2 py-0.5 rounded bg-blue-500/20 border border-blue-500/40 text-blue-300">
+                    <span className="text-[#172554] font-bold px-2 py-0.5 rounded bg-[#EFF6FF] border border-[#BFDBFE]">
                       {orderConfirmed.mode ? `${orderConfirmed.mode.toUpperCase()} • ${orderConfirmed.stationId}` : orderConfirmed.stationId}
                     </span>
                   </div>
-                  <div className="flex justify-between text-slate-400">
+                  <div className="flex justify-between text-[#64748B]">
                     <span>Gamer:</span>
-                    <span className="text-white font-bold">{orderConfirmed.customerName}</span>
+                    <span className="text-[#0F172A] font-bold">{orderConfirmed.customerName}</span>
                   </div>
-                  <div className="flex justify-between text-slate-400 pt-1.5 border-t border-slate-800">
-                    <span>Total Bill:</span>
-                    <span className="text-emerald-400 font-black">₹{orderConfirmed.totalAmount.toFixed(2)}</span>
+                  <div className="flex justify-between text-[#64748B] pt-1.5 border-t border-[#FED7AA]">
+                    <span className="font-bold text-[#0F172A]">Total Bill:</span>
+                    <span className="text-[#15803D] font-bold text-sm font-mono-code">₹{orderConfirmed.totalAmount.toFixed(2)}</span>
                   </div>
                 </div>
 
                 <button
                   type="button"
                   onClick={handleResetAfterOrder}
-                  className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-bold uppercase tracking-wider text-xs transition-all shadow-md cursor-pointer"
+                  className="w-full py-3 rounded-xl bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] font-bold uppercase tracking-wider text-xs transition-all shadow-sm cursor-pointer"
                 >
                   Done &amp; Return to Menu
                 </button>
@@ -466,22 +466,22 @@ export const CustomerPortal: React.FC = () => {
             ) : (
               /* Checkout Form */
               <>
-                <div className="flex justify-between items-center pb-3.5 mb-3.5 border-b border-slate-800 shrink-0">
+                <div className="flex justify-between items-center pb-3.5 mb-3.5 border-b border-[#E2E8F0] shrink-0">
                   <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center">
+                    <div className="w-8 h-8 rounded-xl bg-[#FFF7ED] text-[#EA580C] border border-[#FED7AA] flex items-center justify-center">
                       <ShoppingBag className="w-4 h-4" />
                     </div>
                     <div>
-                      <h3 className="text-base sm:text-lg font-bold text-white font-display">
+                      <h3 className="text-base sm:text-lg font-bold text-[#172554] font-display">
                         Confirm In-Seat Order
                       </h3>
-                      <p className="text-[11px] text-slate-400">Deliver to your console station</p>
+                      <p className="text-[11px] text-[#64748B]">Deliver to your console station</p>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setIsCheckoutOpen(false)}
-                    className="text-slate-400 hover:text-white p-1 rounded-lg"
+                    className="text-[#64748B] hover:text-[#0F172A] p-1 rounded-lg"
                   >
                     <X className="w-5 h-5" />
                   </button>
@@ -490,8 +490,8 @@ export const CustomerPortal: React.FC = () => {
                 <form onSubmit={handlePlaceOrder} className="space-y-4 overflow-y-auto pr-1 flex-1 text-xs">
                   {/* Customer Name Input */}
                   <div className="space-y-1.5">
-                    <label className="block font-semibold text-slate-300">
-                      Your Gamer Name: <span className="text-rose-400">*</span>
+                    <label className="block font-semibold text-[#0F172A]">
+                      Your Gamer Name: <span className="text-[#B91C1C]">*</span>
                     </label>
                     <input
                       type="text"
@@ -499,14 +499,14 @@ export const CustomerPortal: React.FC = () => {
                       value={customerName}
                       onChange={(e) => setCustomerName(e.target.value)}
                       placeholder="e.g. Alex / ShadowGamer"
-                      className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder-slate-600 focus:outline-none focus:border-amber-400 text-xs"
+                      className="w-full p-2.5 rounded-xl bg-[#FFF7ED] border border-[#E2E8F0] text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] text-xs transition-colors"
                     />
                   </div>
 
                   {/* Game Mode Selection */}
                   <div className="space-y-1.5">
-                    <label className="block font-semibold text-slate-300">
-                      Game Mode: <span className="text-rose-400">*</span>
+                    <label className="block font-semibold text-[#0F172A]">
+                      Game Mode: <span className="text-[#B91C1C]">*</span>
                     </label>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {availableModes.map((mode) => {
@@ -520,17 +520,17 @@ export const CustomerPortal: React.FC = () => {
                             onClick={() => handleSelectMode(modeId)}
                             className={`p-2.5 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all cursor-pointer text-center ${
                               isSelected
-                                ? 'bg-amber-500/20 border-amber-400 text-amber-300 ring-2 ring-amber-500/40 shadow-md font-bold'
-                                : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                                ? 'bg-[#FFF7ED] border-[#EA580C] text-[#EA580C] ring-2 ring-[#EA580C]/20 shadow-xs font-bold'
+                                : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
                             }`}
                           >
-                            <Gamepad2 className="w-4 h-4 text-amber-400" />
+                            <Gamepad2 className="w-4 h-4 text-[#EA580C]" />
                             <span className="font-display text-xs tracking-wide">{mode.name}</span>
-                            <span className="text-[10px] font-mono-code text-slate-400">
+                            <span className="text-[10px] font-mono-code text-[#64748B]">
                               ₹{mode.hourly_rate}/hr
                             </span>
                             {isCar && (
-                              <span className="text-[9px] font-mono-code text-amber-400 font-bold">
+                              <span className="text-[9px] font-mono-code text-[#EA580C] font-bold">
                                 Fixed at PS3
                               </span>
                             )}
@@ -543,11 +543,11 @@ export const CustomerPortal: React.FC = () => {
                   {/* Substation Selection: Strictly restricted to PS1, PS2, or PS3 */}
                   <div className="space-y-1.5">
                     <div className="flex justify-between items-center">
-                      <label className="block font-semibold text-slate-300">
-                        Console Station: <span className="text-rose-400">*</span>
+                      <label className="block font-semibold text-[#0F172A]">
+                        Console Station: <span className="text-[#B91C1C]">*</span>
                       </label>
                       {selectedMode.toLowerCase().includes('car') && (
-                        <span className="text-[10px] text-amber-400 font-mono-code font-bold">
+                        <span className="text-[10px] text-[#EA580C] font-mono-code font-bold">
                           Fixed to PS3 (Car Sim)
                         </span>
                       )}
@@ -565,15 +565,15 @@ export const CustomerPortal: React.FC = () => {
                             onClick={() => handleSelectStation(station)}
                             className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all ${
                               isStationDisabled
-                                ? 'opacity-30 cursor-not-allowed bg-slate-950 border-slate-900 text-slate-600'
+                                ? 'opacity-30 cursor-not-allowed bg-[#F8FAFC] border-[#E2E8F0] text-[#94A3B8]'
                                 : isSelected
-                                ? 'bg-blue-600/20 border-blue-400 text-blue-300 ring-2 ring-blue-500/40 shadow-md shadow-blue-500/20 font-black cursor-pointer'
-                                : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700 cursor-pointer'
+                                ? 'bg-[#EFF6FF] border-[#172554] text-[#172554] ring-2 ring-[#172554]/20 shadow-xs font-black cursor-pointer'
+                                : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1] cursor-pointer'
                             }`}
                           >
-                            <Tv className="w-4 h-4 text-blue-400" />
+                            <Tv className="w-4 h-4 text-[#172554]" />
                             <span className="font-display text-sm tracking-wider">{station}</span>
-                            <span className="text-[9px] font-mono-code text-slate-500 uppercase">
+                            <span className="text-[9px] font-mono-code text-[#64748B] uppercase">
                               {station === 'PS3' && isCarMode ? 'Simulator Rig' : 'Console'}
                             </span>
                           </button>
@@ -583,8 +583,8 @@ export const CustomerPortal: React.FC = () => {
                   </div>
 
                   {/* Itemized Order Breakdown */}
-                  <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
-                    <div className="flex justify-between text-slate-400 font-semibold border-b border-slate-800 pb-1.5 text-[11px]">
+                  <div className="p-3.5 rounded-xl bg-[#FFF7ED] border border-[#FED7AA] space-y-2">
+                    <div className="flex justify-between text-[#64748B] font-semibold border-b border-[#FED7AA] pb-1.5 text-[11px]">
                       <span>Order Items ({totalCartCount})</span>
                       <span>Amount</span>
                     </div>
@@ -593,19 +593,19 @@ export const CustomerPortal: React.FC = () => {
                       {cartItemList.map((item) => (
                         <div key={item.id} className="flex justify-between items-center text-[11px]">
                           <div className="flex items-center gap-1.5 truncate pr-2">
-                            <span className="text-slate-200 truncate">{item.name}</span>
-                            <span className="text-amber-400 font-mono-code text-[10px] font-bold">x{item.quantity}</span>
+                            <span className="text-[#0F172A] truncate font-medium">{item.name}</span>
+                            <span className="text-[#EA580C] font-mono-code text-[10px] font-bold">x{item.quantity}</span>
                           </div>
-                          <span className="font-mono-code text-slate-100 font-semibold shrink-0">
+                          <span className="font-mono-code text-[#0F172A] font-semibold shrink-0">
                             ₹{item.total.toFixed(2)}
                           </span>
                         </div>
                       ))}
                     </div>
 
-                    <div className="flex justify-between pt-2 border-t border-slate-800 text-white font-bold">
+                    <div className="flex justify-between pt-2 border-t border-[#FED7AA] text-[#0F172A] font-bold">
                       <span>Total Amount:</span>
-                      <span className="font-mono-code text-emerald-400 text-sm">
+                      <span className="font-mono-code text-[#172554] text-sm">
                         ₹{totalCartAmount.toFixed(2)}
                       </span>
                     </div>
@@ -613,8 +613,8 @@ export const CustomerPortal: React.FC = () => {
 
                   {/* Error display */}
                   {checkoutError && (
-                    <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-1.5">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                    <div className="p-2.5 rounded-xl bg-[#FEE2E2] border border-[#FECACA] text-[#B91C1C] text-xs flex items-center gap-1.5">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-[#B91C1C]" />
                       <span>{checkoutError}</span>
                     </div>
                   )}
@@ -625,18 +625,18 @@ export const CustomerPortal: React.FC = () => {
                       type="button"
                       disabled={isSubmitting}
                       onClick={() => setIsCheckoutOpen(false)}
-                      className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-colors cursor-pointer"
+                      className="flex-1 py-3 rounded-xl bg-[#F1F5F9] hover:bg-[#E2E8F0] border border-[#E2E8F0] text-[#64748B] font-semibold text-xs transition-colors cursor-pointer"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
                       disabled={isSubmitting}
-                      className="flex-1 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold uppercase tracking-wider text-xs transition-all shadow-lg shadow-amber-500/25 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+                      className="flex-1 py-3 rounded-xl bg-[#EA580C] hover:bg-[#C2410C] text-[#FFFFFF] font-bold uppercase tracking-wider text-xs transition-all shadow-sm cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
                     >
                       {isSubmitting ? (
                         <>
-                          <span className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin mr-1" />
+                          <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-1" />
                           <span>Sending Order...</span>
                         </>
                       ) : (
