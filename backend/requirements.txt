@@ -6,7 +6,6 @@ sqlalchemy>=2.0.32
 asyncpg>=0.29.0
 alembic>=1.13.2
 python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
 python-multipart>=0.0.9
 uvloop>=0.20.0; sys_platform != "win32"
 httpx>=0.27.0

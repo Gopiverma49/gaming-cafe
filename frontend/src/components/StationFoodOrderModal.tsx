@@ -12,7 +12,6 @@ import { StationLive, MenuItem } from '../types';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchAdminMenuItems, placeStationOrderApi } from '../api';
 import { useAuthStore } from '../store/authStore';
-import { useLoungeStore } from '../store/loungeStore';
 import { useNotificationStore } from '../store/notificationStore';
 
 interface StationFoodOrderModalProps {
@@ -32,7 +31,6 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
 }) => {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
-  const { addStationFoodOrder } = useLoungeStore();
   const { addNotification } = useNotificationStore();
 
   const [cart, setCart] = useState<Record<string, number>>({});
@@ -94,7 +92,8 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
       const matchSearch =
         (item?.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
         (item?.category || '').toLowerCase().includes(searchQuery.toLowerCase());
-      const isAvailable = item?.is_available !== false && (item?.stock ?? 1) > 0;
+      // Food order menu reflects directly from kitchen menu (available items), not inventory stock
+      const isAvailable = item?.is_available !== false;
       return matchCat && matchSearch && isAvailable;
     });
   }, [safeMenuItems, selectedCategory, searchQuery]);
@@ -102,12 +101,9 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
   if (!isOpen || !station) return null;
 
   const handleUpdateQuantity = (itemId: string, delta: number) => {
-    const itemObj = safeMenuItems.find((m) => m?.id === itemId);
-    const maxStock = itemObj?.stock ?? 999;
-
     setCart((prev) => {
       const current = prev[itemId] || 0;
-      const next = Math.max(0, Math.min(maxStock, current + delta));
+      const next = Math.max(0, Math.min(99, current + delta));
       if (next === 0) {
         const copy = { ...prev };
         delete copy[itemId];
@@ -136,27 +132,24 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
   const handleConfirmOrder = () => {
     try {
       if (selectedItemsList.length === 0) {
-      setError('Please add at least one item to order.');
-      return;
+        setError('Please add at least one item to order.');
+        return;
+      }
+
+      // Call backend API to save order in DB and decrement inventory stock atomically (if tracked)
+      orderMutation.mutate({
+        station_id: station.id,
+        session_id: station.active_session_id,
+        items: selectedItemsList.map((i) => ({
+          menu_item_id: i.id,
+          quantity: i.quantity,
+        })),
+        customer_name: user?.name || station.customer_name || 'Customer',
+      });
+    } catch (err: any) {
+      setError(err?.message || 'Failed to place order.');
     }
-
-    // Call backend API to save order in DB and decrement inventory stock atomically
-    orderMutation.mutate({
-      station_id: station.id,
-      session_id: station.active_session_id,
-      items: selectedItemsList.map((i) => ({
-        menu_item_id: i.id,
-        quantity: i.quantity,
-      })),
-      customer_name: user?.name || station.customer_name || 'Customer',
-    });
-
-    // Also update lounge store for immediate UI feedback
-    addStationFoodOrder(station.name, selectedItemsList);
-  } catch (err: any) {
-    setError(err?.message || 'Failed to place order.');
-  }
-};
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -256,7 +249,11 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
                         ₹{Number(item.price).toFixed(2)}
                       </span>
                       <span className="text-[10px] text-slate-400">
-                        Stock: <strong className="text-slate-300 font-mono-code">{item.stock ?? 20}</strong>
+                        {item.stock !== undefined && item.stock !== null && item.stock > 0 ? (
+                          <>Stock: <strong className="text-emerald-400 font-mono-code">{item.stock}</strong></>
+                        ) : (
+                          <span className="text-amber-400/90 font-medium">Kitchen Prepared</span>
+                        )}
                       </span>
                     </div>
                   </div>

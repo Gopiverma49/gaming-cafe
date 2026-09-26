@@ -26,6 +26,7 @@ import {
 } from '../api';
 import { useCafeWebSocket } from '../hooks/useCafeWebSocket';
 import { useNotificationStore } from '../store/notificationStore';
+import { useLoungeStore } from '../store/loungeStore';
 
 export const KitchenKanban: React.FC = () => {
   const queryClient = useQueryClient();
@@ -136,8 +137,17 @@ export const KitchenKanban: React.FC = () => {
         queryClient.setQueryData(['kitchen-orders'], context.previousOrders);
       }
     },
-    onSettled: () => {
+    onSettled: (_data, _error, variables) => {
+      if (variables) {
+        const lounge = useLoungeStore.getState();
+        if (variables.nextStatus === 'CANCELLED') {
+          lounge.removeInSeatOrder(variables.orderId);
+        } else {
+          lounge.updateInSeatOrderStatus(variables.orderId, variables.nextStatus);
+        }
+      }
       queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['station-matrix'] });
       queryClient.invalidateQueries({ queryKey: ['stations-live'] });
     },
   });

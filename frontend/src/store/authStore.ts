@@ -32,6 +32,12 @@ function loadStoredUser(sessionKey: string, localKey: string): AuthUser | null {
     if (parsed && typeof parsed.role === 'string') {
       parsed.role = parsed.role.toLowerCase();
     }
+    // Strict RBAC: Never restore non-admin accounts as adminUser
+    if (sessionKey === ADMIN_STORAGE_KEY && parsed?.role !== 'admin') {
+      sessionStorage.removeItem(ADMIN_STORAGE_KEY);
+      sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+      return null;
+    }
     return parsed;
   } catch {
     return null;
@@ -124,15 +130,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     return get().adminToken;
   },
 
-  setAuth: (user: AuthUser, token: string, targetPortal?: PortalType) => {
+  setAuth: (user: AuthUser, token: string, _targetPortal?: PortalType) => {
     const role = (typeof user?.role === 'string' ? user.role.toLowerCase() : 'customer') as 'admin' | 'customer';
     const normalizedUser: AuthUser = {
       ...user,
       role,
     };
-    const isTargetAdmin = targetPortal === 'admin' || role === 'admin';
 
-    if (isTargetAdmin) {
+    // Strict RBAC: Only users with role === 'admin' can be granted admin credentials
+    if (role === 'admin') {
       saveToStorage(ADMIN_STORAGE_KEY, '', JSON.stringify(normalizedUser));
       saveToStorage(ADMIN_TOKEN_KEY, '', token);
       set((state) => ({

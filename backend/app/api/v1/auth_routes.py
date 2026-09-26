@@ -152,7 +152,14 @@ async def get_current_user(
     except Exception:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    user = await db.get(User, uuid.UUID(user_id))
+    user = None
+    try:
+        user_uuid = uuid.UUID(user_id)
+        user = await db.get(User, user_uuid)
+    except (ValueError, TypeError):
+        stmt = select(User).where(or_(User.role == "ADMIN", User.phone == str(user_id), User.name == str(user_id)))
+        user = (await db.execute(stmt)).scalar_one_or_none()
+
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 

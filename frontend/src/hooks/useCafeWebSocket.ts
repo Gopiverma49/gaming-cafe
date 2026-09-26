@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { WebSocketEvent } from '../types';
+import { useLoungeStore } from '../store/loungeStore';
 
 interface UseCafeWebSocketOptions {
   channel: string;
@@ -137,7 +138,51 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
               break;
 
             case 'ORDER_STATUS_CHANGED':
+              if (wsEvent.payload) {
+                const lounge = useLoungeStore.getState();
+                const ordId = String(wsEvent.payload.order_id || wsEvent.payload.orderId || '');
+                const ordStatus = String(wsEvent.payload.status || '').toLowerCase();
+                const stName = wsEvent.payload.station_name || wsEvent.payload.stationId;
+
+                if (ordId) {
+                  if (ordStatus === 'cancelled') {
+                    lounge.removeInSeatOrder(ordId);
+                    if (stName) {
+                      lounge.clearStationFoodOrders(stName);
+                    }
+                  } else {
+                    lounge.updateInSeatOrderStatus(ordId, wsEvent.payload.status);
+                  }
+                }
+              }
+              triggerDebouncedInvalidate([
+                'station-matrix',
+                'kitchen-orders',
+                'stations-live',
+                'customer-sessions',
+                'desk-session',
+                'admin-menu',
+                'admin-customers',
+              ]);
+              break;
+
             case 'ORDER_CREATED':
+              triggerDebouncedInvalidate([
+                'station-matrix',
+                'kitchen-orders',
+                'stations-live',
+                'customer-sessions',
+                'desk-session',
+                'admin-menu',
+                'admin-customers',
+              ]);
+              break;
+
+            case 'CUSTOMER_IN_SEAT_ORDER':
+              if (wsEvent.payload) {
+                const lounge = useLoungeStore.getState();
+                lounge.addInSeatOrder(wsEvent.payload as any);
+              }
               triggerDebouncedInvalidate([
                 'station-matrix',
                 'kitchen-orders',

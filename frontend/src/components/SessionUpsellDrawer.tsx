@@ -46,7 +46,7 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
 }) => {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
-  const { addBooking, recordCustomerVisit, addStationFoodOrder } = useLoungeStore();
+  const { addBooking, recordCustomerVisit } = useLoungeStore();
   const { addNotification } = useNotificationStore();
 
   // Selected hardware device when booking a Category (Solo/Multiplayer -> PS1, PS2, PS3)
@@ -78,7 +78,7 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
     staleTime: 5000,
   });
 
-  // Effective category resolution (whether opened via StationCard or CategoryCard)
+  // Effective category resolution (whether opened via matrix station or category)
   const effectiveCategory = useMemo<CategoryAvailability | null>(() => {
     if (category) return category;
     if (!station) return null;
@@ -300,9 +300,6 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
             })),
             customer_name: finalName,
           });
-
-          // Update local store for instant live bill breakdown
-          addStationFoodOrder(targetStationName, selectedSnacksList);
         } catch (snackErr) {
           console.warn('Snack order placed with note:', snackErr);
         }

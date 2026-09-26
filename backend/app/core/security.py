@@ -4,20 +4,22 @@ from typing import Optional, Dict, Any
 from jose import jwt
 from app.core.config import settings
 
+BCRYPT_MAX_BYTES = 72
+
 
 def get_password_hash(password: str) -> str:
     """Hash a password using bcrypt (truncating to 72 bytes max as per bcrypt spec)."""
-    pw_bytes = password.encode('utf-8')[:72]
-    return bcrypt.hashpw(pw_bytes, bcrypt.gensalt()).decode('utf-8')
+    pw_bytes = password.encode("utf-8")[:BCRYPT_MAX_BYTES]
+    return bcrypt.hashpw(pw_bytes, bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plain password against its bcrypt hash."""
     try:
-        pw_bytes = plain_password.encode('utf-8')[:72]
-        hash_bytes = hashed_password.encode('utf-8')
+        pw_bytes = plain_password.encode("utf-8")[:BCRYPT_MAX_BYTES]
+        hash_bytes = hashed_password.encode("utf-8")
         return bcrypt.checkpw(pw_bytes, hash_bytes)
-    except Exception:
+    except (ValueError, TypeError, Exception):
         return False
 
 
@@ -29,8 +31,7 @@ def create_jwt_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = 
     else:
         expire = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire, "iat": now})
-    encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
-    return encoded_jwt
+    return str(jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM))
 
 
 def create_admin_token(username: str = "admin") -> str:
@@ -69,5 +70,6 @@ def create_customer_token(desk_id: str, session_id: str) -> str:
 
 
 def decode_jwt_token(token: str) -> Dict[str, Any]:
-    return jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
-
+    """Decodes and validates JWT claims against configured secret and algorithm."""
+    claims: Dict[str, Any] = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+    return claims

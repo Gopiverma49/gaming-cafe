@@ -1,13 +1,6 @@
 from enum import Enum
 
 
-class StationTier(str, Enum):
-    STANDARD = "STANDARD"
-    VIP = "VIP"
-    SIMULATOR = "SIMULATOR"
-    CONSOLE = "CONSOLE"
-
-
 class StationStatus(str, Enum):
     AVAILABLE = "AVAILABLE"
     OCCUPIED = "OCCUPIED"

@@ -12,13 +12,13 @@ logger = logging.getLogger("ws_notifier")
 
 
 class ConnectionManager:
-    def __init__(self):
+    def __init__(self) -> None:
         # Map channel -> Set[WebSocket]
-        # Channels: 'admin', 'customer:{desk_id}'
+        # Channels: 'admin', 'customer', 'customer:{desk_id}'
         self.active_channels: Dict[str, Set[WebSocket]] = {}
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
 
-    async def connect(self, websocket: WebSocket, channel: str):
+    async def connect(self, websocket: WebSocket, channel: str) -> None:
         await websocket.accept()
         async with self._lock:
             if channel not in self.active_channels:
@@ -26,7 +26,7 @@ class ConnectionManager:
             self.active_channels[channel].add(websocket)
         logger.info(f"WebSocket connected to channel: {channel}")
 
-    async def disconnect(self, websocket: WebSocket, channel: str):
+    async def disconnect(self, websocket: WebSocket, channel: str) -> None:
         async with self._lock:
             if channel in self.active_channels and websocket in self.active_channels[channel]:
                 self.active_channels[channel].remove(websocket)
@@ -34,7 +34,7 @@ class ConnectionManager:
                     del self.active_channels[channel]
         logger.info(f"WebSocket disconnected from channel: {channel}")
 
-    async def broadcast(self, channel: str, message: Dict[str, Any]):
+    async def broadcast(self, channel: str, message: Dict[str, Any]) -> None:
         async with self._lock:
             connections = list(self.active_channels.get(channel, []))
 
@@ -42,7 +42,7 @@ class ConnectionManager:
             return
 
         serialized = json.dumps(message, default=str)
-        stale = []
+        stale: List[WebSocket] = []
         for ws in connections:
             try:
                 await ws.send_text(serialized)
@@ -55,18 +55,20 @@ class ConnectionManager:
                 for dead_ws in stale:
                     if channel in self.active_channels and dead_ws in self.active_channels[channel]:
                         self.active_channels[channel].discard(dead_ws)
+                    if channel in self.active_channels and not self.active_channels[channel]:
+                        del self.active_channels[channel]
 
-    async def broadcast_events(self, events: List[Dict[str, Any]]):
+    async def broadcast_events(self, events: List[Dict[str, Any]]) -> None:
         for event_item in events:
             channel = event_item.get("channel", "admin")
             await self.broadcast(channel, event_item)
 
 
 # Global connection manager instance
-manager = ConnectionManager()
+manager: ConnectionManager = ConnectionManager()
 
 
-def buffer_ws_event(session: AsyncSession, channel: str, event_type: str, payload: Dict[str, Any]):
+def buffer_ws_event(session: AsyncSession, channel: str, event_type: str, payload: Dict[str, Any]) -> None:
     """
     Buffers an event into the transactional session.
     The event will strictly be broadcast ONLY after session.commit().
@@ -90,6 +92,7 @@ def buffer_ws_event(session: AsyncSession, channel: str, event_type: str, payloa
         "ORDER_CREATED",
         "ORDER_STATUS_CHANGED",
         "STATION_LOCKED",
+        "CUSTOMER_IN_SEAT_ORDER",
     }
     if event_type in operational_events:
         if "admin" not in target_channels:
@@ -109,18 +112,18 @@ def buffer_ws_event(session: AsyncSession, channel: str, event_type: str, payloa
 
 # Hook into SQLAlchemy commit & rollback events
 @event.listens_for(SyncSession, "after_commit")
-def on_session_after_commit(session: SyncSession):
+def on_session_after_commit(session: SyncSession) -> None:
     buffered_events = session.info.pop("event_buffer", None)
     if buffered_events:
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(manager.broadcast_events(buffered_events))
         except RuntimeError:
-            # Fallback if outside running loop
+            # Fallback if executed outside an active event loop
             pass
 
 
 @event.listens_for(SyncSession, "after_rollback")
-def on_session_after_rollback(session: SyncSession):
+def on_session_after_rollback(session: SyncSession) -> None:
     # Strictly discard all buffered events on rollback to prevent phantom broadcasts
     session.info.pop("event_buffer", None)

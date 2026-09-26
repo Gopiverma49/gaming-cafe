@@ -217,3 +217,168 @@ async def test_station_matrix_strictly_three_columns_and_vr_isolation(orders_tes
 
         # vr_session field is present
         assert "vr_session" in data
+
+
+@pytest.mark.asyncio
+async def test_customer_in_seat_order_flow(orders_test_db):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. In-seat order for Solo on PS2
+        res = await client.post(
+            "/api/v1/customer/in-seat-order",
+            json={
+                "order_id": "ORD_1710000000000",
+                "station_id": "PS2",
+                "mode": "solo",
+                "customer_name": "Kavya Sharma",
+                "items": [
+                    {"id": "snack-1", "name": "Peri Peri Fries", "qty": 2, "price": 120.0},
+                    {"id": "drink-1", "name": "Red Bull", "qty": 1, "price": 150.0},
+                ],
+                "total_amount": 390.0,
+                "status": "pending",
+                "notes": "Less spicy please",
+            },
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["orderId"] == "ORD_1710000000000"
+        assert data["stationId"] == "PS2"
+        assert data["customerName"] == "Kavya Sharma"
+
+        # Verify matrix allocation: PS2 is active under solo, and time_charge is ₹180 (not fallback 125)
+        matrix_res = await client.get("/api/v1/fleet/matrix")
+        assert matrix_res.status_code == 200
+        m_data = matrix_res.json()
+        ps2_col = next(s for s in m_data["stations"] if s["name"] == "PS2")
+        assert ps2_col["active_session"] is not None
+        assert ps2_col["active_session"]["mode"] == "solo"
+        assert float(ps2_col["active_session"]["time_charge"]) == 180.0
+
+        # 2. Car simulator order: even if client sends PS1, it pins strictly to PS3
+        car_res = await client.post(
+            "/api/v1/customer/in-seat-order",
+            json={
+                "order_id": "ORD_1710000000002",
+                "station_id": "PS1",
+                "mode": "car_sim",
+                "customer_name": "Racer Arjun",
+                "items": [{"id": "item-c", "name": "Cold Coffee", "qty": 1, "price": 120.0}],
+                "total_amount": 120.0,
+            },
+        )
+        assert car_res.status_code == 200
+        car_data = car_res.json()
+        assert car_data["stationId"] == "PS3"
+
+        # Verify PS3 session is Car Simulator with rate ₹250 (not fallback 125)
+        matrix_res2 = await client.get("/api/v1/fleet/matrix")
+        m_data2 = matrix_res2.json()
+        ps3_col = next(s for s in m_data2["stations"] if s["name"] == "PS3")
+        assert ps3_col["active_session"] is not None
+        assert ps3_col["active_session"]["mode"] == "car_sim"
+        assert float(ps3_col["active_session"]["time_charge"]) == 250.0
+
+        # 3. Invalid station (must be PS1, PS2, or PS3)
+        bad_station_res = await client.post(
+            "/api/v1/customer/in-seat-order",
+            json={
+                "order_id": "ORD_1710000000001",
+                "station_id": "PS5-VIP",
+                "customer_name": "Test Gamer",
+                "items": [{"id": "item-1", "name": "Chips", "qty": 1, "price": 50.0}],
+                "total_amount": 50.0,
+            },
+        )
+        assert bad_station_res.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_session_end_with_flat_discount(orders_test_db):
+    from app.core.security import create_admin_token
+    transport = ASGITransport(app=app)
+    headers = {"Authorization": f"Bearer {create_admin_token()}"}
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Start/Check-in a session
+        checkin_res = await client.post(
+            "/api/v1/admin/sessions/check-in",
+            headers=headers,
+            json={
+                "station_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "customer_name": "Discount Gamer",
+                "customer_phone": "9876543210",
+                "allocated_minutes": 60,
+            },
+        )
+        assert checkin_res.status_code == 200
+        sess_data = checkin_res.json()
+        session_id = sess_data["session_id"]
+
+        # Settle session with flat discount_amount of 50.0
+        checkout_res = await client.post(
+            "/api/v1/admin/sessions/checkout",
+            headers=headers,
+            json={
+                "session_id": session_id,
+                "payment_method": "UPI",
+                "discount_amount": 50.0,
+            },
+        )
+        assert checkout_res.status_code == 200
+        bill_data = checkout_res.json()
+        assert "total_amount" in bill_data
+        assert Decimal(str(bill_data["total_amount"])) == Decimal("130.00")
+        assert Decimal(str(bill_data["station_charge"])) == Decimal("180.00")
+
+
+@pytest.mark.asyncio
+async def test_kitchen_menu_ordering_with_zero_stock_and_inventory_deduction(orders_test_db):
+    from app.core.security import create_admin_token
+    transport = ASGITransport(app=app)
+    headers = {"Authorization": f"Bearer {create_admin_token()}"}
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Create item with stock=0 (e.g. prepared kitchen food like Peri Peri Fries or Wai Wai)
+        item_res = await client.post(
+            "/api/v1/admin/menu",
+            headers=headers,
+            json={"name": "Kitchen Special Maggi", "category": "Food", "price": 120.00, "stock": 0},
+        )
+        assert item_res.status_code == 201
+        kitchen_item_id = item_res.json()["id"]
+
+        # Check-in a session
+        checkin_res = await client.post(
+            "/api/v1/admin/sessions/check-in",
+            headers=headers,
+            json={
+                "station_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "customer_name": "Kitchen Food Gamer",
+                "customer_phone": "9991112223",
+                "allocated_minutes": 60,
+            },
+        )
+        assert checkin_res.status_code == 200
+        sess_data = checkin_res.json()
+        session_id = sess_data["session_id"]
+
+        # Placing order for zero-stock kitchen item should SUCCEED and not be blocked by inventory
+        order_res = await client.post(
+            "/api/v1/admin/orders/station-order",
+            headers=headers,
+            json={
+                "station_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "session_id": session_id,
+                "customer_name": "Kitchen Food Gamer",
+                "items": [{"menu_item_id": kitchen_item_id, "quantity": 2}],
+            },
+        )
+        assert order_res.status_code == 201
+        assert order_res.json()["status"] == "QUEUED"
+
+        # Verify stock remains 0 (not negative or blocked)
+        menu_check = await client.get("/api/v1/admin/menu")
+        item_data = next(i for i in menu_check.json() if i["id"] == kitchen_item_id)
+        assert item_data["stock"] == 0
+
+
+

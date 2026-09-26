@@ -209,7 +209,7 @@ export async function fetchLiveStations(): Promise<StationLive[]> {
 }
 
 export async function fetchFleetCategories(): Promise<CategoryAvailability[]> {
-  const res = await safeFetch(`${API_BASE}/admin/fleet/categories`);
+  const res = await safeFetch(`${API_BASE}/fleet/categories`);
   const data = await handleResponse<CategoryAvailability[]>(res, []);
   return Array.isArray(data) ? data : [];
 }
@@ -332,7 +332,8 @@ export async function deleteStation(stationId: string) {
 export async function checkoutSession(
   sessionId: string,
   paymentMethod: 'CASH' | 'UPI',
-  discountPercent: number = 0
+  discountPercent: number = 0,
+  discountAmount?: number
 ): Promise<CheckoutResult> {
   const idempotencyKey = `chk-${sessionId}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   const res = await safeFetch(`${API_BASE}/admin/sessions/checkout`, {
@@ -345,6 +346,7 @@ export async function checkoutSession(
       session_id: sessionId,
       payment_method: paymentMethod,
       discount_percent: discountPercent,
+      ...(discountAmount !== undefined && discountAmount > 0 ? { discount_amount: discountAmount } : {}),
     }),
   });
   return handleResponse<CheckoutResult>(res);
@@ -366,6 +368,26 @@ export async function updateKitchenOrderStatus(orderId: string, status: OrderSta
 }
 
 // Customer API
+export interface InSeatOrderPayloadClient {
+  orderId: string;
+  stationId: 'PS1' | 'PS2' | 'PS3' | string;
+  mode?: string;
+  customerName: string;
+  items: { id: string; name: string; qty: number; price: number }[];
+  totalAmount: number;
+  status: 'pending' | 'preparing' | 'delivered';
+  createdAt?: string;
+}
+
+export async function placeInSeatOrderApi(payload: InSeatOrderPayloadClient): Promise<InSeatOrderPayloadClient> {
+  const res = await safeFetch(`${API_BASE}/customer/in-seat-order`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<InSeatOrderPayloadClient>(res);
+}
+
 export async function fetchMenuItems(): Promise<MenuItem[]> {
   const res = await safeFetch(`${API_BASE}/customer/menu`);
   const data = await handleResponse<MenuItem[]>(res, []);

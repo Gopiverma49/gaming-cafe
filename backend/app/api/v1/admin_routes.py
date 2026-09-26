@@ -1,6 +1,6 @@
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from typing import List, Optional
 import uuid
 
@@ -9,7 +9,7 @@ from sqlalchemy import select, delete, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_db, get_optional_auth_user, get_required_auth_user
+from app.api.deps import get_db, get_optional_auth_user
 from app.core.config import settings
 from app.core.security import create_admin_token
 from app.models.entities import Station, Session, Order, OrderItem, MenuItem, User
@@ -39,7 +39,6 @@ from app.schemas.api_schemas import (
     StationMatrixResponse,
     SessionExtendRequest,
 )
-from app.services.billing_engine import calculate_station_charge
 from app.services.order_service import serialize_order, ensure_utc, calculate_order_subtotals, CURRENCY_QUANTIZATION
 from app.services.session_service import (
     check_in,
@@ -50,6 +49,7 @@ from app.services.session_service import (
     start_category_session,
     extend_session,
     get_fleet_matrix,
+    _compute_time_charge,
 )
 from app.services.ws_notifier import buffer_ws_event
 
@@ -255,21 +255,14 @@ async def get_live_stations(
                     )
                 )
             else:
-                if active_session.tier_price is not None:
-                    if elapsed_min > allocated_mins:
-                        overtime_min = elapsed_min - allocated_mins
-                        overtime_charge = (
-                            (Decimal(str(overtime_min)) / Decimal("60")) * station.hourly_rate
-                        ).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
-                        time_charge = (active_session.tier_price + overtime_charge).quantize(
-                            CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
-                        )
-                    else:
-                        time_charge = active_session.tier_price
-                else:
-                    time_charge = calculate_station_charge(
-                        started_at, now, station.hourly_rate
-                    )
+                time_charge = _compute_time_charge(
+                    tier_price=active_session.tier_price,
+                    elapsed_minutes=elapsed_min,
+                    allocated_minutes=allocated_mins,
+                    hourly_rate=station.hourly_rate,
+                    started_at=started_at,
+                    reference_time=now,
+                )
 
                 orders_charge = Decimal("0.00")
                 active_orders_count = 0
@@ -523,6 +516,7 @@ async def admin_checkout(
         payment_method=payload.payment_method,
         idempotency_key=resolved_idempotency_key,
         discount_percent=payload.discount_percent,
+        discount_amount=payload.discount_amount,
     )
     return CheckoutResponse(**result)
 
@@ -847,13 +841,14 @@ async def place_station_food_order(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Menu item '{itm.menu_item_id}' not found",
             )
-        if menu_item.stock < itm.quantity:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient stock for '{menu_item.name}'. Only {menu_item.stock} left in inventory.",
-            )
-
-        menu_item.stock -= itm.quantity
+        # If item is tracked in inventory with positive stock, deduct; if requesting more than stock, reject
+        if menu_item.stock is not None and menu_item.stock > 0:
+            if menu_item.stock < itm.quantity:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Insufficient stock for '{menu_item.name}'. Only {menu_item.stock} left in inventory.",
+                )
+            menu_item.stock -= itm.quantity
         order_items_to_add.append(
             OrderItem(
                 order_id=order.id,
@@ -972,7 +967,7 @@ async def get_customer_directory(db: AsyncSession = Depends(get_db)):
     # 2. Capture ALL walk-in player sessions (admin checkins and customer portal checkins)
     unassigned_sessions = [s for s in all_sessions if s.id not in registered_session_ids]
 
-    walkin_groups: Dict[str, List[Session]] = defaultdict(list)
+    walkin_groups: dict[str, List[Session]] = defaultdict(list)
     for s in unassigned_sessions:
         ph = (s.customer_phone or "").strip()
         nm = (s.customer_name or "").strip()

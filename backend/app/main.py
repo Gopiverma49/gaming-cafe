@@ -139,7 +139,6 @@ async def ensure_canonical_domain_hierarchy():
         # Fetch all existing stations
         all_stations_res = await db.execute(select(Station))
         existing_stations = all_stations_res.scalars().all()
-        station_map = {st.name.lower(): st for st in existing_stations}
 
         # Fix spelling / naming variations
         for st in existing_stations:
@@ -225,23 +224,6 @@ async def ensure_canonical_domain_hierarchy():
         logger.info("Canonical domain hierarchy & device registry successfully synchronized.")
 
 
-async def seed_initial_data():
-    """
-    Manual seeder function — ONLY executed when explicitly requested by user or tests.
-    Never run automatically on application startup.
-    """
-    async with async_session_factory() as db:
-        admin_res = await db.execute(select(User).where(User.role == "ADMIN"))
-        if not admin_res.scalar_one_or_none():
-            logger.info("Seeding default Administrator account...")
-            admin_user = User(
-                name="System Administrator",
-                phone="0000000000",
-                password_hash=get_password_hash(settings.ADMIN_PASSWORD),
-                role="ADMIN",
-            )
-            db.add(admin_user)
-            await db.commit()
 
 
 @asynccontextmanager
@@ -422,7 +404,8 @@ async def websocket_endpoint(websocket: WebSocket, channel: str):
             # Send acknowledgement
             await websocket.send_text(f'{{"type":"PONG","channel":"{channel}"}}')
     except WebSocketDisconnect:
-        await manager.disconnect(websocket, channel)
+        pass
     except Exception as exc:
         logger.warning(f"WebSocket exception on {channel}: {exc}")
+    finally:
         await manager.disconnect(websocket, channel)

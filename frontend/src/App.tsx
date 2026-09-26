@@ -7,6 +7,7 @@ import {
   ShoppingBag,
   Gamepad2,
   BellRing,
+  ShieldCheck,
 } from 'lucide-react';
 import { StationGrid } from './components/StationGrid';
 import { KitchenKanban } from './components/KitchenKanban';
@@ -35,7 +36,7 @@ const queryClient = new QueryClient({
 type ActiveTab = 'matrix' | 'orders' | 'shop' | 'kitchen';
 
 function MainDashboard() {
-  const { currentPortal, adminUser, customerUser, logout } = useAuthStore();
+  const { currentPortal, adminUser, logout } = useAuthStore();
   const [activeTab, setActiveTab] = useState<ActiveTab>('matrix');
 
   useEffect(() => {
@@ -54,7 +55,6 @@ function MainDashboard() {
   }, []);
 
   const isAdminPortal = currentPortal === 'admin';
-  const activeUser = isAdminPortal ? adminUser : customerUser;
 
   // Global websocket channel based on active portal
   useCafeWebSocket({ channel: isAdminPortal ? 'admin' : 'customer' });
@@ -67,10 +67,10 @@ function MainDashboard() {
     enabled: isAdminPortal,
   });
 
-  // If user is not authenticated for this portal, show the portal-specific Login Page
-  if (!activeUser) {
+  // Only gate with LoginPage if navigating to Admin portal and not logged in as Admin
+  if (isAdminPortal && (!adminUser || adminUser.role !== 'admin')) {
     return (
-      <ErrorBoundary level="view" fallbackTitle="Login Screen Interrupted">
+      <ErrorBoundary level="view" fallbackTitle="Staff Login Screen Interrupted">
         <LoginPage />
       </ErrorBoundary>
     );
@@ -97,10 +97,7 @@ function MainDashboard() {
             <div>
               <div className="flex items-center space-x-2">
                 <span className="font-black text-sm sm:text-base tracking-wider bg-gradient-to-r from-blue-400 via-cyan-400 to-white bg-clip-text text-transparent font-display uppercase">
-                  Vanya Gaming
-                </span>
-                <span className="hidden sm:inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30 font-mono-code">
-                  LOUNGE
+                  VANYA GAMING LOUNGE
                 </span>
               </div>
               {isAdminPortal && (
@@ -177,16 +174,30 @@ function MainDashboard() {
             </nav>
           )}
 
-          {/* Header Actions: Sign Out */}
+          {/* Header Actions: Sign Out (Admin) or Staff Login (Customer) */}
           <div className="flex items-center gap-2 sm:gap-3">
-            <button
-              onClick={logout}
-              className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-rose-50 dark:bg-slate-900 dark:hover:bg-rose-950/70 text-slate-600 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-300 transition-all border border-slate-200 dark:border-slate-800 text-xs font-semibold shadow-sm cursor-pointer"
-              title="Sign Out"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Sign Out</span>
-            </button>
+            {isAdminPortal ? (
+              <button
+                onClick={logout}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-rose-950/70 text-slate-400 hover:text-rose-300 transition-all border border-slate-800 text-xs font-semibold shadow-sm cursor-pointer"
+                title="Sign Out"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Sign Out</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  window.history.pushState({}, '', '/admin/login');
+                  useAuthStore.getState().setPortal('admin');
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-900/90 hover:bg-emerald-500/20 border border-slate-700/80 hover:border-emerald-500/50 text-slate-300 hover:text-emerald-300 transition-all text-xs font-bold font-mono-code shadow-sm cursor-pointer"
+                title="Staff Operations Console Login"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Staff Login</span>
+              </button>
+            )}
           </div>
         </div>
       </header>

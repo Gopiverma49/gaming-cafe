@@ -1,21 +1,21 @@
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Union
+from typing import Union, Optional
 import uuid
 
 from app.core.config import settings
 from app.services.order_service import ensure_utc, CURRENCY_QUANTIZATION
 
-SECONDS_PER_MINUTE = Decimal("60")
-MINIMUM_BILLING_MINUTES = Decimal(str(settings.MINIMUM_BILLING_MINUTES))
-GRACE_PERIOD_MINUTES = Decimal(str(settings.GRACE_PERIOD_MINUTES))
-GRACE_THRESHOLD_MINUTES = MINIMUM_BILLING_MINUTES + GRACE_PERIOD_MINUTES  # 35 min default
-MINIMUM_BILLABLE_HOURS = Decimal(str(settings.MINIMUM_BILLABLE_HOURS))
+SECONDS_PER_MINUTE: Decimal = Decimal("60")
+MINIMUM_BILLING_MINUTES: Decimal = Decimal(str(settings.MINIMUM_BILLING_MINUTES))
+GRACE_PERIOD_MINUTES: Decimal = Decimal(str(settings.GRACE_PERIOD_MINUTES))
+GRACE_THRESHOLD_MINUTES: Decimal = MINIMUM_BILLING_MINUTES + GRACE_PERIOD_MINUTES  # 35 min default
+MINIMUM_BILLABLE_HOURS: Decimal = Decimal(str(settings.MINIMUM_BILLABLE_HOURS))
 
 
 def calculate_station_charge(
-    started_at: datetime,
-    ended_at: datetime,
+    started_at: Optional[datetime],
+    ended_at: Optional[datetime],
     hourly_rate: Union[Decimal, str, int, float],
 ) -> Decimal:
     """
@@ -28,6 +28,9 @@ def calculate_station_charge(
     - Over 35 minutes: applies 5-minute grace rollover, then uses ceiling division into 1-hour increments.
     - Quantizes final amount to two decimal places using ROUND_HALF_UP.
     """
+    if not started_at or not ended_at:
+        return Decimal("0.00")
+
     if not isinstance(hourly_rate, Decimal):
         hourly_rate = Decimal(str(hourly_rate))
 
@@ -63,4 +66,3 @@ def generate_upi_qr_string(
     """
     formatted_amount = f"{amount.quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP):.2f}"
     return f"upi://pay?pa={merchant_vpa}&pn={merchant_name}&am={formatted_amount}&cu={currency}&tn=GamingCafe_Desk_{session_id}"
-

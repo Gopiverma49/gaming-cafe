@@ -1,7 +1,7 @@
 import uuid
 from decimal import Decimal
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 
 from sqlalchemy import (
     String,
@@ -39,7 +39,7 @@ class Station(Base):
     name: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
     tier: Mapped[str] = mapped_column(String(20), nullable=False)  # STANDARD, VIP, SIMULATOR, CONSOLE
     hourly_rate: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
-    pricing_tiers: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=list)
+    pricing_tiers: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON, nullable=True, default=list)
     status: Mapped[str] = mapped_column(String(20), default=StationStatus.AVAILABLE.value, nullable=False)
 
     @property
@@ -99,11 +99,13 @@ class Session(Base):
         Uuid(as_uuid=True),
         ForeignKey("stations.id", ondelete="RESTRICT"),
         nullable=False,
+        index=True,
     )
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     customer_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     customer_phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
@@ -189,6 +191,7 @@ class Order(Base):
         Uuid(as_uuid=True),
         ForeignKey("sessions.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     customer_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=OrderStatus.QUEUED.value, nullable=False)
@@ -223,11 +226,13 @@ class OrderItem(Base):
         Uuid(as_uuid=True),
         ForeignKey("orders.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     menu_item_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("menu_items.id", ondelete="RESTRICT"),
         nullable=False,
+        index=True,
     )
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
@@ -252,6 +257,7 @@ class Payment(Base):
         Uuid(as_uuid=True),
         ForeignKey("sessions.id", ondelete="RESTRICT"),
         nullable=False,
+        index=True,
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     method: Mapped[str] = mapped_column(String(20), nullable=False)

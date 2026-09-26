@@ -38,7 +38,33 @@ export interface FinancialRecord {
   foodItems?: { name: string; quantity: number; price: number }[];
 }
 
+export interface CustomerInSeatOrder {
+  orderId: string;
+  stationId: 'PS1' | 'PS2' | 'PS3' | string;
+  mode?: string;
+  customerName: string;
+  items: { id: string; name: string; qty: number; price: number }[];
+  totalAmount: number;
+  status: 'pending' | 'preparing' | 'delivered';
+  createdAt: string;
+}
+import { playOrderChime } from '../utils/soundAlerts';
+export { playOrderChime };
+
 interface LoungeState {
+  // In-Seat Customer Orders with Live Status
+  inSeatOrders: CustomerInSeatOrder[];
+  addInSeatOrder: (order: CustomerInSeatOrder) => void;
+  updateInSeatOrderStatus: (orderId: string, status: 'pending' | 'preparing' | 'delivered' | 'cancelled' | string) => void;
+  removeInSeatOrder: (orderId: string) => void;
+  getStationInSeatOrders: (stationId: string) => CustomerInSeatOrder[];
+  clearStationInSeatOrders: (stationId: string) => void;
+
+  // Visual Ping Highlight Station Column
+  flashingStationId: string | null;
+  triggerStationPing: (stationId: string) => void;
+  clearStationPing: () => void;
+
   // Active Station Food Orders (for Live Bill Breakdown)
   stationFoodOrders: Record<string, OrderedFoodItem[]>;
   addStationFoodOrder: (stationName: string, items: { id: string; name: string; category: string; quantity: number; price: number }[]) => void;
@@ -89,6 +115,75 @@ if (typeof window !== 'undefined' && window.localStorage) {
 }
 
 export const useLoungeStore = create<LoungeState>((set, get) => ({
+  // In-Seat Customer Orders with Live Status
+  inSeatOrders: [],
+
+  addInSeatOrder: (order) => {
+    // 1. Add to inSeatOrders array
+    set((state) => ({
+      inSeatOrders: [order, ...state.inSeatOrders.filter((o) => o.orderId !== order.orderId)],
+    }));
+
+    // 2. Also register into stationFoodOrders so live invoice calculations & breakdown automatically include it
+    get().addStationFoodOrder(
+      order.stationId,
+      order.items.map((i) => ({
+        id: i.id,
+        name: i.name,
+        category: 'Food',
+        quantity: i.qty,
+        price: i.price,
+      }))
+    );
+
+    // 3. Audio & Visual Ping for Admin Station Column
+    get().triggerStationPing(order.stationId);
+  },
+
+  updateInSeatOrderStatus: (orderId, newStatus) => {
+    const isCancelled = String(newStatus).toLowerCase() === 'cancelled';
+    set((state) => ({
+      inSeatOrders: isCancelled
+        ? state.inSeatOrders.filter((o) => o.orderId !== orderId)
+        : state.inSeatOrders.map((o) =>
+            o.orderId === orderId ? { ...o, status: newStatus as any } : o
+          ),
+    }));
+  },
+
+  removeInSeatOrder: (orderId) => {
+    set((state) => ({
+      inSeatOrders: state.inSeatOrders.filter((o) => o.orderId !== orderId),
+    }));
+  },
+
+  getStationInSeatOrders: (stationId) => {
+    const norm = stationId.toUpperCase();
+    return get().inSeatOrders.filter(
+      (o) => o.stationId.toUpperCase() === norm && String(o.status).toLowerCase() !== 'cancelled'
+    );
+  },
+
+  clearStationInSeatOrders: (stationId) => {
+    const norm = stationId.toUpperCase();
+    set((state) => ({
+      inSeatOrders: state.inSeatOrders.filter((o) => o.stationId.toUpperCase() !== norm),
+    }));
+  },
+
+  // Flashing Station Column Indicator on New Order
+  flashingStationId: null,
+  triggerStationPing: (stationId) => {
+    playOrderChime();
+    set({ flashingStationId: stationId.toUpperCase() });
+    setTimeout(() => {
+      if (get().flashingStationId === stationId.toUpperCase()) {
+        set({ flashingStationId: null });
+      }
+    }, 4500);
+  },
+  clearStationPing: () => set({ flashingStationId: null }),
+
   // Active Station Food Orders (in-memory only; real orders persist to SQLite via API)
   stationFoodOrders: {},
 

@@ -7,7 +7,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional, Dict, Any, List, Set
 
 from fastapi import HTTPException, status
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import DBAPIError
@@ -22,10 +22,67 @@ from app.models.enums import (
     PaymentMethod,
 )
 from app.services.billing_engine import calculate_station_charge, generate_upi_qr_string
-from app.services.order_service import ensure_utc, calculate_order_subtotals, CURRENCY_QUANTIZATION
+from app.services.order_service import ensure_utc, CURRENCY_QUANTIZATION
 from app.services.ws_notifier import buffer_ws_event
 
 logger = logging.getLogger("session_service")
+
+
+# ---------------------------------------------------------------------------
+# Private Billing Helpers  (DRY — shared by check_in, start_category_session,
+# settle_checkout, get_fleet_matrix, get_live_stations, customer desk view)
+# ---------------------------------------------------------------------------
+
+def _resolve_tier_price(
+    tier_price: Optional[Decimal],
+    allocated_minutes: int,
+    pricing_tiers: list,
+    hourly_rate: Decimal,
+) -> Decimal:
+    """Determine the locked-in tier price for a new session.
+
+    Priority: explicit ``tier_price`` > matching pricing-tier entry >
+    proportional hourly fallback.
+    """
+    if tier_price is not None:
+        return Decimal(str(tier_price)).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
+
+    matching = next(
+        (t for t in (pricing_tiers or []) if t.get("duration_min") == allocated_minutes),
+        None,
+    )
+    if matching and "price" in matching:
+        return Decimal(str(matching["price"])).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
+
+    return (
+        (Decimal(str(allocated_minutes)) / Decimal("60")) * hourly_rate
+    ).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
+
+
+def _compute_time_charge(
+    tier_price: Optional[Decimal],
+    elapsed_minutes: int,
+    allocated_minutes: int,
+    hourly_rate: Decimal,
+    started_at: datetime,
+    reference_time: datetime,
+) -> Decimal:
+    """Calculate the current time-based charge for an active session.
+
+    * Within allocation: return locked-in ``tier_price``.
+    * Over allocation: tier_price + prorated overtime at ``hourly_rate``.
+    * No tier_price: use the billing-engine minute-accurate formula.
+    """
+    if tier_price is not None:
+        if elapsed_minutes > allocated_minutes:
+            overtime_min = elapsed_minutes - allocated_minutes
+            overtime = (
+                (Decimal(str(overtime_min)) / Decimal("60")) * hourly_rate
+            ).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
+            return (tier_price + overtime).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
+        return tier_price
+
+    return calculate_station_charge(started_at, reference_time, hourly_rate)
 
 
 def with_transaction_retry(max_retries: int = 3, base_delay: float = 0.05):
@@ -150,22 +207,12 @@ async def check_in(
     station.status = StationStatus.OCCUPIED.value
 
     # Determine exact tier price from admin-configured tiers or provided tier_price
-    resolved_tier_price: Decimal
-    if tier_price is not None:
-        resolved_tier_price = Decimal(str(tier_price)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    else:
-        matching_tier = None
-        if station.pricing_tiers and isinstance(station.pricing_tiers, list):
-            for t in station.pricing_tiers:
-                if isinstance(t, dict) and t.get("duration_min") == allocated_minutes:
-                    matching_tier = t
-                    break
-        if matching_tier and "price" in matching_tier:
-            resolved_tier_price = Decimal(str(matching_tier["price"])).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        else:
-            resolved_tier_price = (
-                (Decimal(str(allocated_minutes)) / Decimal("60")) * station.hourly_rate
-            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    resolved_tier_price: Decimal = _resolve_tier_price(
+        tier_price=tier_price,
+        allocated_minutes=allocated_minutes,
+        pricing_tiers=station.pricing_tiers or [],
+        hourly_rate=station.hourly_rate,
+    )
 
     # Resolve user_id if string or lookup by phone
     valid_user_uuid: Optional[uuid.UUID] = None
@@ -378,6 +425,7 @@ async def settle_checkout(
     payment_method: str,
     idempotency_key: str,
     discount_percent: Optional[Decimal] = None,
+    discount_amount: Optional[Decimal] = None,
 ) -> Dict[str, Any]:
     """
     Checkout handler:
@@ -427,38 +475,36 @@ async def settle_checkout(
 
     # 4. Compute exact charges
     ended_at = datetime.now(timezone.utc)
-    if cafe_session.tier_price is not None:
-        started_utc = ensure_utc(cafe_session.started_at)
-        ended_utc = ensure_utc(ended_at)
-        total_sec = max(0, int((ended_utc - started_utc).total_seconds()))
-        elapsed_min = total_sec // 60
-        allocated = cafe_session.allocated_minutes or 60
-        if elapsed_min > allocated:
-            overtime_min = elapsed_min - allocated
-            overtime_charge = (
-                (Decimal(str(overtime_min)) / Decimal("60")) * station.hourly_rate
-            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            station_charge = (cafe_session.tier_price + overtime_charge).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            )
-        else:
-            station_charge = cafe_session.tier_price
-    else:
-        station_charge = calculate_station_charge(cafe_session.started_at, ended_at, station.hourly_rate)
+    started_utc = ensure_utc(cafe_session.started_at)
+    ended_utc = ensure_utc(ended_at)
+    total_sec = max(0, int((ended_utc - started_utc).total_seconds()))
+    elapsed_min_checkout = total_sec // 60
+    allocated_checkout = cafe_session.allocated_minutes or 60
+    station_charge = _compute_time_charge(
+        tier_price=cafe_session.tier_price,
+        elapsed_minutes=elapsed_min_checkout,
+        allocated_minutes=allocated_checkout,
+        hourly_rate=station.hourly_rate,
+        started_at=started_utc,
+        reference_time=ended_utc,
+    )
 
     orders_charge = Decimal("0.00")
     for order in cafe_session.orders:
         if order.status == OrderStatus.SERVED.value:
             for item in order.items:
                 orders_charge += (item.unit_price * Decimal(str(item.quantity))).quantize(
-                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                    CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
                 )
 
-    raw_subtotal = (station_charge + orders_charge).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    if discount_percent and Decimal(str(discount_percent)) > Decimal("0"):
+    raw_subtotal = (station_charge + orders_charge).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
+    if discount_amount is not None and Decimal(str(discount_amount)) > Decimal("0"):
+        disc_amt = min(raw_subtotal, Decimal(str(discount_amount)).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP))
+        total_amount = max(Decimal("0.00"), (raw_subtotal - disc_amt).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP))
+    elif discount_percent and Decimal(str(discount_percent)) > Decimal("0"):
         disc_pct = Decimal(str(discount_percent))
-        disc_amt = (raw_subtotal * (disc_pct / Decimal("100"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        total_amount = max(Decimal("0.00"), (raw_subtotal - disc_amt).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+        disc_amt = (raw_subtotal * (disc_pct / Decimal("100"))).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
+        total_amount = max(Decimal("0.00"), (raw_subtotal - disc_amt).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP))
     else:
         total_amount = raw_subtotal
 
@@ -790,7 +836,7 @@ async def extend_session(
         else Decimal(str(settings.DEFAULT_HOURLY_RATE))
     )
     add_price = ((Decimal(str(minutes)) / Decimal("60")) * hourly_rate).quantize(
-        Decimal("0.01"), rounding=ROUND_HALF_UP
+        CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
     )
     if cafe_session.tier_price is not None:
         cafe_session.tier_price = cafe_session.tier_price + add_price
@@ -942,19 +988,14 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
             rem_min = max(0, alloc_min - elapsed_min)
 
             st_rate = active_s.station.hourly_rate if active_s.station else Decimal(str(settings.DEFAULT_HOURLY_RATE))
-            if active_s.tier_price is not None:
-                if elapsed_min > alloc_min:
-                    overtime_min = elapsed_min - alloc_min
-                    overtime = (
-                        (Decimal(str(overtime_min)) / Decimal("60")) * st_rate
-                    ).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
-                    time_charge = (active_s.tier_price + overtime).quantize(
-                        CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
-                    )
-                else:
-                    time_charge = active_s.tier_price
-            else:
-                time_charge = calculate_station_charge(started_at, now, st_rate)
+            time_charge = _compute_time_charge(
+                tier_price=active_s.tier_price,
+                elapsed_minutes=elapsed_min,
+                allocated_minutes=alloc_min,
+                hourly_rate=st_rate,
+                started_at=started_at,
+                reference_time=now,
+            )
 
             orders_charge = Decimal("0.00")
             active_orders_count = 0
@@ -962,8 +1003,10 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
                 if o.status != OrderStatus.CANCELLED.value:
                     if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value):
                         active_orders_count += 1
-                    subtotal, _ = calculate_order_subtotals(o.items)
-                    orders_charge += subtotal
+                    for item in o.items:
+                        orders_charge += (item.unit_price * Decimal(str(item.quantity))).quantize(
+                            CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
+                        )
 
             running_total = (time_charge + orders_charge).quantize(CURRENCY_QUANTIZATION)
 
@@ -1031,19 +1074,14 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
         vr_rem_min = max(0, vr_alloc_min - vr_elapsed_min)
 
         vr_rate = vr_active_s.station.hourly_rate if vr_active_s.station else Decimal(str(settings.DEFAULT_HOURLY_RATE))
-        if vr_active_s.tier_price is not None:
-            if vr_elapsed_min > vr_alloc_min:
-                vr_overtime_min = vr_elapsed_min - vr_alloc_min
-                vr_overtime = (
-                    (Decimal(str(vr_overtime_min)) / Decimal("60")) * vr_rate
-                ).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
-                vr_time_charge = (vr_active_s.tier_price + vr_overtime).quantize(
-                    CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
-                )
-            else:
-                vr_time_charge = vr_active_s.tier_price
-        else:
-            vr_time_charge = calculate_station_charge(vr_started_at, now, vr_rate)
+        vr_time_charge = _compute_time_charge(
+            tier_price=vr_active_s.tier_price,
+            elapsed_minutes=vr_elapsed_min,
+            allocated_minutes=vr_alloc_min,
+            hourly_rate=vr_rate,
+            started_at=vr_started_at,
+            reference_time=now,
+        )
 
         vr_orders_charge = Decimal("0.00")
         vr_active_orders_count = 0
@@ -1051,8 +1089,10 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
             if o.status != OrderStatus.CANCELLED.value:
                 if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value):
                     vr_active_orders_count += 1
-                subtotal, _ = calculate_order_subtotals(o.items)
-                vr_orders_charge += subtotal
+                for item in o.items:
+                    vr_orders_charge += (item.unit_price * Decimal(str(item.quantity))).quantize(
+                        CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
+                    )
 
         vr_running_total = (vr_time_charge + vr_orders_charge).quantize(CURRENCY_QUANTIZATION)
 
@@ -1240,20 +1280,12 @@ async def start_category_session(
         fallback_hourly_rate = station.hourly_rate or Decimal(str(settings.DEFAULT_HOURLY_RATE))
 
     # Determine tier price
-    resolved_tier_price: Decimal
-    if tier_price is not None:
-        resolved_tier_price = Decimal(str(tier_price)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    else:
-        matching_tier = next(
-            (t for t in pricing_tiers_pool if t.get("duration_min") == duration_minutes),
-            None,
-        )
-        if matching_tier and "price" in matching_tier:
-            resolved_tier_price = Decimal(str(matching_tier["price"])).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        else:
-            resolved_tier_price = (
-                (Decimal(str(duration_minutes)) / Decimal("60")) * fallback_hourly_rate
-            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    resolved_tier_price: Decimal = _resolve_tier_price(
+        tier_price=tier_price,
+        allocated_minutes=duration_minutes,
+        pricing_tiers=pricing_tiers_pool,
+        hourly_rate=fallback_hourly_rate,
+    )
 
     # Resolve user_id if string or lookup by phone
     valid_user_uuid: Optional[uuid.UUID] = None

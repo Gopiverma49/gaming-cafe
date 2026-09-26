@@ -3,17 +3,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Monitor,
   ArrowRightLeft,
-  CreditCard,
-  Banknote,
   AlertCircle,
   XCircle,
-  Receipt,
   Users,
   SlidersHorizontal,
   Gamepad2,
-  Percent,
 } from 'lucide-react';
-import { StationLive, PricingTier, MatrixSession, StationMatrixData } from '../types';
+import { StationLive, PricingTier, MatrixSession, StationMatrixData, Order } from '../types';
 import { POLL_INTERVALS } from '../constants';
 import {
   fetchLiveStations,
@@ -29,13 +25,14 @@ import { StationFoodOrderModal } from './StationFoodOrderModal';
 import { CustomerLogs } from './CustomerLogs';
 import { ManageStation } from './ManageStation';
 import { ConsoleMatrixDashboard } from './ConsoleMatrixDashboard';
+import { SettleInvoiceModal, SettleInvoicePayload, OrderedReceiptItem } from './SettleInvoiceModal';
 
 export type StationSubTab = 'stations' | 'customer_logs' | 'manage_station';
 
 export const StationGrid: React.FC = () => {
   const queryClient = useQueryClient();
   const { addNotification } = useNotificationStore();
-  const { clearStationFoodOrders } = useLoungeStore();
+  const { clearStationFoodOrders, getStationFoodOrders, recordTransaction } = useLoungeStore();
 
   // Sub-navigation state under Station option
   const [activeSubTab, setActiveSubTab] = useState<StationSubTab>('stations');
@@ -51,8 +48,6 @@ export const StationGrid: React.FC = () => {
 
   // Checkout Modal
   const [checkoutStationTarget, setCheckoutStationTarget] = useState<StationLive | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'UPI'>('CASH');
-  const [selectedDiscountPercent, setSelectedDiscountPercent] = useState<number>(0);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
 
   // Station Matrix Query for column availability & active sessions
@@ -126,7 +121,7 @@ export const StationGrid: React.FC = () => {
   };
 
   // Checkout Execution
-  const handleExecuteCheckout = async () => {
+  const handleExecuteCheckout = async (payload: SettleInvoicePayload) => {
     if (!checkoutStationTarget) return;
     setIsCheckingOut(true);
     setActionError(null);
@@ -150,8 +145,28 @@ export const StationGrid: React.FC = () => {
         return;
       }
 
-      // Call backend with optional operator discount percent
-      const apiRes = await checkoutSession(targetSessionId, paymentMethod, selectedDiscountPercent);
+      // Call backend with payment method, discount percent, and flat discount amount
+      const apiRes = await checkoutSession(
+        targetSessionId,
+        payload.paymentMethod,
+        payload.discountPercent,
+        payload.discountAmount
+      );
+
+      // Record offline transaction ledger entry for lounge analytics
+      recordTransaction({
+        stationName: payload.stationName,
+        customerName: checkoutStationTarget.customer_name || 'Walk-in Gamer',
+        timeCharge: payload.subTotal - (Number(checkoutStationTarget.orders_charge) || 0),
+        foodCharge: Number(checkoutStationTarget.orders_charge) || 0,
+        totalAmount: payload.grandTotal,
+        paymentMethod: payload.paymentMethod,
+        foodItems: payload.orderedItems.map((i) => ({
+          name: i.name,
+          quantity: i.quantity,
+          price: i.unitPrice || (i.totalPrice / (i.quantity || 1)),
+        })),
+      });
 
       // Backend confirmed checkout: refresh station list from server immediately
       clearStationFoodOrders(checkoutStationTarget.name);
@@ -164,13 +179,12 @@ export const StationGrid: React.FC = () => {
       ]);
 
       const settledStationName = checkoutStationTarget.name;
-      const settledAmount = Number(apiRes.total_amount || 0).toFixed(2);
+      const settledAmount = (apiRes?.total_amount !== undefined ? Number(apiRes.total_amount) : payload.grandTotal).toFixed(2);
       setCheckoutStationTarget(null);
-      setSelectedDiscountPercent(0);
       addNotification(
         'SYSTEM',
         '💳 Invoice Settled',
-        `Station ${settledStationName} settled for ₹${settledAmount} via ${paymentMethod}. Station is now available.`
+        `Station ${settledStationName} settled for ₹${settledAmount} via ${payload.paymentMethod}. Station is now available.`
       );
     } catch (err: any) {
       setActionError(err.message || 'Checkout failed. Please try again.');
@@ -208,7 +222,6 @@ export const StationGrid: React.FC = () => {
   };
 
   const handleMatrixCheckout = (session: MatrixSession, stationName: string) => {
-    setSelectedDiscountPercent(0);
     const matched = safeStations.find(
       (s) => s.id === session.station_id || s.name.toUpperCase() === stationName.toUpperCase()
     );
@@ -306,6 +319,73 @@ export const StationGrid: React.FC = () => {
 
     return list;
   }, [safeStations, matrixData, transferStationTarget]);
+
+  // Itemized food receipt list derived from active in-memory orders & kitchen orders
+  // Itemized food receipt list: strictly uses real database kitchen orders as single source of truth.
+  // Excludes any CANCELLED/rejected orders, matching backend settle_checkout calculation exactly.
+  const checkoutOrderedItems = useMemo<OrderedReceiptItem[]>(() => {
+    if (!checkoutStationTarget) return [];
+
+    const itemsMap = new Map<string, OrderedReceiptItem>();
+
+    // 1. Primary ground-truth: Kitchen orders from database cache
+    const kitchenOrders = queryClient.getQueryData<Order[]>(['kitchen-orders']) || [];
+    const allStationOrders = kitchenOrders.filter(
+      (o) =>
+        (checkoutStationTarget.active_session_id && o.session_id === checkoutStationTarget.active_session_id) ||
+        (o.station_name && o.station_name.toUpperCase() === checkoutStationTarget.name.toUpperCase())
+    );
+
+    if (allStationOrders.length > 0) {
+      // Only SERVED orders are billable. Cancelled/rejected orders are strictly omitted.
+      const billableOrders = allStationOrders.filter(
+        (o) => o.status === 'SERVED' && (o.status as any) !== 'CANCELLED' && (o.status as any) !== 'cancelled'
+      );
+
+      billableOrders.forEach((order) => {
+        (order.items || []).forEach((item) => {
+          const key = (item.menu_item_name || 'Item').trim().toLowerCase();
+          const uPrice = Number(item.unit_price) || 0;
+          const sTotal = Number(item.subtotal) || uPrice * item.quantity;
+          if (itemsMap.has(key)) {
+            const existing = itemsMap.get(key)!;
+            existing.quantity += item.quantity;
+            existing.totalPrice += sTotal;
+          } else {
+            itemsMap.set(key, {
+              id: item.id || item.menu_item_id,
+              name: item.menu_item_name || 'Item',
+              quantity: item.quantity,
+              unitPrice: uPrice,
+              totalPrice: sTotal,
+            });
+          }
+        });
+      });
+    } else {
+      // 2. Fallback only if no database orders exist for this station at all (e.g. offline testing)
+      const localOrders = getStationFoodOrders(checkoutStationTarget.name) || [];
+      localOrders.forEach((item) => {
+        const key = item.name.trim().toLowerCase();
+        if (itemsMap.has(key)) {
+          const existing = itemsMap.get(key)!;
+          existing.quantity += item.quantity;
+          existing.totalPrice += item.total || item.price * item.quantity;
+        } else {
+          itemsMap.set(key, {
+            id: item.id,
+            name: item.name,
+            quantity: item.quantity,
+            unitPrice: item.price,
+            totalPrice: item.total || item.price * item.quantity,
+            category: item.category,
+          });
+        }
+      });
+    }
+
+    return Array.from(itemsMap.values());
+  }, [checkoutStationTarget, getStationFoodOrders, queryClient]);
 
   return (
     <div className="space-y-6 relative z-10">
@@ -484,158 +564,30 @@ export const StationGrid: React.FC = () => {
         </div>
       )}
 
-      {/* 4. Checkout & Settle Modal */}
-      {checkoutStationTarget && (() => {
-        const timeCharge = Number(checkoutStationTarget.time_charge || 0);
-        const ordersCharge = Number(checkoutStationTarget.orders_charge || 0);
-        const rawSubtotal = timeCharge + ordersCharge;
-        const discountAmount = selectedDiscountPercent > 0 ? (rawSubtotal * selectedDiscountPercent) / 100 : 0;
-        const finalGrandTotal = Math.max(0, rawSubtotal - discountAmount);
-
-        return (
-          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-slate-900 border border-slate-800 max-w-lg w-full rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl relative animate-in slide-in-from-bottom-5 max-h-[90vh] overflow-y-auto pb-safe">
-              <div className="flex justify-between items-center mb-4 pb-3 border-b border-slate-800">
-                <div className="flex items-center gap-2">
-                  <Receipt className="w-5 h-5 text-emerald-400" />
-                  <h3 className="text-base sm:text-lg font-bold text-white font-display">
-                    Settle Invoice: {checkoutStationTarget.name}
-                  </h3>
-                </div>
-                <button
-                  onClick={() => {
-                    setCheckoutStationTarget(null);
-                    setSelectedDiscountPercent(0);
-                  }}
-                  className="text-slate-400 hover:text-white p-1"
-                >
-                  <XCircle className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="space-y-4 text-xs">
-                {/* Cost Breakdown */}
-                <div className="p-4 bg-slate-950/90 rounded-2xl border border-slate-800 space-y-2">
-                  <div className="flex justify-between text-slate-400">
-                    <span>Console Play Time:</span>
-                    <span className="font-mono-code text-white">
-                      ₹{timeCharge.toFixed(2)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-slate-400">
-                    <span>Food &amp; Drink Orders:</span>
-                    <span className="font-mono-code text-white">
-                      ₹{ordersCharge.toFixed(2)}
-                    </span>
-                  </div>
-                  {selectedDiscountPercent > 0 && (
-                    <div className="flex justify-between text-emerald-400 font-medium">
-                      <span className="flex items-center gap-1">
-                        <Percent className="w-3.5 h-3.5" />
-                        <span>Discount ({selectedDiscountPercent}% OFF):</span>
-                      </span>
-                      <span className="font-mono-code">
-                        -₹{discountAmount.toFixed(2)}
-                      </span>
-                    </div>
-                  )}
-                  <div className="flex justify-between font-bold text-white pt-1.5 border-t border-slate-800 text-sm">
-                    <span>Grand Total Due:</span>
-                    <span className="font-mono-code text-emerald-400 text-base">
-                      ₹{finalGrandTotal.toFixed(2)}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Discount Options: 5%, 10%, 15%, 20% */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="font-semibold text-slate-300 flex items-center gap-1.5">
-                      <Percent className="w-4 h-4 text-amber-400" />
-                      <span>Apply Discount:</span>
-                    </label>
-                    {selectedDiscountPercent > 0 && (
-                      <span className="text-[11px] font-mono-code text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-full font-bold">
-                        {selectedDiscountPercent}% OFF (-₹{discountAmount.toFixed(2)})
-                      </span>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-5 gap-1.5">
-                    {[0, 5, 10, 15, 20].map((pct) => (
-                      <button
-                        key={pct}
-                        type="button"
-                        onClick={() => setSelectedDiscountPercent(pct)}
-                        className={`py-2 px-1 rounded-xl border text-xs font-bold font-mono-code transition-all cursor-pointer text-center ${
-                          selectedDiscountPercent === pct
-                            ? 'bg-amber-500/20 border-amber-400 text-amber-300 shadow-sm ring-1 ring-amber-400/50'
-                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
-                        }`}
-                      >
-                        {pct === 0 ? 'None' : `${pct}%`}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Payment Method */}
-                <div>
-                  <label className="block font-semibold text-slate-300 mb-2">
-                    Payment Method:
-                  </label>
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod('UPI')}
-                      className={`p-3 rounded-xl border flex items-center justify-center gap-2 font-bold transition-all cursor-pointer ${
-                        paymentMethod === 'UPI'
-                          ? 'bg-blue-600/20 border-blue-400 text-blue-300 shadow-sm'
-                          : 'bg-slate-950 border-slate-800 text-slate-400'
-                      }`}
-                    >
-                      <CreditCard className="w-4 h-4" />
-                      <span>UPI / QR</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod('CASH')}
-                      className={`p-3 rounded-xl border flex items-center justify-center gap-2 font-bold transition-all cursor-pointer ${
-                        paymentMethod === 'CASH'
-                          ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-sm'
-                          : 'bg-slate-950 border-slate-800 text-slate-400'
-                      }`}
-                    >
-                      <Banknote className="w-4 h-4" />
-                      <span>Cash</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="pt-2 flex gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCheckoutStationTarget(null);
-                      setSelectedDiscountPercent(0);
-                    }}
-                    className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isCheckingOut}
-                    onClick={handleExecuteCheckout}
-                    className="flex-1 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-bold uppercase tracking-wider disabled:opacity-50 cursor-pointer shadow-lg"
-                  >
-                    {isCheckingOut ? 'Processing...' : 'Settle Invoice'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {/* 4. Refactored Settle Invoice Modal */}
+      {checkoutStationTarget && (
+        <SettleInvoiceModal
+          isOpen={!!checkoutStationTarget}
+          onClose={() => {
+            setCheckoutStationTarget(null);
+            setActionError(null);
+          }}
+          onSettle={handleExecuteCheckout}
+          stationName={checkoutStationTarget.name}
+          customerName={checkoutStationTarget.customer_name}
+          timeCharge={Number(checkoutStationTarget.time_charge || 0)}
+          ordersCharge={Number(checkoutStationTarget.orders_charge || 0)}
+          elapsedMinutes={checkoutStationTarget.elapsed_minutes}
+          allocatedMinutes={
+            checkoutStationTarget.remaining_minutes !== undefined && checkoutStationTarget.remaining_minutes !== null
+              ? checkoutStationTarget.elapsed_minutes + checkoutStationTarget.remaining_minutes
+              : undefined
+          }
+          orderedItems={checkoutOrderedItems}
+          isSubmitting={isCheckingOut}
+          errorMessage={actionError}
+        />
+      )}
     </div>
   );
 };

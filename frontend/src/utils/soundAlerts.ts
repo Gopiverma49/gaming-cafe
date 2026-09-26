@@ -72,11 +72,22 @@ export function setAudioMuted(muted: boolean): void {
   } catch {}
 }
 
+let lastChimeTimestamp = 0;
+const CHIME_THROTTLE_MS = 2000;
+
 /**
- * Plays a loud, pleasant two-tone café chime (D5 -> A5 with bell harmonics)
+ * Plays a loud, pleasant two-tone café chime (D5 -> A5 with bell harmonics).
+ * Throttled to play at most once per 2 seconds, guaranteeing a single crisp chime
+ * even when customer and admin clients or multiple WebSocket events fire simultaneously.
  */
 export function playOrderChime(): void {
   if (isAudioMuted()) return;
+
+  const nowMs = Date.now();
+  if (nowMs - lastChimeTimestamp < CHIME_THROTTLE_MS) {
+    return;
+  }
+  lastChimeTimestamp = nowMs;
 
   try {
     const ctx = getAudioContext();

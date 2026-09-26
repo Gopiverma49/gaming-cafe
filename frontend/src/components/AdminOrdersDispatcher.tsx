@@ -28,6 +28,7 @@ import {
   isAudioMuted,
   setAudioMuted,
 } from '../utils/soundAlerts';
+import { useLoungeStore } from '../store/loungeStore';
 
 interface GroupedServedSession {
   sessionId: string;
@@ -129,10 +130,17 @@ export const AdminOrdersDispatcher: React.FC = () => {
   const statusMutation = useMutation({
     mutationFn: ({ orderId, status }: { orderId: string; status: OrderStatus }) =>
       updateKitchenOrderStatus(orderId, status),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      const lounge = useLoungeStore.getState();
+      if (variables.status === 'CANCELLED') {
+        lounge.removeInSeatOrder(variables.orderId);
+      } else {
+        lounge.updateInSeatOrderStatus(variables.orderId, variables.status);
+      }
       queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-menu'] });
+      queryClient.invalidateQueries({ queryKey: ['station-matrix'] });
       queryClient.invalidateQueries({ queryKey: ['stations-live'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-menu'] });
     },
   });
 
@@ -168,10 +176,10 @@ export const AdminOrdersDispatcher: React.FC = () => {
     channel: 'admin',
     onEvent: (event) => {
       if (event.event_type === 'ORDER_CREATED') {
-        playOrderChime();
         refetchOrders();
         queryClient.refetchQueries({ queryKey: ['kitchen-orders'] });
         queryClient.refetchQueries({ queryKey: ['stations-live'] });
+        queryClient.refetchQueries({ queryKey: ['station-matrix'] });
       } else if (
         event.event_type === 'ORDER_STATUS_CHANGED' ||
         event.event_type === 'SESSION_UPDATED' ||

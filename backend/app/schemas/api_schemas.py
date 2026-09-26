@@ -2,7 +2,7 @@ import uuid
 from decimal import Decimal
 from datetime import datetime
 from typing import List, Optional, Any, Union
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator, AliasChoices
 
 from app.core.config import settings
 from app.models.enums import OrderStatus, PaymentMethod
@@ -79,6 +79,30 @@ class StationLiveResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# In-Seat Order Payload (Public QR / URL Ordering)
+class InSeatOrderItem(BaseModel):
+    id: str
+    name: str
+    qty: int = Field(default=1, ge=1)
+    price: Decimal
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class InSeatOrderPayload(BaseModel):
+    orderId: str = Field(..., alias="orderId", validation_alias=AliasChoices("orderId", "order_id"))
+    stationId: str = Field(..., alias="stationId", validation_alias=AliasChoices("stationId", "station_id"))  # 'PS1' | 'PS2' | 'PS3'
+    customerName: str = Field(..., alias="customerName", validation_alias=AliasChoices("customerName", "customer_name"))
+    items: List[InSeatOrderItem]
+    totalAmount: Decimal = Field(..., alias="totalAmount", validation_alias=AliasChoices("totalAmount", "total_amount"))
+    status: str = "pending"
+    createdAt: Optional[str] = Field(default=None, alias="createdAt", validation_alias=AliasChoices("createdAt", "created_at"))
+    notes: Optional[str] = None
+    mode: Optional[str] = Field(default="solo", alias="mode", validation_alias=AliasChoices("mode", "category_id", "categoryId"))
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 # Session Schemas
 class CheckInRequest(BaseModel):
     station_id: uuid.UUID
@@ -104,6 +128,7 @@ class CheckoutRequest(BaseModel):
     session_id: uuid.UUID
     payment_method: PaymentMethod
     discount_percent: Optional[Decimal] = None
+    discount_amount: Optional[Decimal] = None
 
 
 class SessionResponse(BaseModel):
@@ -346,16 +371,6 @@ class CheckoutResponse(BaseModel):
     payment_status: str
     upi_qr_string: Optional[str] = None
 
-
-class PaymentResponse(BaseModel):
-    id: uuid.UUID
-    session_id: uuid.UUID
-    amount: Decimal
-    method: str
-    status: str
-    idempotency_key: str
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 # Customer Desk View

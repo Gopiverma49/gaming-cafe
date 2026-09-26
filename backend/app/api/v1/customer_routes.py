@@ -4,15 +4,15 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db, verify_customer_token
 from app.core.config import settings
 from app.core.security import create_customer_token
-from app.models.entities import Session, MenuItem, Order, OrderItem
-from app.models.enums import OrderStatus, SessionStatus
+from app.models.entities import Session, MenuItem, Order, OrderItem, Station, PhysicalDevice
+from app.models.enums import OrderStatus, SessionStatus, StationStatus
 from app.schemas.api_schemas import (
     CustomerDeskSession,
     MenuItemResponse,
@@ -21,9 +21,10 @@ from app.schemas.api_schemas import (
     OrderItemResponse,
     TokenResponse,
     CustomerTokenRequest,
+    InSeatOrderPayload,
 )
-from app.services.billing_engine import calculate_station_charge
 from app.services.order_service import serialize_order, ensure_utc, CURRENCY_QUANTIZATION
+from app.services.session_service import start_category_session, _compute_time_charge
 from app.services.ws_notifier import buffer_ws_event
 
 router = APIRouter(prefix="/customer", tags=["Customer Operations"])
@@ -88,19 +89,14 @@ async def get_desk_session(
     remaining_min = max(0, allocated_mins - elapsed_min)
 
     station = cafe_session.station
-    if cafe_session.tier_price is not None:
-        if elapsed_min > allocated_mins:
-            overtime_min = elapsed_min - allocated_mins
-            overtime_charge = (
-                (Decimal(str(overtime_min)) / Decimal("60")) * station.hourly_rate
-            ).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
-            time_charge = (cafe_session.tier_price + overtime_charge).quantize(
-                CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP
-            )
-        else:
-            time_charge = cafe_session.tier_price
-    else:
-        time_charge = calculate_station_charge(started_at, now, station.hourly_rate)
+    time_charge = _compute_time_charge(
+        tier_price=cafe_session.tier_price,
+        elapsed_minutes=elapsed_min,
+        allocated_minutes=allocated_mins,
+        hourly_rate=station.hourly_rate,
+        started_at=started_at,
+        reference_time=now,
+    )
 
     orders_charge = Decimal("0.00")
     orders_out: List[OrderResponse] = []
@@ -252,6 +248,177 @@ async def place_order(
     )
 
 
+@router.post("/in-seat-order", response_model=InSeatOrderPayload)
+async def place_in_seat_order(
+    payload: InSeatOrderPayload,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Public in-seat food & drink order endpoint (QR scan / direct URL entry).
+    Requires customer name and substation restricted strictly to PS1, PS2, or PS3.
+    Automatically assigns order to the station's active session if present.
+    """
+    raw_mode = (getattr(payload, "mode", None) or "solo").strip().lower()
+    if raw_mode in ("car", "car_sim", "car simulator", "carsimulator"):
+        target_mode = "car_sim"
+    elif raw_mode in ("multi", "multiplayer", "multi-player"):
+        target_mode = "multiplayer"
+    elif raw_mode in ("vr", "vr_sim", "vr simulator"):
+        target_mode = "vr_sim"
+    else:
+        target_mode = raw_mode
+
+    # Car simulator is strictly fixed to PS3
+    if target_mode == "car_sim":
+        st_name = "PS3"
+    else:
+        st_name = payload.stationId.strip().upper()
+
+    if st_name not in ("PS1", "PS2", "PS3"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Substation must be strictly restricted to PS1, PS2, or PS3.",
+        )
+
+    # 1. Match active session on this device/substation (e.g. PS1, PS2, PS3)
+    sess_stmt = (
+        select(Session)
+        .where(
+            Session.status == SessionStatus.ACTIVE.value,
+            or_(
+                func.upper(Session.device_name) == st_name,
+                func.upper(Session.console_room) == st_name,
+            ),
+        )
+        .options(selectinload(Session.station))
+    )
+    cafe_session = (await db.execute(sess_stmt)).scalars().first()
+
+    # 2. If no active session exists on this station, create one cleanly using start_category_session
+    # so that the session gets the exact defined rates/tiers for the chosen mode (Solo: 180, Multiplayer: 220, Car: 250)
+    # and gets dynamically allocated to the chosen matrix cell (Mode row + Station column).
+    if not cafe_session:
+        cafe_session = await start_category_session(
+            db=db,
+            category_id=target_mode,
+            device_id=st_name,
+            duration_minutes=60,
+            customer_name=payload.customerName,
+        )
+
+    # 4. Attach new Order to the active session
+    new_order = Order(
+        session_id=cafe_session.id if cafe_session else None,
+        customer_name=payload.customerName,
+        status=OrderStatus.QUEUED.value,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(new_order)
+    await db.flush()
+
+    # 5. Process order items: batch fetch menu items to eliminate N+1 queries
+    uuids_to_lookup = []
+    names_to_lookup = []
+    for itm in payload.items:
+        try:
+            uuids_to_lookup.append(uuid.UUID(str(itm.id)))
+        except (ValueError, TypeError):
+            pass
+        names_to_lookup.append(itm.name.strip().lower())
+
+    lookup_conditions = []
+    if uuids_to_lookup:
+        lookup_conditions.append(MenuItem.id.in_(uuids_to_lookup))
+    if names_to_lookup:
+        lookup_conditions.append(func.lower(MenuItem.name).in_(names_to_lookup))
+
+    existing_items: List[MenuItem] = []
+    if lookup_conditions:
+        batch_stmt = select(MenuItem).where(or_(*lookup_conditions))
+        existing_items = (await db.execute(batch_stmt)).scalars().all()
+
+    menu_by_id = {m.id: m for m in existing_items}
+    menu_by_name = {m.name.strip().lower(): m for m in existing_items}
+
+    order_items_to_add: List[OrderItem] = []
+    for itm in payload.items:
+        menu_res = None
+        try:
+            itm_uuid = uuid.UUID(str(itm.id))
+            menu_res = menu_by_id.get(itm_uuid)
+        except (ValueError, TypeError):
+            pass
+
+        if not menu_res:
+            menu_res = menu_by_name.get(itm.name.strip().lower())
+
+        # If not present in database, create record to maintain strict foreign key integrity
+        if not menu_res:
+            menu_res = MenuItem(
+                name=itm.name.strip(),
+                category="Food",
+                price=Decimal(str(itm.price)),
+                stock=0,
+                is_available=True,
+            )
+            db.add(menu_res)
+            await db.flush()
+            menu_by_id[menu_res.id] = menu_res
+            menu_by_name[menu_res.name.strip().lower()] = menu_res
+
+        db_order_item = OrderItem(
+            id=uuid.uuid4(),
+            order_id=new_order.id,
+            menu_item_id=menu_res.id,
+            quantity=itm.qty,
+            unit_price=Decimal(str(itm.price)),
+        )
+        order_items_to_add.append(db_order_item)
+
+        # Deduct inventory only if present in inventory list with positive stock
+        if menu_res.stock is not None and menu_res.stock > 0:
+            menu_res.stock = max(0, menu_res.stock - itm.qty)
+
+    db.add_all(order_items_to_add)
+
+    # Update customer name on session if anonymous
+    if cafe_session and (not cafe_session.customer_name or cafe_session.customer_name in ("Gamer", "Walk-in Gamer")):
+        cafe_session.customer_name = payload.customerName
+
+    # 6. Broadcast real-time WebSocket events to admin channels
+    # Informs Kitchen Kanban and Orders Dispatcher
+    buffer_ws_event(
+        db,
+        channel="admin",
+        event_type="ORDER_CREATED",
+        payload={
+            "order_id": str(new_order.id),
+            "station_name": st_name,
+            "customer_name": payload.customerName,
+        },
+    )
+    # Informs Console Matrix station column badge & audio chime
+    buffer_ws_event(
+        db,
+        channel="admin",
+        event_type="CUSTOMER_IN_SEAT_ORDER",
+        payload={
+            "orderId": payload.orderId,
+            "stationId": st_name,
+            "customerName": payload.customerName,
+            "items": [it.model_dump() for it in payload.items],
+            "totalAmount": float(payload.totalAmount),
+            "status": payload.status,
+            "createdAt": payload.createdAt or datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+    await db.commit()
+    payload.stationId = st_name
+    payload.mode = target_mode
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # Direct Database Real-time Customer Active Sessions / Bookings
 # ---------------------------------------------------------------------------
@@ -302,16 +469,15 @@ async def get_customer_sessions(
         hourly_rate = float(s.station.hourly_rate) if s.station else settings.DEFAULT_HOURLY_RATE
 
         if s.status == SessionStatus.ACTIVE.value and s.station:
-            if s.tier_price is not None:
-                alloc = s.allocated_minutes or 60
-                if elapsed_min > alloc:
-                    extra = elapsed_min - alloc
-                    overtime = (Decimal(str(extra)) / Decimal("60")) * s.station.hourly_rate
-                    time_charge = float(s.tier_price + overtime)
-                else:
-                    time_charge = float(s.tier_price)
-            else:
-                time_charge = float(calculate_station_charge(started_at, now, s.station.hourly_rate))
+            started_s = ensure_utc(s.started_at)
+            time_charge = float(_compute_time_charge(
+                tier_price=s.tier_price,
+                elapsed_minutes=elapsed_min,
+                allocated_minutes=s.allocated_minutes or 60,
+                hourly_rate=s.station.hourly_rate,
+                started_at=started_s,
+                reference_time=now,
+            ))
         else:
             time_charge = float(s.total_amount or 0)
 
@@ -364,8 +530,25 @@ async def cancel_customer_session(
 
     session.status = SessionStatus.CANCELLED.value
     session.ended_at = datetime.now(timezone.utc)
+
+    # Free physical device in devices registry
+    if session.device_name:
+        pdev = await db.get(PhysicalDevice, session.device_name)
+        if pdev and pdev.current_session_id == session.id:
+            pdev.status = StationStatus.AVAILABLE.value
+            pdev.current_session_id = None
+
     if session.station:
-        session.station.status = "AVAILABLE"
+        # Check if station has any other active sessions before marking AVAILABLE
+        other_active = await db.execute(
+            select(Session).where(
+                Session.station_id == session.station.id,
+                Session.status == SessionStatus.ACTIVE.value,
+                Session.id != session.id,
+            )
+        )
+        if not other_active.scalars().first():
+            session.station.status = StationStatus.AVAILABLE.value
 
     buffer_ws_event(
         db,

@@ -127,6 +127,9 @@ export const LoginPage: React.FC = () => {
     setIsSubmitting(true);
     try {
       const res = await loginUserApi({ identifier: user, password: adminPassword });
+      if (!res.user || res.user.role?.toLowerCase() !== 'admin') {
+        throw new Error('Access denied: Customer account cannot access Staff Operations Console. Administrator credentials required.');
+      }
       setAuth(res.user, res.access_token, 'admin');
     } catch (err: any) {
       setErrorMessage(err.message || 'Invalid administrator credentials.');

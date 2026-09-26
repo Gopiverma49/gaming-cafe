@@ -8,25 +8,25 @@ from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError
 from starlette.middleware.base import BaseHTTPMiddleware
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import async_session_factory
-from app.core.security import decode_jwt_token
+from app.core.security import decode_jwt_token, get_password_hash
+from app.models.entities import User
 
 security_bearer = HTTPBearer(auto_error=False)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """Async session lifecycle dependency."""
+    """Async session lifecycle dependency managed deterministically via context manager."""
     async with async_session_factory() as session:
         try:
             yield session
         except Exception:
             await session.rollback()
             raise
-        finally:
-            await session.close()
 
 
 async def verify_admin_token(
@@ -111,8 +111,6 @@ async def get_optional_auth_user(
         payload = decode_jwt_token(credentials.credentials)
         user_id_str = payload.get("sub")
         role = payload.get("role") or payload.get("scope") or ""
-        from app.models.entities import User
-        from sqlalchemy import select
 
         user = None
         if user_id_str:
@@ -125,7 +123,6 @@ async def get_optional_auth_user(
             stmt = select(User).where(User.role == "ADMIN")
             user = (await db.execute(stmt)).scalar_one_or_none()
             if not user:
-                from app.core.security import get_password_hash
                 user = User(
                     name="System Administrator",
                     phone="0000000000",

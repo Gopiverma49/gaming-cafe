@@ -19,11 +19,14 @@ import {
   Radio,
   Sliders,
   Clock,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   MatrixSession,
   StationMatrixData,
   PricingTier,
+  Order,
 } from '../types';
 import {
   fetchStationMatrix,
@@ -31,6 +34,7 @@ import {
   extendSessionApi,
 } from '../api';
 import { useNotificationStore } from '../store/notificationStore';
+import { useLoungeStore } from '../store/loungeStore';
 import { POLL_INTERVALS, DEFAULT_HOURLY_RATE } from '../constants';
 
 interface ConsoleMatrixDashboardProps {
@@ -48,6 +52,24 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 }) => {
   const queryClient = useQueryClient();
   const { addNotification } = useNotificationStore();
+  const { inSeatOrders, updateInSeatOrderStatus, flashingStationId } = useLoungeStore();
+
+  // Accordion expanded state for orders: orderId -> boolean
+  const [expandedOrdersMap, setExpandedOrdersMap] = useState<Record<string, boolean>>({});
+
+  const toggleOrderExpand = (orderId: string) => {
+    setExpandedOrdersMap((prev) => ({ ...prev, [orderId]: !prev[orderId] }));
+  };
+
+  const handleToggleOrderStatus = (orderId: string, currentStatus: string) => {
+    const nextStatus = currentStatus === 'pending' ? 'preparing' : currentStatus === 'preparing' ? 'delivered' : 'pending';
+    updateInSeatOrderStatus(orderId, nextStatus as any);
+    addNotification(
+      'FOOD_ORDER',
+      'Order Status Advanced',
+      `Order status updated to ${nextStatus.toUpperCase()}.`
+    );
+  };
 
   // Selected duration per cell: map key `${modeId}-${stationId}` -> duration_minutes
   const [selectedDurations, setSelectedDurations] = useState<Record<string, number>>({});
@@ -347,10 +369,16 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                     ? formatExpectedAvailableTime(activeSession.started_at, activeSession.allocated_minutes)
                     : null;
 
+                  const isFlashing = flashingStationId === station.name.toUpperCase();
+
                   return (
                     <th
                       key={station.id}
-                      className="p-4 sm:p-5 min-w-[280px] border-r last:border-r-0 border-slate-800 align-top bg-slate-950/70"
+                      className={`p-4 sm:p-5 min-w-[280px] border-r last:border-r-0 border-slate-800 align-top transition-all duration-300 ${
+                        isFlashing
+                          ? 'bg-amber-500/20 ring-2 ring-amber-400 shadow-[0_0_30px_rgba(245,158,11,0.4)]'
+                          : 'bg-slate-950/70'
+                      }`}
                     >
                       <div className="space-y-3">
                         {/* Top Line: Station Name & Quick Status */}
@@ -540,6 +568,8 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                             cellRefs.current[cellKey] = el;
                           }}
                           className={`p-3.5 sm:p-4 border-r last:border-r-0 border-slate-800 align-top transition-all duration-300 relative ${
+                            flashingStationId === station.name.toUpperCase() ? 'bg-amber-500/10' : ''
+                          } ${
                             isFocused
                               ? 'ring-2 ring-emerald-400 bg-emerald-950/30 scale-[1.01] z-20 shadow-2xl'
                               : ''
@@ -608,6 +638,121 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                     <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono-code">
                                       <span>Elapsed: {countdown.elapsedStr}</span>
                                       <span>Booked: {activeSession.allocated_minutes}m</span>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+
+                              {/* 1.5 Active Session Card Embed: In-Seat Food Orders Accordion / Quick List */}
+                              {(() => {
+                                const kitchenOrders = queryClient.getQueryData<Order[]>(['kitchen-orders']) || [];
+                                const sessionOrders = inSeatOrders.filter((o) => {
+                                  if (o.stationId.toUpperCase() !== effectiveStationName.toUpperCase()) return false;
+                                  // Exclude cancelled / rejected orders
+                                  const ordStatus = String(o.status || '').toLowerCase();
+                                  if (ordStatus === 'cancelled') return false;
+                                  const isCancelledInKitchen = kitchenOrders.some(
+                                    (k) => (k.id === o.orderId || (k as any).order_id === o.orderId) && k.status === 'CANCELLED'
+                                  );
+                                  if (isCancelledInKitchen) return false;
+                                  if (!o.mode) return true;
+                                  const ordMode = o.mode.toLowerCase();
+                                  const curMode = mode.id.toLowerCase();
+                                  if (ordMode === curMode) return true;
+                                  if (curMode === 'car_sim' && (ordMode.includes('car') || ordMode === 'car_sim')) return true;
+                                  if (curMode === 'multiplayer' && (ordMode.includes('multi') || ordMode === 'multiplayer')) return true;
+                                  if (curMode === 'solo' && ordMode === 'solo') return true;
+                                  return false;
+                                });
+
+                                if (sessionOrders.length === 0) return null;
+
+                                return (
+                                  <div className="p-2.5 rounded-xl bg-slate-900/95 border border-amber-500/40 space-y-2">
+                                    <div className="flex items-center justify-between text-xs pb-1.5 border-b border-slate-800">
+                                      <div className="flex items-center gap-1.5 font-bold text-amber-300 font-display">
+                                        <UtensilsCrossed className="w-3.5 h-3.5 text-amber-400" />
+                                        <span>In-Seat Orders ({sessionOrders.length})</span>
+                                      </div>
+                                      <span className="text-[10px] font-mono-code text-amber-400 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30">
+                                        {sessionOrders.filter((o) => o.status === 'pending').length} pending
+                                      </span>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                      {sessionOrders.map((ord) => {
+                                        const isExpanded = !!expandedOrdersMap[ord.orderId];
+                                        const itemSummaryStr = ord.items.map((i) => `${i.qty}x ${i.name}`).join(', ');
+
+                                        return (
+                                          <div
+                                            key={ord.orderId}
+                                            className="p-2 rounded-lg bg-slate-950 border border-slate-800/80 space-y-1.5 text-[11px]"
+                                          >
+                                            {/* Header: Customer Name & Status Toggle */}
+                                            <div className="flex items-center justify-between gap-1.5">
+                                              <span className="font-bold text-slate-200 truncate flex items-center gap-1">
+                                                <span className="text-slate-500 text-[10px]">Gamer:</span>
+                                                <span className="text-white truncate font-display">{ord.customerName}</span>
+                                              </span>
+
+                                              {/* Status Toggle Button (Pending ➔ Preparing ➔ Delivered) */}
+                                              <button
+                                                type="button"
+                                                onClick={() => handleToggleOrderStatus(ord.orderId, ord.status)}
+                                                title="Click to advance order status: Pending ➔ Preparing ➔ Delivered"
+                                                className={`px-2 py-0.5 rounded-full text-[9px] font-mono-code font-bold uppercase transition-all border cursor-pointer ${
+                                                  ord.status === 'pending'
+                                                    ? 'bg-amber-500/20 text-amber-300 border-amber-400/50 hover:bg-amber-500/30'
+                                                    : ord.status === 'preparing'
+                                                    ? 'bg-blue-500/20 text-blue-300 border-blue-400/50 hover:bg-blue-500/30'
+                                                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-400/50 hover:bg-emerald-500/30'
+                                                }`}
+                                              >
+                                                ● {ord.status}
+                                              </button>
+                                            </div>
+
+                                            {/* Item Summary line */}
+                                            <p className="text-[10px] text-slate-400 truncate">
+                                              {itemSummaryStr}
+                                            </p>
+
+                                            {/* Expand / Collapse Button & Price */}
+                                            <div className="flex items-center justify-between pt-1 border-t border-slate-900 text-[10px]">
+                                              <span className="font-mono-code font-bold text-emerald-400">
+                                                ₹{ord.totalAmount.toFixed(2)}
+                                              </span>
+                                              <button
+                                                type="button"
+                                                onClick={() => toggleOrderExpand(ord.orderId)}
+                                                className="flex items-center gap-0.5 text-slate-400 hover:text-slate-200 cursor-pointer"
+                                              >
+                                                <span>{isExpanded ? 'Hide Items' : 'View Bill'}</span>
+                                                {isExpanded ? (
+                                                  <ChevronUp className="w-3 h-3" />
+                                                ) : (
+                                                  <ChevronDown className="w-3 h-3" />
+                                                )}
+                                              </button>
+                                            </div>
+
+                                            {/* Expandable Itemized Bill */}
+                                            {isExpanded && (
+                                              <div className="pt-1.5 space-y-1 border-t border-slate-900/90 text-[10px] font-mono-code">
+                                                {ord.items.map((it, idx) => (
+                                                  <div key={idx} className="flex justify-between text-slate-300">
+                                                    <span>
+                                                      {it.name} <span className="text-amber-400">x{it.qty}</span>
+                                                    </span>
+                                                    <span>₹{(it.price * it.qty).toFixed(2)}</span>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
                                     </div>
                                   </div>
                                 );
