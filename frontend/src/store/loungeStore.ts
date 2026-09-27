@@ -1,18 +1,30 @@
 import { create } from 'zustand';
+import { playOrderChime } from '../utils/soundAlerts';
+
+export { playOrderChime };
 
 export interface AdvanceBooking {
-  id: string;
-  stationId: string;
-  stationName: string;
+  bookingId: string;
+  id?: string;
   customerName: string;
-  customerPhone?: string;
-  bookingType: 'NOW' | 'ADVANCE';
-  scheduledTime: string;
+  phoneNumber?: string;
+  customerPhone?: string; // legacy support
+  stationId: string;
+  stationName?: string;
+  sessionMode: 'Solo' | 'Multiplayer' | string;
+  bookingDate: string; // YYYY-MM-DD
+  startTime: string; // HH:mm
   durationMinutes: number;
-  hourlyRate: number;
-  totalCost: number;
-  status: 'CONFIRMED' | 'CHECKED_IN' | 'CANCELLED';
-  createdAt: string;
+  endTime: string; // HH:mm
+  advancePaid: number;
+  totalAmount: number;
+  remainingBalance: number;
+  status: 'CONFIRMED' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
+  bookingType?: string;
+  scheduledTime?: string;
+  hourlyRate?: number;
+  totalCost?: number;
+  createdAt?: string;
 }
 
 export interface OrderedFoodItem {
@@ -48,8 +60,6 @@ export interface CustomerInSeatOrder {
   status: 'pending' | 'preparing' | 'delivered';
   createdAt: string;
 }
-import { playOrderChime } from '../utils/soundAlerts';
-export { playOrderChime };
 
 interface LoungeState {
   // In-Seat Customer Orders with Live Status
@@ -58,7 +68,7 @@ interface LoungeState {
   updateInSeatOrderStatus: (orderId: string, status: 'pending' | 'preparing' | 'delivered' | 'cancelled' | string) => void;
   removeInSeatOrder: (orderId: string) => void;
   getStationInSeatOrders: (stationId: string) => CustomerInSeatOrder[];
-  clearStationInSeatOrders: (stationId: string) => void;
+  clearStationInSeatOrders: (stationId: string, customerName?: string) => void;
 
   // Visual Ping Highlight Station Column
   flashingStationId: string | null;
@@ -77,8 +87,12 @@ interface LoungeState {
 
   // Advance Bookings
   bookings: AdvanceBooking[];
-  addBooking: (booking: Omit<AdvanceBooking, 'id' | 'createdAt'>) => AdvanceBooking;
-  cancelBooking: (id: string) => void;
+  addBooking: (booking: Partial<AdvanceBooking> & { customerName: string; stationId: string }) => AdvanceBooking;
+  updateBooking: (bookingId: string, updates: Partial<AdvanceBooking>) => void;
+  cancelBooking: (bookingId: string) => void;
+  activateBooking: (bookingId: string) => void;
+  completeBooking: (bookingId: string) => void;
+  completeActiveBookingForStation: (stationId: string) => void;
 
   // Completed Financial Records & Revenue Analytics
   financialRecords: FinancialRecord[];
@@ -87,10 +101,14 @@ interface LoungeState {
     totalRevenue: number;
     gamingRevenue: number;
     foodRevenue: number;
+    cashRevenue: number;
+    upiRevenue: number;
+    cashCount: number;
+    upiCount: number;
     sessionsCount: number;
     averageSessionBill: number;
     topSellingItem: string;
-    chartData: { label: string; total: number; gaming: number; food: number }[];
+    chartData: { label: string; total: number; gaming: number; food: number; cash?: number; upi?: number }[];
   };
 
   // Local Customer Visit Tracker
@@ -102,6 +120,22 @@ const DEFAULT_STATION_GAMES: Record<string, string[]> = {
   Solo: ['God of War Ragnarök', 'Ghost of Tsushima', 'Elden Ring', 'Cyberpunk 2077', 'Spider-Man 2'],
   multiplyer: ['EA Sports FC 24 (FIFA)', 'Tekken 8', 'Mortal Kombat 1', 'NBA 2K24', 'Call of Duty: Warzone'],
 };
+
+// ---------------------------------------------------------------------------
+// High-Speed 0ms Cross-Tab Synchronization Bus
+// ---------------------------------------------------------------------------
+const syncChannel =
+  typeof window !== 'undefined' && 'BroadcastChannel' in window
+    ? new BroadcastChannel('vanya_lounge_cross_tab_sync')
+    : null;
+
+export function broadcastLoungeSync(type: 'BOOKINGS_SYNC' | 'ORDERS_SYNC', payload: any) {
+  if (syncChannel) {
+    try {
+      syncChannel.postMessage({ type, payload, timestamp: Date.now() });
+    } catch {}
+  }
+}
 
 // Purge legacy localStorage keys on startup so stale mock data is completely eliminated
 if (typeof window !== 'undefined' && window.localStorage) {
@@ -120,9 +154,14 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
 
   addInSeatOrder: (order) => {
     // 1. Add to inSeatOrders array
-    set((state) => ({
-      inSeatOrders: [order, ...state.inSeatOrders.filter((o) => o.orderId !== order.orderId)],
-    }));
+    set((state) => {
+      const updated = [order, ...state.inSeatOrders.filter((o) => o.orderId !== order.orderId)];
+      broadcastLoungeSync('ORDERS_SYNC', updated);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('vanya_sync_invalidate', { detail: { type: 'ORDERS_SYNC', payload: updated } }));
+      }
+      return { inSeatOrders: updated };
+    });
 
     // 2. Also register into stationFoodOrders so live invoice calculations & breakdown automatically include it
     get().addStationFoodOrder(
@@ -141,34 +180,69 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
   },
 
   updateInSeatOrderStatus: (orderId, newStatus) => {
-    const isCancelled = String(newStatus).toLowerCase() === 'cancelled';
-    set((state) => ({
-      inSeatOrders: isCancelled
+    const s = String(newStatus).toLowerCase();
+    const isTerminated = s === 'cancelled' || s === 'rejected';
+    set((state) => {
+      const updated = isTerminated
         ? state.inSeatOrders.filter((o) => o.orderId !== orderId)
         : state.inSeatOrders.map((o) =>
             o.orderId === orderId ? { ...o, status: newStatus as any } : o
-          ),
-    }));
+          );
+      broadcastLoungeSync('ORDERS_SYNC', updated);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('vanya_sync_invalidate', { detail: { type: 'ORDERS_SYNC', payload: updated } }));
+      }
+      return { inSeatOrders: updated };
+    });
   },
 
   removeInSeatOrder: (orderId) => {
-    set((state) => ({
-      inSeatOrders: state.inSeatOrders.filter((o) => o.orderId !== orderId),
-    }));
+    set((state) => {
+      const updated = state.inSeatOrders.filter((o) => o.orderId !== orderId);
+      broadcastLoungeSync('ORDERS_SYNC', updated);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('vanya_sync_invalidate', { detail: { type: 'ORDERS_SYNC', payload: updated } }));
+      }
+      return { inSeatOrders: updated };
+    });
   },
 
   getStationInSeatOrders: (stationId) => {
     const norm = stationId.toUpperCase();
-    return get().inSeatOrders.filter(
-      (o) => o.stationId.toUpperCase() === norm && String(o.status).toLowerCase() !== 'cancelled'
-    );
+    const isCafeQuery = norm.includes('CAFE');
+    return get().inSeatOrders.filter((o) => {
+      const s = String(o.status).toLowerCase();
+      if (s === 'cancelled' || s === 'rejected') return false;
+      const orderSt = o.stationId.toUpperCase();
+      if (isCafeQuery) {
+        return orderSt.includes('CAFE') || (o.mode && ['dine-in', 'dine-out', 'takeaway'].includes(o.mode.toLowerCase()));
+      }
+      return orderSt === norm;
+    });
   },
 
-  clearStationInSeatOrders: (stationId) => {
+  clearStationInSeatOrders: (stationId, customerName) => {
     const norm = stationId.toUpperCase();
-    set((state) => ({
-      inSeatOrders: state.inSeatOrders.filter((o) => o.stationId.toUpperCase() !== norm),
-    }));
+    const isCafeQuery = norm.includes('CAFE');
+    set((state) => {
+      const updated = state.inSeatOrders.filter((o) => {
+        const orderSt = o.stationId.toUpperCase();
+        if (isCafeQuery) {
+          const isCafeOrder = orderSt.includes('CAFE') || (o.mode && ['dine-in', 'dine-out', 'takeaway'].includes(o.mode.toLowerCase()));
+          if (!isCafeOrder) return true;
+          if (customerName) {
+            return o.customerName?.trim().toLowerCase() !== customerName.trim().toLowerCase();
+          }
+          return false;
+        }
+        return orderSt !== norm;
+      });
+      broadcastLoungeSync('ORDERS_SYNC', updated);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('vanya_sync_invalidate', { detail: { type: 'ORDERS_SYNC', payload: updated } }));
+      }
+      return { inSeatOrders: updated };
+    });
   },
 
   // Flashing Station Column Indicator on New Order
@@ -228,25 +302,165 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
     set({ stationGames: updated });
   },
 
-  // Bookings (In-memory fallback; real reservations read from SQLite /api/v1/customer/sessions)
-  bookings: [],
+  // Advance Bookings & Dynamic Conflict Engine Store
+  bookings: (() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const saved = localStorage.getItem('vanya_lounge_advance_bookings_v3');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) {
+            // Filter out old demo dummy seed entries (BK-1001, BK-1002)
+            const realBookings = parsed.filter(
+              (b) => b.bookingId !== 'BK-1001' && b.bookingId !== 'BK-1002' && b.id !== 'BK-1001' && b.id !== 'BK-1002'
+            );
+            return realBookings;
+          }
+        }
+      } catch {
+        // fallback
+      }
+    }
+    return [] as AdvanceBooking[];
+  })(),
 
   addBooking: (bookingData) => {
+    const rawId = bookingData.bookingId || bookingData.id || `BK-${Date.now().toString().slice(-4)}`;
+    const nowStr = new Date().toTimeString().slice(0, 5);
+    const dateStr = bookingData.bookingDate || new Date().toISOString().split('T')[0];
+    const sTime = bookingData.startTime || nowStr;
+    const dur = bookingData.durationMinutes || 60;
+    
+    // Calculate end time if not given
+    let eTime = bookingData.endTime;
+    if (!eTime) {
+      const [h, m] = sTime.split(':').map((x) => parseInt(x, 10) || 0);
+      const totalM = h * 60 + m + dur;
+      const endH = Math.floor(totalM / 60) % 24;
+      const endM = totalM % 60;
+      eTime = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+    }
+
+    const totalAmt = Number(bookingData.totalAmount ?? bookingData.totalCost ?? 180);
+    const advPaid = Number(bookingData.advancePaid ?? 0);
+    const remBal = bookingData.remainingBalance !== undefined ? bookingData.remainingBalance : Math.max(0, totalAmt - advPaid);
+
     const newBooking: AdvanceBooking = {
       ...bookingData,
-      id: `BK-${Date.now().toString().slice(-6)}`,
+      bookingId: rawId,
+      id: rawId,
+      sessionMode: bookingData.sessionMode || 'Solo',
+      bookingDate: dateStr,
+      startTime: sTime,
+      durationMinutes: dur,
+      endTime: eTime,
+      advancePaid: advPaid,
+      totalAmount: totalAmt,
+      remainingBalance: remBal,
+      stationName: bookingData.stationName || bookingData.stationId,
+      status: (bookingData.status as any) || 'CONFIRMED',
       createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
     const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
     const updated = [newBooking, ...currentBookings];
     set({ bookings: updated });
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        localStorage.setItem('vanya_lounge_advance_bookings_v3', JSON.stringify(updated));
+      } catch {
+        // storage quota fallback
+      }
+    }
+    broadcastLoungeSync('BOOKINGS_SYNC', updated);
     return newBooking;
   },
 
-  cancelBooking: (id) => {
+  updateBooking: (bookingId, updates) => {
+    const norm = String(bookingId || '').trim();
     const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
-    const updated = currentBookings.filter((b) => b?.id !== id);
+    const updated = currentBookings.map((b) => {
+      const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
+      if (!match) return b;
+      const merged = { ...b, ...updates };
+      if (updates.totalAmount !== undefined || updates.advancePaid !== undefined) {
+        merged.remainingBalance = Math.max(0, merged.totalAmount - merged.advancePaid);
+      }
+      return merged;
+    });
     set({ bookings: updated });
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        localStorage.setItem('vanya_lounge_advance_bookings_v3', JSON.stringify(updated));
+      } catch {}
+    }
+    broadcastLoungeSync('BOOKINGS_SYNC', updated);
+  },
+
+  cancelBooking: (bookingId) => {
+    const norm = String(bookingId || '').trim();
+    const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
+    const updated = currentBookings.map((b) => {
+      const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
+      return match ? { ...b, status: 'CANCELLED' as const } : b;
+    });
+    set({ bookings: updated });
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        localStorage.setItem('vanya_lounge_advance_bookings_v3', JSON.stringify(updated));
+      } catch {}
+    }
+    broadcastLoungeSync('BOOKINGS_SYNC', updated);
+  },
+
+  activateBooking: (bookingId) => {
+    const norm = String(bookingId || '').trim();
+    const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
+    const updated = currentBookings.map((b) => {
+      const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
+      return match ? { ...b, status: 'ACTIVE' as const } : b;
+    });
+    set({ bookings: updated });
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        localStorage.setItem('vanya_lounge_advance_bookings_v3', JSON.stringify(updated));
+      } catch {}
+    }
+    broadcastLoungeSync('BOOKINGS_SYNC', updated);
+  },
+
+  completeBooking: (bookingId) => {
+    const norm = String(bookingId || '').trim();
+    const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
+    const updated = currentBookings.map((b) => {
+      const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
+      return match ? { ...b, status: 'COMPLETED' as const } : b;
+    });
+    set({ bookings: updated });
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        localStorage.setItem('vanya_lounge_advance_bookings_v3', JSON.stringify(updated));
+      } catch {}
+    }
+    broadcastLoungeSync('BOOKINGS_SYNC', updated);
+  },
+
+  completeActiveBookingForStation: (stationId) => {
+    const norm = (stationId || '').trim().toUpperCase();
+    const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
+    const updated = currentBookings.map((b) => {
+      const bSt = (b.stationId || '').trim().toUpperCase();
+      if (bSt === norm && (b.status === 'ACTIVE' || b.status === 'CONFIRMED')) {
+        return { ...b, status: 'COMPLETED' as const };
+      }
+      return b;
+    });
+    set({ bookings: updated });
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        localStorage.setItem('vanya_lounge_advance_bookings_v3', JSON.stringify(updated));
+      } catch {}
+    }
+    broadcastLoungeSync('BOOKINGS_SYNC', updated);
   },
 
   // Transactions & Revenue Summary (In-memory fallback; real analytics read from SQLite /api/v1/admin/analytics/revenue)
@@ -292,6 +506,14 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
     const totalRevenue = filtered.reduce((s, r) => s + r.totalAmount, 0);
     const gamingRevenue = filtered.reduce((s, r) => s + r.timeCharge, 0);
     const foodRevenue = filtered.reduce((s, r) => s + r.foodCharge, 0);
+    const cashRevenue = filtered
+      .filter((r) => r.paymentMethod === 'CASH')
+      .reduce((s, r) => s + r.totalAmount, 0);
+    const upiRevenue = filtered
+      .filter((r) => r.paymentMethod === 'UPI')
+      .reduce((s, r) => s + r.totalAmount, 0);
+    const cashCount = filtered.filter((r) => r.paymentMethod === 'CASH').length;
+    const upiCount = filtered.filter((r) => r.paymentMethod === 'UPI').length;
     const sessionsCount = filtered.length;
     const averageSessionBill = sessionsCount > 0 ? totalRevenue / sessionsCount : 0;
 
@@ -307,7 +529,7 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
     }
 
     const daysToShow = period === 'DAY' ? 1 : period === 'WEEK' ? 7 : 14;
-    const chartData: { label: string; total: number; gaming: number; food: number }[] = [];
+    const chartData: { label: string; total: number; gaming: number; food: number; cash: number; upi: number }[] = [];
 
     for (let i = daysToShow - 1; i >= 0; i--) {
       const d = new Date(now.getTime() - i * 86400000);
@@ -319,6 +541,8 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
         total: dayRecs.reduce((s, r) => s + r.totalAmount, 0),
         gaming: dayRecs.reduce((s, r) => s + r.timeCharge, 0),
         food: dayRecs.reduce((s, r) => s + r.foodCharge, 0),
+        cash: dayRecs.filter((r) => r.paymentMethod === 'CASH').reduce((s, r) => s + r.totalAmount, 0),
+        upi: dayRecs.filter((r) => r.paymentMethod === 'UPI').reduce((s, r) => s + r.totalAmount, 0),
       });
     }
 
@@ -343,6 +567,10 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
       totalRevenue,
       gamingRevenue,
       foodRevenue,
+      cashRevenue,
+      upiRevenue,
+      cashCount,
+      upiCount,
       sessionsCount,
       averageSessionBill,
       topSellingItem,
@@ -354,3 +582,38 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
     // Visits are recorded directly into the backend SQL database via check_in
   },
 }));
+
+// Cross-tab real-time listener: syncs state across all open browser tabs and windows
+if (syncChannel) {
+  syncChannel.onmessage = (event) => {
+    try {
+      const { type, payload } = event.data || {};
+      if (type === 'BOOKINGS_SYNC' && Array.isArray(payload)) {
+        useLoungeStore.setState({ bookings: payload });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('vanya_sync_invalidate', { detail: { type, payload } }));
+        }
+      } else if (type === 'ORDERS_SYNC' && Array.isArray(payload)) {
+        useLoungeStore.setState({ inSeatOrders: payload });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('vanya_sync_invalidate', { detail: { type, payload } }));
+        }
+      }
+    } catch {}
+  };
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'vanya_lounge_advance_bookings_v3' && e.newValue) {
+      try {
+        const parsed = JSON.parse(e.newValue);
+        if (Array.isArray(parsed)) {
+          useLoungeStore.setState({ bookings: parsed });
+          window.dispatchEvent(new CustomEvent('vanya_sync_invalidate', { detail: { type: 'BOOKINGS_SYNC', payload: parsed } }));
+        }
+      } catch {}
+    }
+  });
+}
+

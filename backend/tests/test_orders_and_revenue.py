@@ -8,8 +8,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from app.core.database import Base
 from app.api.deps import get_db
 from app.main import app
-from app.models.entities import Station, MenuItem, Session, Order, OrderItem
-from app.models.enums import OrderStatus, SessionStatus
+from app.models.entities import Station, MenuItem
 
 
 @pytest_asyncio.fixture
@@ -151,6 +150,10 @@ async def test_revenue_analytics_database_endpoint(orders_test_db):
         assert "totalRevenue" in data
         assert "gamingRevenue" in data
         assert "foodRevenue" in data
+        assert "cashRevenue" in data
+        assert "upiRevenue" in data
+        assert "cashCount" in data
+        assert "upiCount" in data
         assert "chartData" in data
         assert isinstance(data["chartData"], list)
 
@@ -379,6 +382,70 @@ async def test_kitchen_menu_ordering_with_zero_stock_and_inventory_deduction(ord
         menu_check = await client.get("/api/v1/admin/menu")
         item_data = next(i for i in menu_check.json() if i["id"] == kitchen_item_id)
         assert item_data["stock"] == 0
+
+
+@pytest.mark.asyncio
+async def test_walkin_cafe_dine_in_out_order_and_matrix_settlement(orders_test_db):
+    """
+    Tests:
+    1. Customer ordering food choosing Dine-in / Dine-out for 'Walk-in CAFE'.
+    2. Substation restrictions (PS1, PS2, PS3) are bypassed since no gaming console is involved.
+    3. Order is registered into dedicated Walk-in CAFE session with 0 hourly rate.
+    4. Matrix dashboard reflects 'cafe_session'.
+    5. Admin can settle invoice for Walk-in CAFE, bill contains only food charges with 0 time charge.
+    """
+    from app.core.security import create_admin_token
+    transport = ASGITransport(app=app)
+    headers = {"Authorization": f"Bearer {create_admin_token()}"}
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Customer orders food via Dine-In (Cafe only)
+        cafe_order_res = await client.post(
+            "/api/v1/customer/in-seat-order",
+            json={
+                "order_id": "ORD_CAFE_001",
+                "station_id": "Walk-in CAFE",
+                "mode": "Dine-In",
+                "customer_name": "Rohan Gupta",
+                "items": [
+                    {"id": "snack-1", "name": "Peri Peri Fries", "qty": 1, "price": 120.0},
+                    {"id": "drink-1", "name": "Cold Coffee", "qty": 2, "price": 100.0},
+                ],
+                "total_amount": 320.0,
+                "status": "pending",
+            },
+        )
+        assert cafe_order_res.status_code == 200
+        order_data = cafe_order_res.json()
+        assert order_data["stationId"] == "Walk-in CAFE"
+        assert order_data["customerName"] == "Rohan Gupta"
+
+        # 2. Check matrix API: cafe_session must be present
+        matrix_res = await client.get("/api/v1/admin/fleet/matrix", headers=headers)
+        assert matrix_res.status_code == 200
+        matrix_data = matrix_res.json()
+        assert "cafe_session" in matrix_data
+        assert matrix_data["cafe_session"] is not None
+        cafe_sess = matrix_data["cafe_session"]
+        assert cafe_sess["station_id"] == "Walk-in CAFE"
+        assert cafe_sess["customer_name"] == "Rohan Gupta"
+        assert float(cafe_sess["time_charge"]) == 0.0
+        assert float(cafe_sess["hourly_rate"]) == 0.0
+
+        # 3. Admin settles invoice for Walk-in CAFE
+        checkout_res = await client.post(
+            "/api/v1/admin/sessions/checkout",
+            headers=headers,
+            json={
+                "session_id": cafe_sess["session_id"],
+                "payment_method": "CASH",
+            },
+        )
+        assert checkout_res.status_code == 200
+        bill_data = checkout_res.json()
+        assert bill_data["payment_status"] in ("COMPLETED", "PAID")
+        assert float(bill_data["station_charge"]) == 0.0
+        assert float(bill_data["total_amount"]) == 320.0
+
 
 
 

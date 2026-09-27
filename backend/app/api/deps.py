@@ -1,7 +1,8 @@
+import logging
 from collections import OrderedDict
 import hashlib
 import time
-from typing import AsyncGenerator, Dict, Any, Optional
+from typing import AsyncGenerator, Dict, Any, Optional, Callable, Awaitable
 import uuid
 
 from fastapi import Depends, HTTPException, Request, Response, status
@@ -17,6 +18,7 @@ from app.core.security import decode_jwt_token, get_password_hash
 from app.models.entities import User
 
 security_bearer = HTTPBearer(auto_error=False)
+logger = logging.getLogger("deps")
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -134,7 +136,8 @@ async def get_optional_auth_user(
                 await db.refresh(user)
 
         return user
-    except Exception:
+    except Exception as exc:
+        logger.debug("Failed to resolve optional auth user: %s", exc)
         return None
 
 
@@ -215,7 +218,7 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
     Verifies payload hash matches the Idempotency-Key header, and drops duplicate operations
     returning the recorded response.
     """
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         if request.method not in ("POST", "PATCH"):
             return await call_next(request)
 

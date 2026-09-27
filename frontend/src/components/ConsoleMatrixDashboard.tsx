@@ -22,6 +22,11 @@ import {
   ChevronDown,
   ChevronUp,
   Phone,
+  AlertTriangle,
+  CalendarClock,
+  XCircle,
+  Coffee,
+  Plus,
 } from 'lucide-react';
 import {
   MatrixSession,
@@ -33,10 +38,16 @@ import {
   fetchStationMatrix,
   startCategorySessionApi,
   extendSessionApi,
+  cancelCustomerSessionApi,
 } from '../api';
 import { useNotificationStore } from '../store/notificationStore';
 import { useLoungeStore } from '../store/loungeStore';
 import { POLL_INTERVALS, DEFAULT_HOURLY_RATE } from '../constants';
+import {
+  getNextBookingForStation,
+  validateWalkInDuration,
+  formatTime12h,
+} from '../utils/bookingConflict';
 
 interface ConsoleMatrixDashboardProps {
   onOrderFood: (session: MatrixSession, stationName: string) => void;
@@ -53,7 +64,15 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 }) => {
   const queryClient = useQueryClient();
   const { addNotification } = useNotificationStore();
-  const { inSeatOrders, updateInSeatOrderStatus, flashingStationId } = useLoungeStore();
+  const {
+    inSeatOrders,
+    updateInSeatOrderStatus,
+    getStationInSeatOrders,
+    flashingStationId,
+    bookings,
+    clearStationFoodOrders,
+    completeActiveBookingForStation,
+  } = useLoungeStore();
 
   // Accordion expanded state for orders: orderId -> boolean
   const [expandedOrdersMap, setExpandedOrdersMap] = useState<Record<string, boolean>>({});
@@ -84,6 +103,8 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
   const [extendingSessionId, setExtendingSessionId] = useState<string | null>(null);
   // Active cell focus highlight: cell key `${modeId}-${stationId}`
   const [focusedCellKey, setFocusedCellKey] = useState<string | null>(null);
+  // Selected customer for Walk-in CAFE multi-customer tabs
+  const [selectedCafeCustomer, setSelectedCafeCustomer] = useState<string | null>(null);
 
   // Live seconds ticker for countdown timers
   const [currentTime, setCurrentTime] = useState(Date.now());
@@ -102,7 +123,9 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
     refetchInterval: POLL_INTERVALS.STATIONS,
   });
 
-  const modes = Array.isArray(matrixData?.modes) ? matrixData.modes : [];
+  const modes = (Array.isArray(matrixData?.modes) ? matrixData.modes : []).filter(
+    (m) => !m.id?.toLowerCase().includes('cafe') && !m.name?.toLowerCase().includes('cafe')
+  );
 
   // Strictly enforce 3 columns at all times: PS1, PS2, PS3 (even if other devices exist)
   const rawStations = Array.isArray(matrixData?.stations) ? matrixData.stations : [];
@@ -200,8 +223,29 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
     },
   });
 
-  // Quick Extend Session Handler
+  // Quick Extend Session Handler with Collision Prevention
   const handleExtend = async (session: MatrixSession, minutes: number) => {
+    // Check if extending session would collide with an upcoming advance booking
+    const stName = session.station_id || 'PS1';
+    const nextB = getNextBookingForStation(stName, bookings, new Date());
+    if (nextB) {
+      const startedMs = new Date(session.started_at).getTime();
+      const elapsedMins = Math.floor((Date.now() - startedMs) / 60000);
+      const remainingMins = Math.max(0, (session.allocated_minutes || 60) - elapsedMins);
+      const proposedEndMs = Date.now() + (remainingMins + minutes) * 60000;
+
+      if (proposedEndMs > nextB.start.getTime()) {
+        addNotification(
+          'SYSTEM',
+          '⚠️ Extension Blocked',
+          `Cannot extend session by +${minutes}m. Advance booking scheduled for ${stName} at ${formatTime12h(
+            nextB.booking.startTime
+          )}.`
+        );
+        return;
+      }
+    }
+
     setExtendingSessionId(session.session_id);
     try {
       await extendSessionApi(session.session_id, minutes);
@@ -224,6 +268,34 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
       addNotification('SYSTEM', '⚠️ Extend Failed', err.message || 'Could not extend session.');
     } finally {
       setExtendingSessionId(null);
+    }
+  };
+
+  const [cancellingSessionId, setCancellingSessionId] = useState<string | null>(null);
+
+  const handleCancelSeatSession = async (session: MatrixSession, stationName: string) => {
+    if (
+      !confirm(
+        `Cancel active seat session for ${session.customer_name || 'Gamer'} on ${stationName}? Station will immediately become available.`
+      )
+    ) {
+      return;
+    }
+    setCancellingSessionId(session.session_id);
+    try {
+      await cancelCustomerSessionApi(session.session_id);
+      clearStationFoodOrders(stationName);
+      completeActiveBookingForStation(stationName);
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['station-matrix'] }),
+        queryClient.refetchQueries({ queryKey: ['stations-live'] }),
+        queryClient.refetchQueries({ queryKey: ['customer-sessions'] }),
+      ]);
+      addNotification('SYSTEM', '🚫 Session Cancelled', `Session on ${stationName} cancelled. Seat is now available.`);
+    } catch (err: any) {
+      addNotification('SYSTEM', '⚠️ Cancellation Failed', err.message || 'Could not cancel session.');
+    } finally {
+      setCancellingSessionId(null);
     }
   };
 
@@ -706,109 +778,151 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                   </div>
                                 </div>
 
-                                {/* Right: Check-In Form */}
-                                <div className="flex-1 max-w-lg bg-[#FFF7ED]/40 p-4 sm:p-5 rounded-2xl border border-[#FED7AA]/60 space-y-3">
-                                  {/* Inputs */}
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                                    <div>
-                                      <label className="text-[10px] uppercase text-[#64748B] font-bold block mb-1">
-                                        CUSTOMER NAME:
-                                      </label>
-                                      <input
-                                        type="text"
-                                        placeholder="Walk-in Gamer"
-                                        value={customerNames[vrCellKey] || ''}
-                                        onChange={(e) =>
-                                          setCustomerNames((prev) => ({
-                                            ...prev,
-                                            [vrCellKey]: e.target.value,
-                                          }))
-                                        }
-                                        className="w-full px-3 py-2 rounded-xl bg-[#FFFFFF] border border-[#E2E8F0] text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] transition-colors shadow-xs"
-                                      />
-                                    </div>
-                                    <div>
-                                      <label className="text-[10px] uppercase text-[#64748B] font-bold block mb-1">
-                                        PHONE NUMBER (OPTIONAL):
-                                      </label>
-                                      <input
-                                        type="tel"
-                                        placeholder="10-digit Phone"
-                                        maxLength={10}
-                                        value={customerPhones[vrCellKey] || ''}
-                                        onChange={(e) =>
-                                          setCustomerPhones((prev) => ({
-                                            ...prev,
-                                            [vrCellKey]: e.target.value.replace(/\D/g, '').slice(0, 10),
-                                          }))
-                                        }
-                                        className="w-full px-3 py-2 rounded-xl bg-[#FFFFFF] border border-[#E2E8F0] text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] font-mono transition-colors shadow-xs"
-                                      />
-                                    </div>
-                                  </div>
+                                {/* Right: Check-In Form with Dynamic Conflict Prevention */}
+                                {(() => {
+                                  const vrNextBooking = getNextBookingForStation('VR1', bookings, new Date(currentTime));
+                                  const vrHasUpcomingSoon = vrNextBooking && vrNextBooking.diffMinutes <= 60 && vrNextBooking.diffMinutes >= 0;
+                                  const vrDurationValidation = validateWalkInDuration('VR1', selectedDuration, bookings, new Date(currentTime));
 
-                                  {/* Duration Selector & Start Button */}
-                                  <div className="flex flex-col sm:flex-row sm:items-end gap-3 pt-0.5">
-                                    <div className="flex-1 space-y-1.5">
-                                      <label className="text-[10px] uppercase text-[#64748B] font-bold block">
-                                        Select Duration:
-                                      </label>
-                                      <div className="grid grid-cols-3 gap-1.5">
-                                        {vrPricingTiers.map((tier) => {
-                                          const isSelected = selectedDuration === tier.duration_min;
-                                          return (
-                                            <button
-                                              key={tier.duration_min}
-                                              type="button"
-                                              onClick={() =>
-                                                setSelectedDurations((prev) => ({
-                                                  ...prev,
-                                                  [vrCellKey]: tier.duration_min,
-                                                }))
-                                              }
-                                              className={`py-2 px-1.5 rounded-xl text-center transition-all font-display border cursor-pointer ${
-                                                isSelected
-                                                  ? 'bg-[#EA580C] border-[#EA580C] text-[#FFFFFF] shadow-sm'
-                                                  : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
-                                              }`}
-                                            >
-                                              <div className={`text-xs font-bold tracking-tight ${isSelected ? 'text-white' : 'text-[#0F172A]'}`}>
-                                                {tier.label || `${tier.duration_min}m`}
-                                              </div>
-                                              <div className={`text-[10px] font-bold ${isSelected ? 'text-white/90' : 'text-[#172554]'}`}>
-                                                ₹{Number(tier.price).toFixed(0)}
-                                              </div>
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                    </div>
-
-                                    <button
-                                      disabled={isInitiating}
-                                      onClick={() =>
-                                        startSessionMutation.mutate({
-                                          stationId: 'VR1',
-                                          modeId: mode.id,
-                                          durationMinutes: selectedDuration,
-                                          modeName: mode.name,
-                                          customerName: customerNames[vrCellKey],
-                                          customerPhone: customerPhones[vrCellKey],
-                                        })
-                                      }
-                                      className="sm:w-44 py-3 px-3 rounded-xl bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-98 cursor-pointer disabled:opacity-50 shrink-0"
-                                    >
-                                      {isInitiating ? (
-                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                      ) : (
-                                        <>
-                                          <Play className="w-3.5 h-3.5 fill-current" />
-                                          <span>Start VR</span>
-                                        </>
+                                  return (
+                                    <div className="flex-1 max-w-lg bg-[#FFF7ED]/40 p-4 sm:p-5 rounded-2xl border border-[#FED7AA]/60 space-y-3">
+                                      {/* Upcoming Booking Amber Badge within 60 mins */}
+                                      {vrHasUpcomingSoon && vrNextBooking && (
+                                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#FFFBEB] border border-[#FDE68A] text-[#B45309] text-[11px] font-bold font-mono-code animate-in fade-in">
+                                          <CalendarClock className="w-3.5 h-3.5 text-[#D97706] shrink-0" />
+                                          <span>
+                                            Upcoming: Booking at {formatTime12h(vrNextBooking.booking.startTime)} ({vrNextBooking.booking.sessionMode})
+                                          </span>
+                                        </div>
                                       )}
-                                    </button>
-                                  </div>
-                                </div>
+
+                                      {/* Inputs */}
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                        <div>
+                                          <label className="text-[10px] uppercase text-[#64748B] font-bold block mb-1">
+                                            CUSTOMER NAME:
+                                          </label>
+                                          <input
+                                            type="text"
+                                            placeholder="Walk-in Gamer"
+                                            value={customerNames[vrCellKey] || ''}
+                                            onChange={(e) =>
+                                              setCustomerNames((prev) => ({
+                                                ...prev,
+                                                [vrCellKey]: e.target.value,
+                                              }))
+                                            }
+                                            className="w-full px-3 py-2 rounded-xl bg-[#FFFFFF] border border-[#E2E8F0] text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] transition-colors shadow-xs"
+                                          />
+                                        </div>
+                                        <div>
+                                          <label className="text-[10px] uppercase text-[#64748B] font-bold block mb-1">
+                                            PHONE NUMBER (OPTIONAL):
+                                          </label>
+                                          <input
+                                            type="tel"
+                                            placeholder="10-digit Phone"
+                                            maxLength={10}
+                                            value={customerPhones[vrCellKey] || ''}
+                                            onChange={(e) =>
+                                              setCustomerPhones((prev) => ({
+                                                ...prev,
+                                                [vrCellKey]: e.target.value.replace(/\D/g, '').slice(0, 10),
+                                              }))
+                                            }
+                                            className="w-full px-3 py-2 rounded-xl bg-[#FFFFFF] border border-[#E2E8F0] text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] font-mono transition-colors shadow-xs"
+                                          />
+                                        </div>
+                                      </div>
+
+                                      {/* Duration Selector & Start Button */}
+                                      <div className="flex flex-col sm:flex-row sm:items-end gap-3 pt-0.5">
+                                        <div className="flex-1 space-y-1.5">
+                                          <label className="text-[10px] uppercase text-[#64748B] font-bold block">
+                                            Select Duration:
+                                          </label>
+                                          <div className="grid grid-cols-3 gap-1.5">
+                                            {vrPricingTiers.map((tier) => {
+                                              const isSelected = selectedDuration === tier.duration_min;
+                                              const tierCheck = validateWalkInDuration('VR1', tier.duration_min, bookings, new Date(currentTime));
+                                              const isCapped = !tierCheck.allowed;
+
+                                              return (
+                                                <button
+                                                  key={tier.duration_min}
+                                                  type="button"
+                                                  onClick={() =>
+                                                    setSelectedDurations((prev) => ({
+                                                      ...prev,
+                                                      [vrCellKey]: tier.duration_min,
+                                                    }))
+                                                  }
+                                                  className={`py-2 px-1.5 rounded-xl text-center transition-all font-display border cursor-pointer relative ${
+                                                    isSelected
+                                                      ? 'bg-[#EA580C] border-[#EA580C] text-[#FFFFFF] shadow-sm'
+                                                      : isCapped
+                                                      ? 'bg-[#FEF2F2] border-[#FCA5A5] text-[#991B1B] hover:border-[#F87171]'
+                                                      : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
+                                                  }`}
+                                                >
+                                                  <div className={`text-xs font-bold tracking-tight ${isSelected ? 'text-white' : isCapped ? 'text-[#991B1B]' : 'text-[#0F172A]'}`}>
+                                                    {tier.label || `${tier.duration_min}m`}
+                                                  </div>
+                                                  <div className={`text-[10px] font-bold ${isSelected ? 'text-white/90' : isCapped ? 'text-[#DC2626]' : 'text-[#172554]'}`}>
+                                                    ₹{Number(tier.price).toFixed(0)}
+                                                  </div>
+                                                  {isCapped && (
+                                                    <span className="text-[8px] uppercase tracking-wider font-bold block text-[#DC2626]">
+                                                      Exceeds
+                                                    </span>
+                                                  )}
+                                                </button>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+
+                                        <button
+                                          disabled={isInitiating || !vrDurationValidation.allowed}
+                                          onClick={() =>
+                                            startSessionMutation.mutate({
+                                              stationId: 'VR1',
+                                              modeId: mode.id,
+                                              durationMinutes: selectedDuration,
+                                              modeName: mode.name,
+                                              customerName: customerNames[vrCellKey],
+                                              customerPhone: customerPhones[vrCellKey],
+                                            })
+                                          }
+                                          className={`sm:w-44 py-3 px-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-98 cursor-pointer disabled:opacity-50 shrink-0 ${
+                                            !vrDurationValidation.allowed
+                                              ? 'bg-[#94A3B8] text-white cursor-not-allowed'
+                                              : 'bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF]'
+                                          }`}
+                                        >
+                                          {isInitiating ? (
+                                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                          ) : !vrDurationValidation.allowed ? (
+                                            <span>Overlap Blocked</span>
+                                          ) : (
+                                            <>
+                                              <Play className="w-3.5 h-3.5 fill-current" />
+                                              <span>Start VR</span>
+                                            </>
+                                          )}
+                                        </button>
+                                      </div>
+
+                                      {/* Collision Warning Banner */}
+                                      {!vrDurationValidation.allowed && (
+                                        <div className="p-2.5 rounded-xl bg-[#FEF2F2] border border-[#FECACA] text-[#B91C1C] text-[11px] font-semibold flex items-start gap-2 animate-in fade-in">
+                                          <AlertTriangle className="w-4 h-4 text-[#B91C1C] shrink-0 mt-0.5" />
+                                          <span>{vrDurationValidation.reason}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             )}
                           </td>
@@ -1112,8 +1226,8 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                   <span>Generate Bill &amp; Checkout</span>
                                 </button>
 
-                                {/* Action Buttons Row: Transfer, +30m, +1h */}
-                                <div className="grid grid-cols-3 gap-1.5 pt-0.5">
+                                {/* Action Buttons Row: Transfer, +30m, +1h, Cancel */}
+                                <div className="grid grid-cols-4 gap-1 pt-0.5">
                                   <button
                                     onClick={() => onTransfer(activeSession, effectiveStationName)}
                                     className="py-1.5 px-2 rounded-xl bg-[#EFF6FF] hover:bg-[#DBEAFE] border border-[#BFDBFE] text-[#172554] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer"
@@ -1142,129 +1256,184 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                     <PlusCircle className="w-3 h-3 text-[#15803D]" />
                                     <span>+1h</span>
                                   </button>
+
+                                  <button
+                                    disabled={cancellingSessionId === activeSession.session_id}
+                                    onClick={() => handleCancelSeatSession(activeSession, effectiveStationName)}
+                                    className="py-1.5 px-1 rounded-xl bg-[#FEF2F2] hover:bg-[#FEE2E2] border border-[#FECACA] text-[#DC2626] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                                    title="Cancel active booking seat session"
+                                  >
+                                    <XCircle className="w-3 h-3 text-[#DC2626]" />
+                                    <span>Cancel</span>
+                                  </button>
                                 </div>
                               </div>
                             </div>
                           )}
 
                           {/* ========================================================================= */}
-                          {/* STATE B: AVAILABLE */}
+                          {/* STATE B: AVAILABLE (WITH DYNAMIC CONFLICT PREVENTION) */}
                           {/* ========================================================================= */}
-                          {isStateB && (
-                            <div className="p-3.5 rounded-2xl bg-[#FFFFFF] border border-[#E2E8F0] shadow-xs space-y-3">
-                              {/* Station Availability Status */}
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="text-[#15803D] font-bold">
-                                  {isVrRow ? 'VR Rig Ready: READY' : 'Console Free: READY'}
-                                </span>
-                                <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
-                                  <CheckCircle2 className="w-2.5 h-2.5" />
-                                  <span>READY</span>
-                                </span>
-                              </div>
+                          {isStateB && (() => {
+                            const nextBookingInfo = getNextBookingForStation(effectiveStationName, bookings, new Date(currentTime));
+                            const hasUpcomingSoon = nextBookingInfo && nextBookingInfo.diffMinutes <= 60 && nextBookingInfo.diffMinutes >= 0;
+                            const durationValidation = validateWalkInDuration(effectiveStationName, selectedDuration, bookings, new Date(currentTime));
 
-                              {/* Customer Name & Phone Number Inputs */}
-                              <div className="space-y-2">
-                                <div>
-                                  <label className="text-[10px] uppercase text-[#64748B] font-bold block mb-1">
-                                    CUSTOMER NAME:
-                                  </label>
-                                  <input
-                                    type="text"
-                                    placeholder="Walk-in Gamer"
-                                    value={customerNames[cellKey] || ''}
-                                    onChange={(e) =>
-                                      setCustomerNames((prev) => ({
-                                        ...prev,
-                                        [cellKey]: e.target.value,
-                                      }))
-                                    }
-                                    className="w-full px-2.5 py-1.5 rounded-xl bg-[#FFF7ED] border border-[#E2E8F0] text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] transition-colors"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-[10px] uppercase text-[#64748B] font-bold block mb-1">
-                                    PHONE NUMBER (OPTIONAL):
-                                  </label>
-                                  <input
-                                    type="tel"
-                                    placeholder="10-digit Phone"
-                                    maxLength={10}
-                                    value={customerPhones[cellKey] || ''}
-                                    onChange={(e) =>
-                                      setCustomerPhones((prev) => ({
-                                        ...prev,
-                                        [cellKey]: e.target.value.replace(/\D/g, '').slice(0, 10),
-                                      }))
-                                    }
-                                    className="w-full px-2.5 py-1.5 rounded-xl bg-[#FFF7ED] border border-[#E2E8F0] text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] font-mono transition-colors"
-                                  />
-                                </div>
-                              </div>
-
-                              {/* Duration Selector Buttons: [30 mins], [1 hr], [2 hrs] */}
-                              <div className="space-y-1.5">
-                                <div className="text-[10px] uppercase text-[#64748B] font-bold">
-                                  Select Duration:
+                            return (
+                              <div className="p-3.5 rounded-2xl bg-[#FFFFFF] border border-[#E2E8F0] shadow-xs space-y-3">
+                                {/* Station Availability Status */}
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-[#15803D] font-bold">
+                                    {isVrRow ? 'VR Rig Ready: READY' : 'Console Free: READY'}
+                                  </span>
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
+                                    <CheckCircle2 className="w-2.5 h-2.5" />
+                                    <span>READY</span>
+                                  </span>
                                 </div>
 
-                                <div className="grid grid-cols-3 gap-1.5">
-                                  {pricingTiers.map((tier) => {
-                                    const isSelected = selectedDuration === tier.duration_min;
-                                    return (
-                                      <button
-                                        key={tier.duration_min}
-                                        type="button"
-                                        onClick={() =>
-                                          setSelectedDurations((prev) => ({
-                                            ...prev,
-                                            [cellKey]: tier.duration_min,
-                                          }))
-                                        }
-                                        className={`py-2 px-1 rounded-xl text-center transition-all font-display border cursor-pointer ${
-                                          isSelected
-                                            ? 'bg-[#EA580C] border-[#EA580C] text-[#FFFFFF] shadow-sm'
-                                            : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
-                                        }`}
-                                      >
-                                        <div className={`text-[11px] font-bold tracking-tight ${isSelected ? 'text-white' : 'text-[#0F172A]'}`}>
-                                          {tier.label || `${tier.duration_min}m`}
-                                        </div>
-                                        <div className={`text-[10px] font-bold ${isSelected ? 'text-white/90' : 'text-[#172554]'}`}>
-                                          ₹{Number(tier.price).toFixed(0)}
-                                        </div>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-
-                              {/* "Start [Mode]" Action Button */}
-                              <button
-                                disabled={isInitiating}
-                                onClick={() =>
-                                  startSessionMutation.mutate({
-                                    stationId: effectiveStationName,
-                                    modeId: mode.id,
-                                    durationMinutes: selectedDuration,
-                                    modeName: mode.name,
-                                    customerName: customerNames[cellKey],
-                                    customerPhone: customerPhones[cellKey],
-                                  })
-                                }
-                                className="w-full py-2.5 px-3 rounded-xl bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-98 cursor-pointer disabled:opacity-50"
-                              >
-                                {isInitiating ? (
-                                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                ) : (
-                                  <>
-                                    <Play className="w-3.5 h-3.5 fill-current" />
-                                    <span>▶ START {mode.name.toUpperCase()}</span>
-                                  </>
+                                {/* Upcoming Advance Booking Amber Badge within 60 mins */}
+                                {hasUpcomingSoon && nextBookingInfo && (
+                                  <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#FFFBEB] border border-[#FDE68A] text-[#B45309] text-[11px] font-bold font-mono-code animate-in fade-in">
+                                    <CalendarClock className="w-3.5 h-3.5 text-[#D97706] shrink-0" />
+                                    <span>
+                                      Upcoming: Booking at {formatTime12h(nextBookingInfo.booking.startTime)} ({nextBookingInfo.booking.sessionMode})
+                                    </span>
+                                  </div>
                                 )}
-                              </button>
-                            </div>
-                          )}
+
+                                {/* Customer Name & Phone Number Inputs */}
+                                <div className="space-y-2">
+                                  <div>
+                                    <label className="text-[10px] uppercase text-[#64748B] font-bold block mb-1">
+                                      CUSTOMER NAME:
+                                    </label>
+                                    <input
+                                      type="text"
+                                      placeholder="Walk-in Gamer"
+                                      value={customerNames[cellKey] || ''}
+                                      onChange={(e) =>
+                                        setCustomerNames((prev) => ({
+                                          ...prev,
+                                          [cellKey]: e.target.value,
+                                        }))
+                                      }
+                                      className="w-full px-2.5 py-1.5 rounded-xl bg-[#FFF7ED] border border-[#E2E8F0] text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] transition-colors"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] uppercase text-[#64748B] font-bold block mb-1">
+                                      PHONE NUMBER (OPTIONAL):
+                                    </label>
+                                    <input
+                                      type="tel"
+                                      placeholder="10-digit Phone"
+                                      maxLength={10}
+                                      value={customerPhones[cellKey] || ''}
+                                      onChange={(e) =>
+                                        setCustomerPhones((prev) => ({
+                                          ...prev,
+                                          [cellKey]: e.target.value.replace(/\D/g, '').slice(0, 10),
+                                        }))
+                                      }
+                                      className="w-full px-2.5 py-1.5 rounded-xl bg-[#FFF7ED] border border-[#E2E8F0] text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] font-mono transition-colors"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Duration Selector Buttons with Overlap Capping */}
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center justify-between text-[10px] uppercase text-[#64748B] font-bold">
+                                    <span>Select Duration:</span>
+                                    {nextBookingInfo && (
+                                      <span className="text-[#EA580C] font-mono-code font-semibold lowercase">
+                                        max {Math.max(0, nextBookingInfo.diffMinutes)}m free
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="grid grid-cols-3 gap-1.5">
+                                    {pricingTiers.map((tier) => {
+                                      const isSelected = selectedDuration === tier.duration_min;
+                                      const tierCheck = validateWalkInDuration(effectiveStationName, tier.duration_min, bookings, new Date(currentTime));
+                                      const isCapped = !tierCheck.allowed;
+
+                                      return (
+                                        <button
+                                          key={tier.duration_min}
+                                          type="button"
+                                          onClick={() =>
+                                            setSelectedDurations((prev) => ({
+                                              ...prev,
+                                              [cellKey]: tier.duration_min,
+                                            }))
+                                          }
+                                          className={`py-2 px-1 rounded-xl text-center transition-all font-display border cursor-pointer relative ${
+                                            isSelected
+                                              ? 'bg-[#EA580C] border-[#EA580C] text-[#FFFFFF] shadow-sm'
+                                              : isCapped
+                                              ? 'bg-[#FEF2F2] border-[#FCA5A5] text-[#991B1B] hover:border-[#F87171]'
+                                              : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
+                                          }`}
+                                        >
+                                          <div className={`text-[11px] font-bold tracking-tight ${isSelected ? 'text-white' : isCapped ? 'text-[#991B1B]' : 'text-[#0F172A]'}`}>
+                                            {tier.label || `${tier.duration_min}m`}
+                                          </div>
+                                          <div className={`text-[10px] font-bold ${isSelected ? 'text-white/90' : isCapped ? 'text-[#DC2626]' : 'text-[#172554]'}`}>
+                                            ₹{Number(tier.price).toFixed(0)}
+                                          </div>
+                                          {isCapped && (
+                                            <span className="text-[8px] uppercase tracking-wider font-bold block text-[#DC2626]">
+                                              Exceeds
+                                            </span>
+                                          )}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
+                                {/* Collision Warning Banner */}
+                                {!durationValidation.allowed && (
+                                  <div className="p-2.5 rounded-xl bg-[#FEF2F2] border border-[#FECACA] text-[#B91C1C] text-[11px] font-semibold flex items-start gap-2 animate-in fade-in">
+                                    <AlertTriangle className="w-4 h-4 text-[#B91C1C] shrink-0 mt-0.5" />
+                                    <span>{durationValidation.reason}</span>
+                                  </div>
+                                )}
+
+                                {/* "Start [Mode]" Action Button (Disabled if Collision) */}
+                                <button
+                                  disabled={isInitiating || !durationValidation.allowed}
+                                  onClick={() =>
+                                    startSessionMutation.mutate({
+                                      stationId: effectiveStationName,
+                                      modeId: mode.id,
+                                      durationMinutes: selectedDuration,
+                                      modeName: mode.name,
+                                      customerName: customerNames[cellKey],
+                                      customerPhone: customerPhones[cellKey],
+                                    })
+                                  }
+                                  className={`w-full py-2.5 px-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-98 cursor-pointer disabled:opacity-50 ${
+                                    !durationValidation.allowed
+                                      ? 'bg-[#94A3B8] text-white cursor-not-allowed'
+                                      : 'bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF]'
+                                  }`}
+                                >
+                                  {isInitiating ? (
+                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                  ) : !durationValidation.allowed ? (
+                                    <span>Overlap Blocked</span>
+                                  ) : (
+                                    <>
+                                      <Play className="w-3.5 h-3.5 fill-current" />
+                                      <span>▶ START {mode.name.toUpperCase()}</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            );
+                          })()}
 
                           {/* ========================================================================= */}
                           {/* STATE C: OCCUPIED ELSEWHERE */}
@@ -1321,6 +1490,370 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                   </tr>
                 );
               })}
+
+              {/* ========================================================================= */}
+              {/* DEDICATED ROW: WALK-IN CAFE (DINE-IN / DINE-OUT) */}
+              {/* ========================================================================= */}
+              {(() => {
+                const cafeSessions = Array.isArray(matrixData?.cafe_sessions)
+                  ? matrixData.cafe_sessions
+                  : (matrixData?.cafe_session ? [matrixData.cafe_session] : []);
+                const allCafeInSeatOrders = getStationInSeatOrders('Walk-in CAFE');
+
+                // Customer grouping map
+                interface CafeCustomerData {
+                  name: string;
+                  orders: typeof allCafeInSeatOrders;
+                  backendSession?: MatrixSession;
+                  totalBill: number;
+                  totalItems: number;
+                  mode: string;
+                }
+
+                const customerMap = new Map<string, CafeCustomerData>();
+
+                // 1. Group in-seat orders by customerName
+                allCafeInSeatOrders.forEach((o) => {
+                  const cName = o.customerName?.trim() || 'Walk-in Guest';
+                  if (!customerMap.has(cName)) {
+                    customerMap.set(cName, {
+                      name: cName,
+                      orders: [],
+                      backendSession: undefined,
+                      totalBill: 0,
+                      totalItems: 0,
+                      mode: o.mode || 'Dine-In',
+                    });
+                  }
+                  const entry = customerMap.get(cName)!;
+                  entry.orders.push(o);
+                  entry.totalBill += Number(o.totalAmount || 0);
+                  entry.totalItems += o.items?.reduce((isum, item) => isum + (item.qty || 1), 0) || 0;
+                  if (o.mode) entry.mode = o.mode;
+                });
+
+                // 2. Merge backend cafe sessions
+                cafeSessions.forEach((s) => {
+                  const cName = s.customer_name?.trim() || 'Walk-in Guest';
+                  const sBill = Number(s.running_total || s.orders_charge || 0);
+                  if (!customerMap.has(cName)) {
+                    customerMap.set(cName, {
+                      name: cName,
+                      orders: [],
+                      backendSession: s,
+                      totalBill: sBill,
+                      totalItems: s.active_orders_count || 0,
+                      mode: s.mode_name || 'Dine-In',
+                    });
+                  } else {
+                    const entry = customerMap.get(cName)!;
+                    entry.backendSession = s;
+                    if (sBill > entry.totalBill) {
+                      entry.totalBill = sBill;
+                    }
+                  }
+                });
+
+                const customerEntries = Array.from(customerMap.values());
+                const isCafeActive = customerEntries.length > 0;
+
+                // Active customer selection
+                const activeCustName = (
+                  selectedCafeCustomer && customerMap.has(selectedCafeCustomer)
+                    ? selectedCafeCustomer
+                    : customerEntries[0]?.name
+                ) || null;
+
+                const activeCust = activeCustName ? customerMap.get(activeCustName) : null;
+
+                // Build session adapter for the selected customer
+                const activeSessionForSelected: MatrixSession = activeCust?.backendSession || {
+                  session_id: activeCust?.backendSession?.session_id || `cafe-walkin-${encodeURIComponent(activeCust?.name || 'guest')}`,
+                  station_id: 'Walk-in CAFE',
+                  mode: 'dine-in',
+                  mode_name: activeCust?.mode || 'Dine-In',
+                  customer_name: activeCust?.name || 'Walk-in Guest',
+                  customer_phone: activeCust?.backendSession?.customer_phone || null,
+                  started_at: activeCust?.backendSession?.started_at || new Date().toISOString(),
+                  elapsed_minutes: 0,
+                  remaining_minutes: 0,
+                  allocated_minutes: 0,
+                  time_charge: 0,
+                  orders_charge: activeCust?.totalBill || 0,
+                  running_total: activeCust?.totalBill || 0,
+                  active_orders_count: activeCust?.orders.length || 0,
+                  hourly_rate: 0,
+                  pricing_tiers: [],
+                };
+
+                const blankNewGuestSession: MatrixSession = {
+                  session_id: `cafe-walkin-new-${Date.now()}`,
+                  station_id: 'Walk-in CAFE',
+                  mode: 'dine-in',
+                  mode_name: 'Dine-In',
+                  customer_name: 'Walk-in Cafe Guest',
+                  customer_phone: null,
+                  started_at: new Date().toISOString(),
+                  elapsed_minutes: 0,
+                  remaining_minutes: 0,
+                  allocated_minutes: 0,
+                  time_charge: 0,
+                  orders_charge: 0,
+                  running_total: 0,
+                  active_orders_count: 0,
+                  hourly_rate: 0,
+                  pricing_tiers: [],
+                };
+
+                return (
+                  <tr className="hover:bg-[#F8FAFC]/50 transition-colors border-t-2 border-[#FED7AA]">
+                    {/* Mode Header Cell (Left Column) */}
+                    <td className="p-3.5 sm:p-5 align-top bg-[#FFFBF5] sticky left-0 z-10 border-r border-[#FED7AA] shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-[#FFF7ED] border border-[#FED7AA] flex items-center justify-center shrink-0 shadow-xs text-[#EA580C]">
+                          <Coffee className="w-5 h-5 text-[#EA580C]" />
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <h4 className="font-display font-black text-sm text-[#0F172A] tracking-tight">
+                              Walk-in CAFE
+                            </h4>
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-mono-code font-bold uppercase bg-[#FEF3C7] text-[#B45309] border border-[#FDE68A]">
+                              Cafe Only
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-bold uppercase text-[#64748B] block">
+                            Dine-In / Dine-Out
+                          </span>
+                          <span className="text-[10px] font-mono-code text-[#15803D] font-bold block">
+                            ₹0 Gaming Fee
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* Dedicated Walk-in Cafe Cell (Spans all station columns) */}
+                    <td
+                      colSpan={stations.length}
+                      className="p-3.5 sm:p-5 align-top transition-all duration-300 relative bg-[#FFFFFF]"
+                    >
+                      {isCafeActive && activeCust ? (
+                        /* STATE A: ACTIVE CAFE CUSTOMERS PRESENT */
+                        <div className="p-4 sm:p-5 rounded-2xl bg-[#FFFFFF] border border-[#FED7AA] shadow-sm relative overflow-hidden space-y-4">
+                          <div className="absolute top-0 left-0 right-0 h-1 bg-[#EA580C]" />
+
+                          {/* Customer Selection Tabs & Add New Guest */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#FED7AA]/60">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider font-mono-code mr-1">
+                                Guests ({customerEntries.length}):
+                              </span>
+                              {customerEntries.map((c) => {
+                                const isSelected = c.name === activeCustName;
+                                return (
+                                  <button
+                                    key={c.name}
+                                    type="button"
+                                    onClick={() => setSelectedCafeCustomer(c.name)}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                                      isSelected
+                                        ? 'bg-[#EA580C] text-white border-[#EA580C] shadow-xs'
+                                        : 'bg-[#FFF7ED] text-[#C2410C] border-[#FED7AA] hover:bg-[#FFEDD5]'
+                                    }`}
+                                  >
+                                    <span>👤 {c.name}</span>
+                                    <span
+                                      className={`text-[10px] font-mono-code font-bold px-1.5 py-0.5 rounded ${
+                                        isSelected ? 'bg-white/20 text-white' : 'bg-[#FED7AA]/60 text-[#9A3412]'
+                                      }`}
+                                    >
+                                      ₹{c.totalBill.toFixed(2)}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => onOrderFood(blankNewGuestSession, 'Walk-in CAFE')}
+                              className="py-1.5 px-3 rounded-xl bg-[#F8FAFC] hover:bg-[#F1F5F9] border border-[#E2E8F0] text-[#334155] font-bold text-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Plus className="w-3.5 h-3.5 text-[#EA580C]" />
+                              <span>+ New Guest Tab</span>
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
+                            {/* 1. Guest & Dining Info for SELECTED Customer */}
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-bold font-mono-code uppercase bg-[#FFF7ED] text-[#EA580C] border border-[#FED7AA]">
+                                  <Radio className="w-3 h-3 animate-pulse text-[#EA580C]" />
+                                  <span>Selected Guest Tab</span>
+                                </span>
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono-code font-bold bg-[#EFF6FF] text-[#1E40AF] border border-[#BFDBFE]">
+                                  {activeCust.mode}
+                                </span>
+                              </div>
+
+                              <div>
+                                <span className="text-base font-black text-[#0F172A] font-display block">
+                                  {activeCust.name}
+                                </span>
+                                <span className="text-xs text-[#64748B] font-mono-code flex items-center gap-1.5 mt-0.5 font-medium">
+                                  <span>Station: Walk-in CAFE</span>
+                                  <span>•</span>
+                                  <span>{activeCust.totalItems} item(s)</span>
+                                </span>
+                              </div>
+
+                              <div className="text-[11px] text-[#64748B] font-mono-code">
+                                Status: <strong className="text-[#EA580C] uppercase">{activeCust.orders.length} Order(s) in Progress</strong>
+                              </div>
+                            </div>
+
+                            {/* 2. Itemized Food Orders Breakdown for SELECTED Customer ONLY */}
+                            <div className="p-3 rounded-xl bg-[#FFF7ED] border border-[#FED7AA]/70 space-y-2 max-h-48 overflow-y-auto pr-1">
+                              <div className="flex items-center justify-between text-xs pb-1 border-b border-[#FED7AA] font-bold text-[#EA580C]">
+                                <div className="flex items-center gap-1.5">
+                                  <UtensilsCrossed className="w-3.5 h-3.5" />
+                                  <span>Orders for {activeCust.name} ({activeCust.orders.length})</span>
+                                </div>
+                                <span className="text-[10px] font-mono-code">
+                                  ₹{activeCust.totalBill.toFixed(2)}
+                                </span>
+                              </div>
+
+                              {activeCust.orders.length > 0 ? (
+                                <div className="space-y-2">
+                                  {activeCust.orders.map((order) => (
+                                    <div
+                                      key={order.orderId}
+                                      className="p-2 rounded-lg bg-[#FFFFFF] border border-[#FED7AA]/50 space-y-1 text-xs"
+                                    >
+                                      <div className="flex items-center justify-between text-[11px]">
+                                        <div className="flex items-center gap-1.5 font-semibold text-[#0F172A]">
+                                          <span>{order.customerName}</span>
+                                          <span className="text-[10px] text-[#EA580C] px-1.5 py-0.5 rounded bg-[#FFF7ED] border border-[#FED7AA]">
+                                            {order.mode || 'Dine-In'}
+                                          </span>
+                                        </div>
+                                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                          order.status === 'delivered'
+                                            ? 'bg-[#DCFCE7] text-[#15803D]'
+                                            : order.status === 'preparing'
+                                            ? 'bg-[#EFF6FF] text-[#1D4ED8]'
+                                            : 'bg-[#FEF3C7] text-[#B45309]'
+                                        }`}>
+                                          {order.status}
+                                        </span>
+                                      </div>
+
+                                      <div className="space-y-0.5 text-[11px] text-[#475569]">
+                                        {order.items?.map((item, idx) => (
+                                          <div key={idx} className="flex justify-between items-center">
+                                            <span>{item.name} <strong className="text-[#EA580C]">x{item.qty}</strong></span>
+                                            <span className="font-mono-code font-medium">₹{((item.price || 0) * (item.qty || 1)).toFixed(2)}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+
+                                      <div className="flex items-center justify-between pt-1 border-t border-[#FED7AA]/30 text-[10px]">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const nextStatus = order.status === 'pending' ? 'preparing' : 'delivered';
+                                            updateInSeatOrderStatus(order.orderId, nextStatus);
+                                          }}
+                                          className="text-[#EA580C] hover:text-[#C2410C] font-bold cursor-pointer underline"
+                                        >
+                                          Advance: {order.status === 'pending' ? 'Mark Preparing' : 'Mark Delivered'}
+                                        </button>
+                                        <span className="font-bold text-[#15803D] font-mono-code">
+                                          ₹{Number(order.totalAmount || 0).toFixed(2)}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-[11px] text-[#64748B] italic text-center py-2">
+                                  Orders attached to {activeCust.name}.
+                                </p>
+                              )}
+                            </div>
+
+                            {/* 3. Financials & Settle Invoice for SELECTED Customer ONLY */}
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0]">
+                                <div>
+                                  <span className="text-xs text-[#64748B] font-medium block">
+                                    {activeCust.name}&apos;s Bill:
+                                  </span>
+                                  <span className="text-[10px] text-[#15803D] font-bold">Zero Console Charge</span>
+                                </div>
+                                <span className="text-xl font-black font-mono-code text-[#172554]">
+                                  ₹{activeCust.totalBill.toFixed(2)}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => onOrderFood(activeSessionForSelected, 'Walk-in CAFE')}
+                                  className="flex-1 py-2.5 px-3 rounded-xl bg-[#FFF7ED] hover:bg-[#FFEDD5] border border-[#FED7AA] text-[#EA580C] font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                                >
+                                  <UtensilsCrossed className="w-3.5 h-3.5 text-[#EA580C]" />
+                                  <span>Order Food</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => onCheckout(activeSessionForSelected, 'Walk-in CAFE')}
+                                  className="flex-1 py-2.5 px-3 rounded-xl bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                                >
+                                  <Receipt className="w-3.5 h-3.5 text-white" />
+                                  <span>Settle Invoice</span>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        /* STATE B: WALK-IN CAFE READY */
+                        <div className="p-4 sm:p-5 rounded-2xl bg-[#FFFFFF] border border-dashed border-[#FED7AA] shadow-sm relative overflow-hidden space-y-3">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-bold font-mono-code uppercase bg-[#FEF3C7] text-[#B45309] border border-[#FDE68A]">
+                                  <Coffee className="w-3 h-3 text-[#EA580C]" />
+                                  <span>Walk-in Cafe: READY</span>
+                                </span>
+                                <span className="px-2 py-0.5 rounded text-[10px] font-mono-code bg-[#EFF6FF] text-[#1E3A8A] border border-[#BFDBFE] font-bold">
+                                  Dine-In &amp; Takeaway
+                                </span>
+                              </div>
+                              <p className="text-xs text-[#64748B]">
+                                Dedicated counter service for customers visiting purely for the cafe without console gaming.
+                              </p>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => onOrderFood(blankNewGuestSession, 'Walk-in CAFE')}
+                              className="py-2.5 px-4 rounded-xl bg-[#EA580C] hover:bg-[#C2410C] text-[#FFFFFF] font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs shrink-0"
+                            >
+                              <UtensilsCrossed className="w-4 h-4 text-white" />
+                              <span>Order Food (New Guest)</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })()}
             </tbody>
           </table>
         </div>

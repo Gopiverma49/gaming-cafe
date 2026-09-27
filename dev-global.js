@@ -14,15 +14,15 @@
  *  6. Prints the frontend public URL + renders ASCII QR code in the terminal
  */
 
-import { spawn }   from 'child_process';
-import fs          from 'fs';
-import path        from 'path';
-import net         from 'net';
+import { spawn } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import net from 'net';
 import { fileURLToPath } from 'url';
-import qrcode      from 'qrcode-terminal';
+import qrcode from 'qrcode-terminal';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname  = path.dirname(__filename);
+const __dirname = path.dirname(__filename);
 const backendDir = path.join(__dirname, 'backend');
 const frontendEnvLocal = path.join(__dirname, 'frontend', '.env.local');
 
@@ -34,9 +34,9 @@ function checkPortOpen(host, port, timeoutMs = 500) {
   return new Promise((resolve) => {
     const socket = new net.Socket();
     socket.setTimeout(timeoutMs);
-    socket.on('connect', () => { socket.destroy(); resolve(true);  });
+    socket.on('connect', () => { socket.destroy(); resolve(true); });
     socket.on('timeout', () => { socket.destroy(); resolve(false); });
-    socket.on('error',   () => { socket.destroy(); resolve(false); });
+    socket.on('error', () => { socket.destroy(); resolve(false); });
     socket.connect(port, host);
   });
 }
@@ -55,7 +55,7 @@ function findCloudflared() {
     path.join(process.env.USERPROFILE || '', 'scoop', 'shims', 'cloudflared.exe'),
     // WinGet packages dir
     path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Packages',
-              'Cloudflare.cloudflared_Microsoft.Winget.Source_8wekyb3d8bbwe', 'cloudflared.exe'),
+      'Cloudflare.cloudflared_Microsoft.Winget.Source_8wekyb3d8bbwe', 'cloudflared.exe'),
     // macOS / Linux homebrew
     '/usr/local/bin/cloudflared',
     '/opt/homebrew/bin/cloudflared',
@@ -63,7 +63,7 @@ function findCloudflared() {
   for (const c of candidates) {
     try {
       if (fs.existsSync(c)) return c;
-    } catch {}
+    } catch { }
   }
   return 'cloudflared'; // fall back to PATH
 }
@@ -121,9 +121,9 @@ async function main() {
 
   // ── 1. Detect Python / venv ──────────────────────────────────────────────
   let pythonCmd = 'python';
-  const winVenv  = path.join(backendDir, '.venv', 'Scripts', 'python.exe');
+  const winVenv = path.join(backendDir, '.venv', 'Scripts', 'python.exe');
   const unixVenv = path.join(backendDir, '.venv', 'bin', 'python');
-  if (fs.existsSync(winVenv))       pythonCmd = winVenv;
+  if (fs.existsSync(winVenv)) pythonCmd = winVenv;
   else if (fs.existsSync(unixVenv)) pythonCmd = unixVenv;
 
   // ── 2. Decide DATABASE_URL (SQLite fallback if no Postgres) ──────────────
@@ -168,7 +168,7 @@ async function main() {
   }
 
   const backendPublicUrl = backendTunnel.url;
-  const wsPublicUrl      = backendPublicUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
+  const wsPublicUrl = backendPublicUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
   console.log(`  \x1b[32m  ✓ Backend public URL: \x1b[4m${backendPublicUrl}\x1b[0m`);
 
   // ── 5. Write frontend/.env.local so Vite uses the public backend URL ──────
@@ -238,20 +238,20 @@ async function main() {
   function cleanup() {
     console.log('\n\x1b[90m[GLOBAL] Shutting down tunnels and servers …\x1b[0m');
     // Clean up .env.local so local dev isn't confused next time
-    try { fs.unlinkSync(frontendEnvLocal); } catch {}
-    try { backendTunnel.proc.kill('SIGTERM');  } catch {}
-    try { frontendTunnel.proc.kill('SIGTERM'); } catch {}
-    try { frontendProc.kill('SIGTERM');        } catch {}
-    try { backendProc.kill('SIGTERM');         } catch {}
+    try { fs.unlinkSync(frontendEnvLocal); } catch { }
+    try { backendTunnel.proc.kill('SIGTERM'); } catch { }
+    try { frontendTunnel.proc.kill('SIGTERM'); } catch { }
+    try { frontendProc.kill('SIGTERM'); } catch { }
+    try { backendProc.kill('SIGTERM'); } catch { }
     process.exit(0);
   }
 
-  process.on('SIGINT',  cleanup);
+  process.on('SIGINT', cleanup);
   process.on('SIGTERM', cleanup);
-  process.on('exit',    cleanup);
+  process.on('exit', cleanup);
 
   // Block forever
-  await new Promise(() => {});
+  await new Promise(() => { });
 }
 
 main().catch((err) => {

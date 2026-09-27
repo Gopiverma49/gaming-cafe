@@ -137,10 +137,14 @@ export const AdminOrdersDispatcher: React.FC = () => {
       } else {
         lounge.updateInSeatOrderStatus(variables.orderId, variables.status);
       }
-      queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
-      queryClient.invalidateQueries({ queryKey: ['station-matrix'] });
-      queryClient.invalidateQueries({ queryKey: ['stations-live'] });
+      queryClient.refetchQueries({ queryKey: ['kitchen-orders'] });
+      queryClient.refetchQueries({ queryKey: ['station-matrix'] });
+      queryClient.refetchQueries({ queryKey: ['stations-live'] });
+      queryClient.refetchQueries({ queryKey: ['customer-sessions'] });
       queryClient.invalidateQueries({ queryKey: ['admin-menu'] });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('vanya_sync_invalidate', { detail: { type: 'ORDERS_SYNC' } }));
+      }
     },
   });
 
@@ -191,7 +195,9 @@ export const AdminOrdersDispatcher: React.FC = () => {
       ) {
         refetchOrders();
         queryClient.refetchQueries({ queryKey: ['kitchen-orders'] });
+        queryClient.refetchQueries({ queryKey: ['station-matrix'] });
         queryClient.refetchQueries({ queryKey: ['stations-live'] });
+        queryClient.refetchQueries({ queryKey: ['customer-sessions'] });
         queryClient.refetchQueries({ queryKey: ['admin-menu'] });
       }
     },

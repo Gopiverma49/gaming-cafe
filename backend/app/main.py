@@ -8,18 +8,18 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import engine, Base, async_session_factory
-from app.core.security import get_password_hash
-from app.models.entities import Station, Session, User, PhysicalDevice
+from app.models.entities import Station, Session, User, PhysicalDevice, MenuItem
 from app.models.enums import StationStatus, SessionStatus
 from app.api.deps import IdempotencyMiddleware, get_db, get_optional_auth_user
 from app.api.v1.admin_routes import router as admin_router
 from app.api.v1.customer_routes import router as customer_router
 from app.api.v1.auth_routes import router as auth_router
+from app.api.v1.booking_routes import router as booking_router
 from app.schemas.api_schemas import CategoryAvailabilityResponse, SessionStartRequest, SessionResponse, StationMatrixResponse
 from app.services.session_service import get_fleet_categories, start_category_session, get_fleet_matrix
 from app.services.ws_notifier import manager
@@ -35,7 +35,6 @@ logger = logging.getLogger("main")
 async def run_schema_migrations():
     """Safe schema column additions for local SQLite / PostgreSQL without wiping or seeding."""
     async with async_session_factory() as db:
-        from sqlalchemy import text
         migration_stmts = [
             "ALTER TABLE stations ADD COLUMN pricing_tiers JSON",
             "ALTER TABLE menu_items ADD COLUMN stock INTEGER DEFAULT 50",
@@ -51,6 +50,22 @@ async def run_schema_migrations():
             "ALTER TABLE sessions ADD COLUMN console_room VARCHAR(50)",
             "ALTER TABLE orders ADD COLUMN customer_name VARCHAR(100)",
             "DROP INDEX IF EXISTS uq_active_station_session",
+            "CREATE TABLE IF NOT EXISTS advance_bookings ("
+            "  id VARCHAR(50) PRIMARY KEY,"
+            "  customer_name VARCHAR(100) NOT NULL,"
+            "  phone_number VARCHAR(20),"
+            "  station_id VARCHAR(50) NOT NULL,"
+            "  session_mode VARCHAR(50) DEFAULT 'Solo' NOT NULL,"
+            "  booking_date VARCHAR(20) NOT NULL,"
+            "  start_time VARCHAR(10) NOT NULL,"
+            "  duration_minutes INTEGER DEFAULT 60 NOT NULL,"
+            "  end_time VARCHAR(10) NOT NULL,"
+            "  advance_paid NUMERIC(10, 2) DEFAULT 0.00 NOT NULL,"
+            "  total_amount NUMERIC(10, 2) DEFAULT 0.00 NOT NULL,"
+            "  remaining_balance NUMERIC(10, 2) DEFAULT 0.00 NOT NULL,"
+            "  status VARCHAR(20) DEFAULT 'CONFIRMED' NOT NULL,"
+            "  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL"
+            ")",
         ]
         for stmt_str in migration_stmts:
             try:
@@ -133,6 +148,12 @@ async def ensure_canonical_domain_hierarchy():
                     {"duration_min": 60, "price": 300, "label": "1 hr"},
                     {"duration_min": 120, "price": 520, "label": "2 hrs"},
                 ],
+            },
+            {
+                "name": "Walk-in CAFE",
+                "tier": "CAFE",
+                "hourly_rate": Decimal("0.00"),
+                "pricing_tiers": [],
             },
         ]
 
@@ -219,6 +240,24 @@ async def ensure_canonical_domain_hierarchy():
                 canon_st.status = StationStatus.OCCUPIED.value
             else:
                 canon_st.status = StationStatus.AVAILABLE.value
+
+        # Auto-seed initial menu items if menu table is empty (e.g. brand new database)
+        menu_exists = (await db.execute(select(MenuItem).limit(1))).scalar_one_or_none()
+        if not menu_exists:
+            logger.info("Initializing default cafe menu items in database...")
+            default_menu = [
+                {"name": "Cold Coffee Frappe", "category": "Drinks", "price": Decimal("120.00"), "stock": 50},
+                {"name": "Loaded Nachos Supreme", "category": "Snacks", "price": Decimal("180.00"), "stock": 50},
+                {"name": "Peri-Peri French Fries", "category": "Snacks", "price": Decimal("110.00"), "stock": 50},
+                {"name": "Red Bull Energy Can", "category": "Drinks", "price": Decimal("160.00"), "stock": 50},
+                {"name": "Gourmet Veg Burger", "category": "Meals", "price": Decimal("150.00"), "stock": 50},
+                {"name": "Crispy Chicken Burger", "category": "Meals", "price": Decimal("190.00"), "stock": 50},
+                {"name": 'Paneer Tikka Pizza (7")', "category": "Meals", "price": Decimal("220.00"), "stock": 50},
+                {"name": "Iced Lemon Mint Tea", "category": "Drinks", "price": Decimal("90.00"), "stock": 50},
+                {"name": "Gamer Combo: Burger + Fries + Cola", "category": "Combos", "price": Decimal("270.00"), "stock": 50},
+            ]
+            for itm in default_menu:
+                db.add(MenuItem(**itm, min_stock_alert=10, is_available=True))
 
         await db.commit()
         logger.info("Canonical domain hierarchy & device registry successfully synchronized.")
@@ -333,6 +372,7 @@ app.add_middleware(IdempotencyMiddleware)
 app.include_router(auth_router, prefix=settings.API_V1_STR)
 app.include_router(admin_router, prefix=settings.API_V1_STR)
 app.include_router(customer_router, prefix=settings.API_V1_STR)
+app.include_router(booking_router, prefix=settings.API_V1_STR)
 
 
 @app.get("/api/v1/fleet/categories", response_model=List[CategoryAvailabilityResponse], tags=["Fleet Categories"])

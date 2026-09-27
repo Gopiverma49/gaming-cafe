@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import get_db, verify_customer_token
 from app.core.config import settings
 from app.core.security import create_customer_token
-from app.models.entities import Session, MenuItem, Order, OrderItem, Station, PhysicalDevice
+from app.models.entities import Session, Station, MenuItem, Order, OrderItem, PhysicalDevice
 from app.models.enums import OrderStatus, SessionStatus, StationStatus
 from app.schemas.api_schemas import (
     CustomerDeskSession,
@@ -259,52 +259,103 @@ async def place_in_seat_order(
     Automatically assigns order to the station's active session if present.
     """
     raw_mode = (getattr(payload, "mode", None) or "solo").strip().lower()
-    if raw_mode in ("car", "car_sim", "car simulator", "carsimulator"):
-        target_mode = "car_sim"
-    elif raw_mode in ("multi", "multiplayer", "multi-player"):
-        target_mode = "multiplayer"
-    elif raw_mode in ("vr", "vr_sim", "vr simulator"):
-        target_mode = "vr_sim"
-    else:
-        target_mode = raw_mode
-
-    # Car simulator is strictly fixed to PS3
-    if target_mode == "car_sim":
-        st_name = "PS3"
-    else:
-        st_name = payload.stationId.strip().upper()
-
-    if st_name not in ("PS1", "PS2", "PS3"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Substation must be strictly restricted to PS1, PS2, or PS3.",
-        )
-
-    # 1. Match active session on this device/substation (e.g. PS1, PS2, PS3)
-    sess_stmt = (
-        select(Session)
-        .where(
-            Session.status == SessionStatus.ACTIVE.value,
-            or_(
-                func.upper(Session.device_name) == st_name,
-                func.upper(Session.console_room) == st_name,
-            ),
-        )
-        .options(selectinload(Session.station))
+    raw_st = (getattr(payload, "stationId", None) or "").strip().upper()
+    is_cafe = (
+        "CAFE" in raw_st
+        or "DINE" in raw_st
+        or raw_mode in ("dine-in", "dinein", "dine_in", "dine-out", "dineout", "dine_out", "takeaway", "cafe")
     )
-    cafe_session = (await db.execute(sess_stmt)).scalars().first()
 
-    # 2. If no active session exists on this station, create one cleanly using start_category_session
-    # so that the session gets the exact defined rates/tiers for the chosen mode (Solo: 180, Multiplayer: 220, Car: 250)
-    # and gets dynamically allocated to the chosen matrix cell (Mode row + Station column).
-    if not cafe_session:
-        cafe_session = await start_category_session(
-            db=db,
-            category_id=target_mode,
-            device_id=st_name,
-            duration_minutes=60,
-            customer_name=payload.customerName,
+    if is_cafe:
+        st_name = "Walk-in CAFE"
+        target_mode = "dine-in"
+        cust_norm = payload.customerName.strip()
+        # 1. Match active session on Walk-in CAFE for THIS specific customer
+        sess_stmt = (
+            select(Session)
+            .where(
+                Session.status == SessionStatus.ACTIVE.value,
+                func.upper(Session.device_name) == "WALK-IN CAFE",
+                func.upper(Session.customer_name) == func.upper(cust_norm),
+            )
+            .options(selectinload(Session.station))
         )
+        cafe_session = (await db.execute(sess_stmt)).scalars().first()
+        if not cafe_session:
+            st_stmt = select(Station).where(func.upper(Station.name) == "WALK-IN CAFE")
+            cafe_st = (await db.execute(st_stmt)).scalar_one_or_none()
+            if not cafe_st:
+                cafe_st = Station(
+                    name="Walk-in CAFE",
+                    tier="CAFE",
+                    hourly_rate=Decimal("0.00"),
+                    pricing_tiers=[],
+                    status=StationStatus.AVAILABLE.value,
+                )
+                db.add(cafe_st)
+                await db.flush()
+
+            cafe_session = Session(
+                station_id=cafe_st.id,
+                station_name="Walk-in CAFE",
+                device_name="Walk-in CAFE",
+                console_room="Walk-in CAFE",
+                category_id=target_mode,
+                customer_name=payload.customerName,
+                status=SessionStatus.ACTIVE.value,
+                started_at=datetime.now(timezone.utc),
+                allocated_minutes=0,
+                tier_price=Decimal("0.00"),
+            )
+            db.add(cafe_session)
+            await db.flush()
+    else:
+        if raw_mode in ("car", "car_sim", "car simulator", "carsimulator"):
+            target_mode = "car_sim"
+        elif raw_mode in ("multi", "multiplayer", "multi-player"):
+            target_mode = "multiplayer"
+        elif raw_mode in ("vr", "vr_sim", "vr simulator"):
+            target_mode = "vr_sim"
+        else:
+            target_mode = raw_mode
+
+        # Car simulator is strictly fixed to PS3
+        if target_mode == "car_sim":
+            st_name = "PS3"
+        else:
+            st_name = payload.stationId.strip().upper()
+
+        if st_name not in ("PS1", "PS2", "PS3"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Substation must be strictly restricted to PS1, PS2, or PS3.",
+            )
+
+        # 1. Match active session on this device/substation (e.g. PS1, PS2, PS3)
+        sess_stmt = (
+            select(Session)
+            .where(
+                Session.status == SessionStatus.ACTIVE.value,
+                or_(
+                    func.upper(Session.device_name) == st_name,
+                    func.upper(Session.console_room) == st_name,
+                ),
+            )
+            .options(selectinload(Session.station))
+        )
+        cafe_session = (await db.execute(sess_stmt)).scalars().first()
+
+        # 2. If no active session exists on this station, create one cleanly using start_category_session
+        # so that the session gets the exact defined rates/tiers for the chosen mode (Solo: 180, Multiplayer: 220, Car: 250)
+        # and gets dynamically allocated to the chosen matrix cell (Mode row + Station column).
+        if not cafe_session:
+            cafe_session = await start_category_session(
+                db=db,
+                category_id=target_mode,
+                device_id=st_name,
+                duration_minutes=60,
+                customer_name=payload.customerName,
+            )
 
     # 4. Attach new Order to the active session
     new_order = Order(

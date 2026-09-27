@@ -1,15 +1,11 @@
-import uuid
 import pytest
 import pytest_asyncio
-from decimal import Decimal
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from app.core.database import Base
 from app.api.deps import get_db
 from app.main import app
-from app.models.entities import Station, MenuItem, User
-from app.core.security import get_password_hash
 
 
 @pytest_asyncio.fixture

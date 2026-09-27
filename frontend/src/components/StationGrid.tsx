@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Monitor,
@@ -8,6 +8,7 @@ import {
   Users,
   SlidersHorizontal,
   Gamepad2,
+  CalendarClock,
 } from 'lucide-react';
 import { StationLive, PricingTier, MatrixSession, StationMatrixData, Order } from '../types';
 import { POLL_INTERVALS } from '../constants';
@@ -25,14 +26,21 @@ import { StationFoodOrderModal } from './StationFoodOrderModal';
 import { CustomerLogs } from './CustomerLogs';
 import { ManageStation } from './ManageStation';
 import { ConsoleMatrixDashboard } from './ConsoleMatrixDashboard';
+import { AdvanceBookingsManager } from './AdvanceBookingsManager';
 import { SettleInvoiceModal, SettleInvoicePayload, OrderedReceiptItem } from './SettleInvoiceModal';
 
-export type StationSubTab = 'stations' | 'customer_logs' | 'manage_station';
+export type StationSubTab = 'stations' | 'customer_logs' | 'manage_station' | 'advance_bookings';
 
 export const StationGrid: React.FC = () => {
   const queryClient = useQueryClient();
   const { addNotification } = useNotificationStore();
-  const { clearStationFoodOrders, getStationFoodOrders, recordTransaction } = useLoungeStore();
+  const {
+    clearStationFoodOrders,
+    getStationFoodOrders,
+    recordTransaction,
+    completeActiveBookingForStation,
+    bookings,
+  } = useLoungeStore();
 
   // Sub-navigation state under Station option
   const [activeSubTab, setActiveSubTab] = useState<StationSubTab>('stations');
@@ -54,6 +62,7 @@ export const StationGrid: React.FC = () => {
   const { data: matrixData } = useQuery<StationMatrixData>({
     queryKey: ['station-matrix'],
     queryFn: fetchStationMatrix,
+    refetchInterval: POLL_INTERVALS.STATIONS,
   });
 
   // Global Action Error
@@ -111,6 +120,20 @@ export const StationGrid: React.FC = () => {
     onError: (err: any) => setActionError(err.message || 'Transfer failed'),
   });
 
+  // Auto-complete active advance bookings when their station session is ended
+  useEffect(() => {
+    if (!matrixData?.stations) return;
+    const activeBookings = bookings.filter((b) => b.status === 'ACTIVE');
+    for (const b of activeBookings) {
+      const st = matrixData.stations.find(
+        (s) => (s.name || s.id || '').toUpperCase() === (b.stationId || '').toUpperCase()
+      );
+      if (st && st.status !== 'OCCUPIED' && !st.active_session) {
+        completeActiveBookingForStation(b.stationId);
+      }
+    }
+  }, [matrixData?.stations, bookings, completeActiveBookingForStation]);
+
   // Quick Extend Handler
   const handleQuickExtend = (station: StationLive, minutes: number) => {
     addNotification(
@@ -127,36 +150,39 @@ export const StationGrid: React.FC = () => {
     setActionError(null);
     try {
       let targetSessionId = checkoutStationTarget.active_session_id;
+      const isCafe = checkoutStationTarget.name.toUpperCase().includes('CAFE');
 
-      if (!targetSessionId) {
-        // Attempt fresh token & station refetch before failing
-        const freshToken = await useAuthStore.getState().ensureAdminToken(true);
-        if (freshToken) {
-          const freshStations = await fetchLiveStations();
-          const refreshed = freshStations.find((s) => s.id === checkoutStationTarget.id || s.name === checkoutStationTarget.name);
-          if (refreshed?.active_session_id) {
-            targetSessionId = refreshed.active_session_id;
+      if (!targetSessionId || targetSessionId.startsWith('cafe-walkin')) {
+        if (isCafe && matrixData?.cafe_session?.session_id) {
+          targetSessionId = matrixData.cafe_session.session_id;
+        } else {
+          // Attempt fresh token & station refetch before failing
+          const freshToken = await useAuthStore.getState().ensureAdminToken(true);
+          if (freshToken) {
+            const freshStations = await fetchLiveStations();
+            const refreshed = freshStations.find((s) => s.id === checkoutStationTarget.id || s.name === checkoutStationTarget.name);
+            if (refreshed?.active_session_id) {
+              targetSessionId = refreshed.active_session_id;
+            }
           }
         }
       }
 
-      if (!targetSessionId) {
-        setActionError('No active session found for this station.');
-        return;
+      let apiRes: any = null;
+      if (targetSessionId && !targetSessionId.startsWith('cafe-walkin')) {
+        // Call backend with payment method, discount percent, and flat discount amount
+        apiRes = await checkoutSession(
+          targetSessionId,
+          payload.paymentMethod,
+          payload.discountPercent,
+          payload.discountAmount
+        );
       }
-
-      // Call backend with payment method, discount percent, and flat discount amount
-      const apiRes = await checkoutSession(
-        targetSessionId,
-        payload.paymentMethod,
-        payload.discountPercent,
-        payload.discountAmount
-      );
 
       // Record offline transaction ledger entry for lounge analytics
       recordTransaction({
         stationName: payload.stationName,
-        customerName: checkoutStationTarget.customer_name || 'Walk-in Gamer',
+        customerName: checkoutStationTarget.customer_name || (isCafe ? 'Walk-in Cafe Guest' : 'Walk-in Gamer'),
         timeCharge: payload.subTotal - (Number(checkoutStationTarget.orders_charge) || 0),
         foodCharge: Number(checkoutStationTarget.orders_charge) || 0,
         totalAmount: payload.grandTotal,
@@ -170,12 +196,19 @@ export const StationGrid: React.FC = () => {
 
       // Backend confirmed checkout: refresh station list from server immediately
       clearStationFoodOrders(checkoutStationTarget.name);
+      useLoungeStore.getState().clearStationInSeatOrders(checkoutStationTarget.name);
+      if (isCafe) {
+        clearStationFoodOrders('Walk-in CAFE');
+        useLoungeStore.getState().clearStationInSeatOrders('Walk-in CAFE', checkoutStationTarget.customer_name || undefined);
+      }
+      completeActiveBookingForStation(checkoutStationTarget.name);
       await Promise.all([
         queryClient.refetchQueries({ queryKey: ['station-matrix'] }),
         queryClient.refetchQueries({ queryKey: ['stations-live'] }),
         queryClient.refetchQueries({ queryKey: ['customer-sessions'] }),
         queryClient.refetchQueries({ queryKey: ['kitchen-orders'] }),
         queryClient.refetchQueries({ queryKey: ['admin-customers'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin-revenue-analytics'] }),
       ]);
 
       const settledStationName = checkoutStationTarget.name;
@@ -222,27 +255,30 @@ export const StationGrid: React.FC = () => {
   };
 
   const handleMatrixCheckout = (session: MatrixSession, stationName: string) => {
-    const matched = safeStations.find(
-      (s) => s.id === session.station_id || s.name.toUpperCase() === stationName.toUpperCase()
-    );
+    const isCafe = stationName.toUpperCase().includes('CAFE') || session.station_id?.toUpperCase().includes('CAFE');
+    const matched = !isCafe
+      ? safeStations.find(
+          (s) => s.id === session.station_id || s.name.toUpperCase() === stationName.toUpperCase()
+        )
+      : null;
     setCheckoutStationTarget(
-      matched || {
+      matched || ({
         id: session.station_id || session.session_id,
         name: stationName,
-        tier: 'CONSOLE',
-        hourly_rate: session.hourly_rate,
+        tier: (isCafe ? 'CAFE' : 'CONSOLE') as any,
+        hourly_rate: session.hourly_rate || 0,
         status: 'OCCUPIED',
         is_occupied: true,
         active_session_id: session.session_id,
-        time_charge: session.time_charge,
+        time_charge: session.time_charge || 0,
         orders_charge: session.orders_charge,
         running_total: session.running_total,
-        elapsed_minutes: session.elapsed_minutes,
-        remaining_minutes: session.remaining_minutes,
-        active_orders_count: session.active_orders_count,
+        elapsed_minutes: session.elapsed_minutes || 0,
+        remaining_minutes: session.remaining_minutes || 0,
+        active_orders_count: session.active_orders_count || 0,
         customer_name: session.customer_name,
         customer_phone: session.customer_phone,
-      }
+      } as StationLive)
     );
   };
 
@@ -326,20 +362,32 @@ export const StationGrid: React.FC = () => {
   const checkoutOrderedItems = useMemo<OrderedReceiptItem[]>(() => {
     if (!checkoutStationTarget) return [];
 
+    const isCafe = checkoutStationTarget.name.toUpperCase().includes('CAFE');
+    const targetCust = checkoutStationTarget.customer_name?.trim().toLowerCase();
     const itemsMap = new Map<string, OrderedReceiptItem>();
 
     // 1. Primary ground-truth: Kitchen orders from database cache
     const kitchenOrders = queryClient.getQueryData<Order[]>(['kitchen-orders']) || [];
-    const allStationOrders = kitchenOrders.filter(
-      (o) =>
+    const allStationOrders = kitchenOrders.filter((o) => {
+      if (isCafe) {
+        if (checkoutStationTarget.active_session_id && o.session_id === checkoutStationTarget.active_session_id) {
+          return true;
+        }
+        if (targetCust && o.customer_name && o.customer_name.trim().toLowerCase() === targetCust) {
+          return true;
+        }
+        return false;
+      }
+      return (
         (checkoutStationTarget.active_session_id && o.session_id === checkoutStationTarget.active_session_id) ||
         (o.station_name && o.station_name.toUpperCase() === checkoutStationTarget.name.toUpperCase())
-    );
+      );
+    });
 
     if (allStationOrders.length > 0) {
       // Only SERVED orders are billable. Cancelled/rejected orders are strictly omitted.
       const billableOrders = allStationOrders.filter(
-        (o) => o.status === 'SERVED' && (o.status as any) !== 'CANCELLED' && (o.status as any) !== 'cancelled'
+        (o) => o.status === 'SERVED' && !['CANCELLED', 'cancelled', 'REJECTED', 'rejected'].includes(o.status as string)
       );
 
       billableOrders.forEach((order) => {
@@ -363,25 +411,59 @@ export const StationGrid: React.FC = () => {
         });
       });
     } else {
-      // 2. Fallback only if no database orders exist for this station at all (e.g. offline testing)
-      const localOrders = getStationFoodOrders(checkoutStationTarget.name) || [];
-      localOrders.forEach((item) => {
-        const key = item.name.trim().toLowerCase();
-        if (itemsMap.has(key)) {
-          const existing = itemsMap.get(key)!;
-          existing.quantity += item.quantity;
-          existing.totalPrice += item.total || item.price * item.quantity;
-        } else {
-          itemsMap.set(key, {
-            id: item.id,
-            name: item.name,
-            quantity: item.quantity,
-            unitPrice: item.price,
-            totalPrice: item.total || item.price * item.quantity,
-            category: item.category,
-          });
+      // 2. Fallback: check in-seat orders from loungeStore for this specific customer
+      const activeInSeat = useLoungeStore.getState().inSeatOrders.filter((o) => {
+        const s = String(o.status).toLowerCase();
+        if (s === 'cancelled' || s === 'rejected') return false;
+        if (isCafe) {
+          return targetCust ? o.customerName?.trim().toLowerCase() === targetCust : true;
         }
+        return o.stationId?.toUpperCase() === checkoutStationTarget.name.toUpperCase();
       });
+
+      if (activeInSeat.length > 0) {
+        activeInSeat.forEach((ord) => {
+          (ord.items || []).forEach((item) => {
+            const key = item.name.trim().toLowerCase();
+            const uPrice = Number(item.price) || 0;
+            const qty = Number(item.qty) || 1;
+            const sTotal = uPrice * qty;
+            if (itemsMap.has(key)) {
+              const existing = itemsMap.get(key)!;
+              existing.quantity += qty;
+              existing.totalPrice += sTotal;
+            } else {
+              itemsMap.set(key, {
+                id: item.id,
+                name: item.name,
+                quantity: qty,
+                unitPrice: uPrice,
+                totalPrice: sTotal,
+              });
+            }
+          });
+        });
+      } else {
+        // 3. Fallback to stationFoodOrders
+        const localOrders = getStationFoodOrders(checkoutStationTarget.name) || [];
+        localOrders.forEach((item) => {
+          const key = item.name.trim().toLowerCase();
+          if (itemsMap.has(key)) {
+            const existing = itemsMap.get(key)!;
+            existing.quantity += item.quantity;
+            existing.totalPrice += item.total || item.price * item.quantity;
+          } else {
+            itemsMap.set(key, {
+              id: item.id,
+              name: item.name,
+              quantity: item.quantity,
+              unitPrice: item.price,
+              totalPrice: item.total || item.price * item.quantity,
+              category: item.category,
+            });
+          }
+        });
+      }
     }
 
     return Array.from(itemsMap.values());
@@ -440,6 +522,18 @@ export const StationGrid: React.FC = () => {
             <SlidersHorizontal className="w-4 h-4" />
             <span>Manage Station</span>
           </button>
+
+          <button
+            onClick={() => setActiveSubTab('advance_bookings')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold font-display tracking-wider transition-all cursor-pointer ${
+              activeSubTab === 'advance_bookings'
+                ? 'bg-[#172554] text-[#FFFFFF] shadow-xs font-bold'
+                : 'bg-[#FFFFFF] border border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A]'
+            }`}
+          >
+            <CalendarClock className="w-4 h-4 text-[#EA580C]" />
+            <span>Advance Bookings</span>
+          </button>
         </div>
       </div>
 
@@ -465,6 +559,13 @@ export const StationGrid: React.FC = () => {
       {/* 3. SUB-OPTION VIEW 2: MANAGE STATION */}
       {/* ========================================================================= */}
       {activeSubTab === 'manage_station' && <ManageStation />}
+
+      {/* ========================================================================= */}
+      {/* 4. SUB-OPTION VIEW 3: ADVANCE BOOKINGS */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'advance_bookings' && (
+        <AdvanceBookingsManager onSessionStarted={() => setActiveSubTab('stations')} />
+      )}
 
       {/* ========================================================================= */}
       {/* 4. SUB-OPTION VIEW 3: 2D CONSOLE STATIONS ALLOCATION MATRIX */}

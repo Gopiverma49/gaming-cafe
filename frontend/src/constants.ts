@@ -6,11 +6,11 @@ import { PricingTier } from './types';
 // These intervals serve as a gentle, low-overhead fallback.
 // ---------------------------------------------------------------------------
 export const POLL_INTERVALS = {
-  STATIONS: 4000,
-  ORDERS: 5000,
-  CUSTOMERS: 10000,
-  MENU: 30000,
-  KITCHEN_BADGE: 10000,
+  STATIONS: 1000,
+  ORDERS: 1000,
+  CUSTOMERS: 1500,
+  MENU: 5000,
+  KITCHEN_BADGE: 1000,
 } as const;
 
 // ---------------------------------------------------------------------------

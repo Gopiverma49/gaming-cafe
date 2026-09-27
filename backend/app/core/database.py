@@ -28,6 +28,14 @@ else:
     engine_kwargs["pool_timeout"] = settings.DB_POOL_TIMEOUT_SECONDS
     engine_kwargs["pool_recycle"] = settings.DB_POOL_RECYCLE_SECONDS
 
+    # Supabase / PgBouncer pooler compatibility (port 6543 or pooler hostname)
+    if ":6543" in db_url or "pooler.supabase" in db_url:
+        connect_args["statement_cache_size"] = 0
+        connect_args["prepared_statement_cache_size"] = 0
+
+    if connect_args:
+        engine_kwargs["connect_args"] = connect_args
+
 engine: AsyncEngine = create_async_engine(db_url, **engine_kwargs)
 
 if "sqlite" in db_url:

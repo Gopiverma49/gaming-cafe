@@ -5,10 +5,7 @@ import {
   Order,
   OrderStatus,
   CheckoutResult,
-  CustomerDeskSession,
-  AuthUser,
   AuthTokenResponse,
-  CustomerRecord,
   CustomerSessionRecord,
   RevenueAnalyticsSummary,
   CategoryAvailability,
@@ -185,22 +182,6 @@ export async function loginUserApi(data: {
   return handleResponse<AuthTokenResponse>(res);
 }
 
-export async function fetchCurrentUserApi(token: string): Promise<AuthUser> {
-  const res = await safeFetch(`${API_BASE}/auth/me`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return handleResponse<AuthUser>(res);
-}
-
-// Admin API
-export async function loginAdminApi(username: string, password: string): Promise<{ access_token: string }> {
-  const res = await safeFetch(`${API_BASE}/admin/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
-  });
-  return handleResponse<{ access_token: string }>(res);
-}
 
 export async function fetchLiveStations(): Promise<StationLive[]> {
   const res = await safeFetch(`${API_BASE}/admin/stations/live`);
@@ -394,43 +375,7 @@ export async function fetchMenuItems(): Promise<MenuItem[]> {
   return Array.isArray(data) ? data : [];
 }
 
-export async function getCustomerToken(deskId: string, sessionId: string): Promise<{ access_token: string }> {
-  const res = await safeFetch(`${API_BASE}/customer/auth/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      desk_id: deskId,
-      session_id: sessionId,
-    }),
-  });
-  return handleResponse<{ access_token: string }>(res);
-}
 
-export async function fetchDeskSession(token: string): Promise<CustomerDeskSession> {
-  const res = await safeFetch(`${API_BASE}/customer/desk/session`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
-  return handleResponse<CustomerDeskSession>(res);
-}
-
-export async function placeCustomerOrder(
-  token: string,
-  items: { menu_item_id: string; quantity: number }[]
-): Promise<Order> {
-  const idempotencyKey = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-  const res = await safeFetch(`${API_BASE}/customer/order`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-      'Idempotency-Key': idempotencyKey,
-    },
-    body: JSON.stringify({ items }),
-  });
-  return handleResponse<Order>(res);
-}
 
 // ---------------------------------------------------------------------------
 // Menu & Inventory Management (Database-Backed)
@@ -510,14 +455,7 @@ export async function placeStationOrderApi(data: {
   return handleResponse<Order>(res);
 }
 
-// ---------------------------------------------------------------------------
-// Customer Directory & Footfall Logs (Database-Backed)
-// ---------------------------------------------------------------------------
-export async function fetchAdminCustomers(): Promise<CustomerRecord[]> {
-  const res = await safeFetch(`${API_BASE}/admin/customers`);
-  const data = await handleResponse<CustomerRecord[]>(res, []);
-  return Array.isArray(data) ? data : [];
-}
+
 
 // ---------------------------------------------------------------------------
 // Real Database Customer Sessions & Reservations
@@ -559,10 +497,41 @@ export async function fetchRevenueAnalyticsApi(
     totalRevenue: 0,
     gamingRevenue: 0,
     foodRevenue: 0,
+    cashRevenue: 0,
+    upiRevenue: 0,
+    cashCount: 0,
+    upiCount: 0,
     sessionsCount: 0,
     averageSessionBill: 0,
     topSellingItem: 'None',
     chartData: [],
   });
 }
+
+// ---------------------------------------------------------------------------
+// Advance Bookings Persistence & Real-time Sync
+// ---------------------------------------------------------------------------
+export async function fetchAdvanceBookingsApi(): Promise<any[]> {
+  const res = await safeFetch(`${API_BASE}/bookings`);
+  const data = await handleResponse<any[]>(res, []);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function createAdvanceBookingApi(booking: any): Promise<any> {
+  const res = await safeFetch(`${API_BASE}/bookings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(booking),
+  });
+  return handleResponse<any>(res);
+}
+
+export async function cancelAdvanceBookingApi(bookingId: string): Promise<any> {
+  const res = await safeFetch(`${API_BASE}/bookings/${bookingId}/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  return handleResponse<any>(res);
+}
+
 

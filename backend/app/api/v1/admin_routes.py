@@ -13,7 +13,7 @@ from app.api.deps import get_db, get_optional_auth_user
 from app.core.config import settings
 from app.core.security import create_admin_token
 from app.models.entities import Station, Session, Order, OrderItem, MenuItem, User
-from app.models.enums import SessionStatus, OrderStatus
+from app.models.enums import SessionStatus, OrderStatus, PaymentStatus
 from app.schemas.api_schemas import (
     StationLiveResponse,
     StationCreate,
@@ -39,7 +39,7 @@ from app.schemas.api_schemas import (
     StationMatrixResponse,
     SessionExtendRequest,
 )
-from app.services.order_service import serialize_order, ensure_utc, calculate_order_subtotals, CURRENCY_QUANTIZATION, sum_order_charges
+from app.services.order_service import serialize_order, ensure_utc, CURRENCY_QUANTIZATION, sum_order_charges
 from app.services.session_service import (
     check_in,
     transfer_station,
@@ -577,6 +577,27 @@ async def update_kitchen_order_status(
 
     order.status = new_status
 
+    # If this was a Walk-in CAFE session and all its orders are now cancelled, cancel the session immediately
+    if new_status == OrderStatus.CANCELLED.value and order.session:
+        is_cafe_sess = (
+            (order.session.category_id and any(c in order.session.category_id.lower() for c in ("dine-in", "dine-out", "cafe")))
+            or (order.session.device_name and "cafe" in order.session.device_name.lower())
+            or (order.session.station_name and "cafe" in order.session.station_name.lower())
+        )
+        if is_cafe_sess:
+            other_active = [
+                o for o in (order.session.orders or [])
+                if o.id != order.id and o.status not in (OrderStatus.CANCELLED.value, "cancelled", "rejected")
+            ]
+            if not other_active:
+                order.session.status = SessionStatus.CANCELLED.value
+                buffer_ws_event(
+                    db,
+                    channel="admin",
+                    event_type="SESSION_CANCELLED",
+                    payload={"session_id": str(order.session.id), "station_name": "Walk-in CAFE"},
+                )
+
     customer_message = (
         "Order Accepted — Food is being prepared"
         if new_status == OrderStatus.PREPARING.value
@@ -798,10 +819,40 @@ async def place_station_food_order(
         cafe_session = (await db.execute(active_stmt)).scalars().first()
 
     if not cafe_session:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"No active playing session found on station '{target_st_id_str}'. Please verify the session is active before ordering snacks.",
-        )
+        st_upper = target_st_id_str.upper()
+        if "CAFE" in st_upper or "DINE" in st_upper:
+            st_stmt = select(Station).where(func.upper(Station.name) == "WALK-IN CAFE")
+            cafe_st = (await db.execute(st_stmt)).scalar_one_or_none()
+            if not cafe_st:
+                cafe_st = Station(
+                    name="Walk-in CAFE",
+                    tier="CAFE",
+                    hourly_rate=Decimal("0.00"),
+                    pricing_tiers=[],
+                    status=StationStatus.AVAILABLE.value,
+                )
+                db.add(cafe_st)
+                await db.flush()
+
+            cafe_session = Session(
+                station_id=cafe_st.id,
+                station_name="Walk-in CAFE",
+                device_name="Walk-in CAFE",
+                console_room="Walk-in CAFE",
+                category_id="dine-in",
+                customer_name=payload.customer_name or "Walk-in Cafe Guest",
+                status=SessionStatus.ACTIVE.value,
+                started_at=datetime.now(timezone.utc),
+                allocated_minutes=0,
+                tier_price=Decimal("0.00"),
+            )
+            db.add(cafe_session)
+            await db.flush()
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"No active playing session found on station '{target_st_id_str}'. Please verify the session is active before ordering snacks.",
+            )
 
     # Authorization Check: Caller must be authenticated, and either ADMIN or session owner
     if not auth_user:
@@ -1043,11 +1094,21 @@ async def get_revenue_analytics(
     total_revenue = Decimal("0.00")
     gaming_revenue = Decimal("0.00")
     food_revenue = Decimal("0.00")
+    cash_revenue = Decimal("0.00")
+    upi_revenue = Decimal("0.00")
+    cash_count = 0
+    upi_count = 0
     sessions_count = len(sessions)
     item_counts: dict[str, int] = defaultdict(int)
 
     daily_stats: dict[str, dict[str, Decimal]] = defaultdict(
-        lambda: {"total": Decimal("0.00"), "gaming": Decimal("0.00"), "food": Decimal("0.00")}
+        lambda: {
+            "total": Decimal("0.00"),
+            "gaming": Decimal("0.00"),
+            "food": Decimal("0.00"),
+            "cash": Decimal("0.00"),
+            "upi": Decimal("0.00"),
+        }
     )
 
     for s in sessions:
@@ -1055,11 +1116,13 @@ async def get_revenue_analytics(
         day_key = started_at.strftime("%Y-%m-%d")
 
         s_time_charge = s.total_amount or Decimal("0.00")
-        s_food_charge = sum_order_charges(s.orders)
-        # Track item-level counts for top-selling report (requires item loop)
+        s_food_charge = Decimal("0.00")
         for o in s.orders:
             if o.status != OrderStatus.CANCELLED.value:
                 for itm in o.items:
+                    s_food_charge += (itm.unit_price * Decimal(str(itm.quantity))).quantize(
+                        CURRENCY_QUANTIZATION
+                    )
                     name = itm.menu_item.name if itm.menu_item else "Item"
                     item_counts[name] += itm.quantity
 
@@ -1069,9 +1132,47 @@ async def get_revenue_analytics(
         food_revenue += s_food_charge
         total_revenue += s_total
 
+        # Reconcile Payment Method attribution (Cash vs UPI/QR)
+        s_cash = Decimal("0.00")
+        s_upi = Decimal("0.00")
+        completed_payments = [
+            p for p in (s.payments or [])
+            if getattr(p, "status", None) in (PaymentStatus.COMPLETED.value, "COMPLETED")
+        ]
+
+        if completed_payments:
+            p_cash = sum(
+                (p.amount for p in completed_payments if "CASH" in (p.method or "").upper()),
+                Decimal("0.00"),
+            )
+            p_upi = sum(
+                (p.amount for p in completed_payments if "UPI" in (p.method or "").upper()),
+                Decimal("0.00"),
+            )
+            paid_sum = p_cash + p_upi
+            if paid_sum > Decimal("0.00"):
+                s_cash = (s_total * (p_cash / paid_sum)).quantize(CURRENCY_QUANTIZATION)
+                s_upi = s_total - s_cash
+            else:
+                s_cash = s_total
+
+            cash_items = len([p for p in completed_payments if "CASH" in (p.method or "").upper()])
+            upi_items = len([p for p in completed_payments if "UPI" in (p.method or "").upper()])
+            cash_count += cash_items
+            upi_count += upi_items
+        elif s.status == SessionStatus.COMPLETED.value and s_total > Decimal("0.00"):
+            # Default to Cash for completed sessions without explicit payment rows
+            s_cash = s_total
+            cash_count += 1
+
+        cash_revenue += s_cash
+        upi_revenue += s_upi
+
         daily_stats[day_key]["gaming"] += s_time_charge
         daily_stats[day_key]["food"] += s_food_charge
         daily_stats[day_key]["total"] += s_total
+        daily_stats[day_key]["cash"] += s_cash
+        daily_stats[day_key]["upi"] += s_upi
 
     average_session_bill = (
         float(total_revenue / Decimal(str(sessions_count))) if sessions_count > 0 else 0.0
@@ -1086,18 +1187,33 @@ async def get_revenue_analytics(
         d = now - timedelta(days=i)
         d_key = d.strftime("%Y-%m-%d")
         label = d.strftime("%a, %b %d") if days_to_show > 1 else "Today"
-        day_stat = daily_stats.get(d_key, {"total": Decimal("0.00"), "gaming": Decimal("0.00"), "food": Decimal("0.00")})
+        day_stat = daily_stats.get(
+            d_key,
+            {
+                "total": Decimal("0.00"),
+                "gaming": Decimal("0.00"),
+                "food": Decimal("0.00"),
+                "cash": Decimal("0.00"),
+                "upi": Decimal("0.00"),
+            },
+        )
         chart_data.append({
             "label": label,
             "total": float(day_stat["total"]),
             "gaming": float(day_stat["gaming"]),
             "food": float(day_stat["food"]),
+            "cash": float(day_stat["cash"]),
+            "upi": float(day_stat["upi"]),
         })
 
     return {
         "totalRevenue": float(total_revenue),
         "gamingRevenue": float(gaming_revenue),
         "foodRevenue": float(food_revenue),
+        "cashRevenue": float(cash_revenue),
+        "upiRevenue": float(upi_revenue),
+        "cashCount": cash_count,
+        "upiCount": upi_count,
         "sessionsCount": sessions_count,
         "averageSessionBill": round(average_session_bill, 2),
         "topSellingItem": top_item,

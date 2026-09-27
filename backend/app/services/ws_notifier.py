@@ -93,6 +93,9 @@ def buffer_ws_event(session: AsyncSession, channel: str, event_type: str, payloa
         "ORDER_STATUS_CHANGED",
         "STATION_LOCKED",
         "CUSTOMER_IN_SEAT_ORDER",
+        "BOOKING_CREATED",
+        "BOOKING_UPDATED",
+        "BOOKING_CANCELLED",
     }
     if event_type in operational_events:
         if "admin" not in target_channels:
@@ -110,6 +113,16 @@ def buffer_ws_event(session: AsyncSession, channel: str, event_type: str, payloa
             })
 
 
+def _handle_broadcast_task_result(task: asyncio.Task) -> None:
+    """Error handler callback for fire-and-forget broadcast tasks."""
+    try:
+        exc = task.exception()
+        if exc:
+            logger.error("Unhandled error in broadcast_events task: %s", exc)
+    except asyncio.CancelledError:
+        pass
+
+
 # Hook into SQLAlchemy commit & rollback events
 @event.listens_for(SyncSession, "after_commit")
 def on_session_after_commit(session: SyncSession) -> None:
@@ -117,7 +130,8 @@ def on_session_after_commit(session: SyncSession) -> None:
     if buffered_events:
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(manager.broadcast_events(buffered_events))
+            task = loop.create_task(manager.broadcast_events(buffered_events))
+            task.add_done_callback(_handle_broadcast_task_result)
         except RuntimeError:
             # Fallback if executed outside an active event loop
             pass

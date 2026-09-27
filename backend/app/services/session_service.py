@@ -4,7 +4,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Optional, Dict, Any, List, Set
+from typing import Optional, Dict, Any, List, Set, Callable
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, func
@@ -85,13 +85,16 @@ def _compute_time_charge(
     return calculate_station_charge(started_at, reference_time, hourly_rate)
 
 
-def with_transaction_retry(max_retries: int = 3, base_delay: float = 0.05):
+def with_transaction_retry(
+    max_retries: int = 3,
+    base_delay: float = 0.05,
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
     Transaction retry decorator handling PostgreSQL transient errors:
     40001 (serialization failure) and 40P01 (deadlock detected).
     Uses exponential backoff up to max_retries attempts.
     """
-    def decorator(func):
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
             retries = 0
@@ -335,7 +338,7 @@ async def transfer_station(
         # Check active session conflict on target device
         conflict_stmt = select(Session).where(
             Session.status == SessionStatus.ACTIVE.value,
-            func.upper(Session.device_name) == t_dev,
+            Session.device_name == t_dev,
             Session.id != cafe_session.id,
         )
         conflict = (await db.execute(conflict_stmt)).scalars().first()
@@ -455,16 +458,25 @@ async def settle_checkout(
             detail=f"Session is already closed (status: {cafe_session.status})",
         )
 
-    # 2. Block checkout if any food orders are active in QUEUED or PREPARING
+    # 2. Block checkout if any food orders are active in QUEUED or PREPARING (auto-serve for Walk-in CAFE)
     pending_orders = [
         o for o in cafe_session.orders
         if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value)
     ]
     if pending_orders:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cannot checkout: {len(pending_orders)} food/beverage order(s) are still QUEUED or PREPARING in the kitchen.",
+        is_cafe = (
+            (cafe_session.category_id and any(c in cafe_session.category_id.lower() for c in ("dine-in", "dine-out", "cafe")))
+            or (cafe_session.device_name and "cafe" in cafe_session.device_name.lower())
+            or (cafe_session.station_name and "cafe" in cafe_session.station_name.lower())
         )
+        if is_cafe:
+            for po in pending_orders:
+                po.status = OrderStatus.SERVED.value
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot checkout: {len(pending_orders)} food/beverage order(s) are still QUEUED or PREPARING in the kitchen.",
+            )
 
     # 3. Lock Station row
     station_stmt = select(Station).where(Station.id == cafe_session.station_id).with_for_update()
@@ -666,13 +678,6 @@ CATEGORY_CONFIGS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-REGISTERED_CONSOLES: Dict[str, Dict[str, Any]] = {
-    "PS1": {"id": "PS1", "name": "PS1", "device_type": "CONSOLE"},
-    "PS2": {"id": "PS2", "name": "PS2", "device_type": "CONSOLE"},
-    "PS3": {"id": "PS3", "name": "PS3", "device_type": "CONSOLE"},
-    "VR1": {"id": "VR1", "name": "VR1", "device_type": "VR"},
-}
-
 
 async def get_fleet_categories(db: AsyncSession) -> List[Dict[str, Any]]:
     """
@@ -755,10 +760,15 @@ async def get_fleet_categories(db: AsyncSession) -> List[Dict[str, Any]]:
             "pricing_tiers": cat_pricing_tiers,
         })
 
-    # Include all other stations configured in the database by the admin
+    # Include all other stations configured in the database by the admin (excluding CAFE)
     canonical_names = {"solo", "multiplayer", "car simulator", "vr"}
     for st in stations:
-        if st.id in canonical_handled_station_ids or st.name.lower() in canonical_names:
+        if (
+            st.id in canonical_handled_station_ids
+            or st.name.lower() in canonical_names
+            or "cafe" in st.name.lower()
+            or getattr(st, "tier", "") == "CAFE"
+        ):
             continue
 
         active_s = next(
@@ -938,10 +948,15 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
             "supported_stations": supported,
         })
 
-    # Include any custom stations created by admin as additional row modes (NOT new columns)
+    # Include any custom stations created by admin as additional row modes (NOT new columns, excluding CAFE)
     canonical_names = {"solo", "multiplayer", "car simulator", "vr"}
     for st in stations_db:
-        if st.name.lower() in canonical_names or st.name.upper() in ("PS1", "PS2", "PS3", "VR1"):
+        if (
+            st.name.lower() in canonical_names
+            or st.name.upper() in ("PS1", "PS2", "PS3", "VR1")
+            or "cafe" in st.name.lower()
+            or getattr(st, "tier", "") == "CAFE"
+        ):
             continue
         modes_list.append({
             "id": str(st.id),
@@ -1111,10 +1126,50 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
             "pricing_tiers": vr_pricing_tiers,
         }
 
+    # 6. Extract active Walk-in CAFE sessions independently (supporting multiple concurrent customers)
+    cafe_active_sessions = [
+        s for s in active_sessions
+        if (s.category_id and any(c in s.category_id.lower() for c in ("dine-in", "dine-out", "cafe")))
+        or (s.device_name and "cafe" in s.device_name.lower())
+        or (s.station and "cafe" in s.station.name.lower())
+    ]
+    cafe_sessions_list = []
+    for cafe_s in cafe_active_sessions:
+        cafe_started_at = ensure_utc(cafe_s.started_at)
+        cafe_elapsed_sec = (now - cafe_started_at).total_seconds()
+        cafe_elapsed_min = max(0, int(cafe_elapsed_sec // 60))
+        cafe_orders_charge = sum_order_charges(cafe_s.orders, statuses=["QUEUED", "PREPARING", "SERVED"])
+        cafe_active_orders_count = sum(
+            1 for o in cafe_s.orders
+            if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value, OrderStatus.SERVED.value)
+        )
+        cafe_sessions_list.append({
+            "session_id": cafe_s.id,
+            "station_id": cafe_s.device_name or "Walk-in CAFE",
+            "mode": cafe_s.category_id or "dine-in",
+            "mode_name": "Dine-In" if "in" in (cafe_s.category_id or "dine-in").lower() else "Dine-Out",
+            "customer_name": cafe_s.customer_name or "Cafe Guest",
+            "customer_phone": cafe_s.customer_phone,
+            "started_at": cafe_started_at,
+            "elapsed_minutes": cafe_elapsed_min,
+            "remaining_minutes": 0,
+            "allocated_minutes": 0,
+            "time_charge": Decimal("0.00"),
+            "orders_charge": cafe_orders_charge,
+            "running_total": cafe_orders_charge,
+            "active_orders_count": cafe_active_orders_count,
+            "hourly_rate": Decimal("0.00"),
+            "pricing_tiers": [],
+        })
+
+    cafe_detail = cafe_sessions_list[0] if cafe_sessions_list else None
+
     return {
         "modes": modes_list,
         "stations": stations_list,
         "vr_session": vr_detail,
+        "cafe_session": cafe_detail,
+        "cafe_sessions": cafe_sessions_list,
     }
 
 

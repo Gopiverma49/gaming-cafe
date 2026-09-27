@@ -128,7 +128,7 @@ export interface CustomerRecord {
 
 export interface WebSocketEvent {
   channel: string;
-  event_type: 'SESSION_UPDATED' | 'SESSION_STARTED' | 'SESSION_COMPLETED' | 'SESSION_TRANSFERRED' | 'SESSION_CANCELLED' | 'ORDER_STATUS_CHANGED' | 'ORDER_CREATED' | 'STATION_LOCKED' | 'STATION_UPDATED' | 'CUSTOMER_IN_SEAT_ORDER';
+  event_type: 'SESSION_UPDATED' | 'SESSION_STARTED' | 'SESSION_COMPLETED' | 'SESSION_TRANSFERRED' | 'SESSION_CANCELLED' | 'ORDER_STATUS_CHANGED' | 'ORDER_CREATED' | 'STATION_LOCKED' | 'STATION_UPDATED' | 'CUSTOMER_IN_SEAT_ORDER' | 'BOOKING_CREATED' | 'BOOKING_UPDATED' | 'BOOKING_CANCELLED';
   payload: any;
   timestamp: string;
 }
@@ -154,12 +154,18 @@ export interface RevenueChartPoint {
   total: number;
   gaming: number;
   food: number;
+  cash?: number;
+  upi?: number;
 }
 
 export interface RevenueAnalyticsSummary {
   totalRevenue: number;
   gamingRevenue: number;
   foodRevenue: number;
+  cashRevenue: number;
+  upiRevenue: number;
+  cashCount: number;
+  upiCount: number;
   sessionsCount: number;
   averageSessionBill: number;
   topSellingItem: string;
@@ -287,6 +293,8 @@ export interface StationMatrixData {
   modes: MatrixMode[];
   stations: MatrixStation[];
   vr_session?: MatrixSession | null;
+  cafe_session?: MatrixSession | null;
+  cafe_sessions?: MatrixSession[];
 }
 
 

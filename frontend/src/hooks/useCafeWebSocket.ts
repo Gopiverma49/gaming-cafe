@@ -37,9 +37,26 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
       pendingKeysRef.current.clear();
       keysToInvalidate.forEach((k) => {
         queryClient.invalidateQueries({ queryKey: [k] });
+        queryClient.refetchQueries({ queryKey: [k], type: 'active' });
       });
-    }, 100);
+    }, 40);
   }, [queryClient]);
+
+  // Listen for local cross-tab / bus sync events to invalidate queries instantaneously
+  useEffect(() => {
+    const handleSync = () => {
+      triggerDebouncedInvalidate([
+        'station-matrix',
+        'stations-live',
+        'fleet-categories',
+        'customer-sessions',
+        'kitchen-orders',
+        'admin-customers',
+      ]);
+    };
+    window.addEventListener('vanya_sync_invalidate', handleSync);
+    return () => window.removeEventListener('vanya_sync_invalidate', handleSync);
+  }, [triggerDebouncedInvalidate]);
 
   const clearPingInterval = () => {
     if (pingIntervalRef.current) {
@@ -51,27 +68,18 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
   const connect = useCallback(() => {
     if (isUnmountedRef.current) return;
 
-    // Build WebSocket URL: When accessed locally or via Vite proxy, always use the same origin WebSocket proxy
+    // Build WebSocket URL: prioritize direct backend tunnel if set in production/tunnel mode
     let wsUrl: string;
     if (typeof window !== 'undefined') {
       const host = window.location.hostname;
-      if (
-        host === 'localhost' ||
-        host === '127.0.0.1' ||
-        host.includes('trycloudflare.com') ||
-        host.includes('ngrok')
-      ) {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        wsUrl = `${protocol}//${window.location.host}/ws/${channel}`;
-      } else if (import.meta.env.VITE_WS_URL) {
-        let baseWs = (import.meta.env.VITE_WS_URL as string).replace(/\/+$/, '');
-        if (baseWs.startsWith('wsss://')) {
-          baseWs = baseWs.replace(/^wsss:\/\//, 'wss://');
-        } else if (baseWs.startsWith('https://')) {
-          baseWs = baseWs.replace(/^https:\/\//, 'wss://');
-        } else if (baseWs.startsWith('http://')) {
-          baseWs = baseWs.replace(/^http:\/\//, 'ws://');
-        }
+      const isLocalhost = host === 'localhost' || host === '127.0.0.1';
+      const envWs = import.meta.env.VITE_WS_URL as string | undefined;
+
+      if (envWs && !isLocalhost) {
+        let baseWs = envWs.replace(/\/+$/, '');
+        if (baseWs.startsWith('http://')) baseWs = baseWs.replace(/^http:\/\//, 'ws://');
+        else if (baseWs.startsWith('https://')) baseWs = baseWs.replace(/^https:\/\//, 'wss://');
+        else if (baseWs.startsWith('wsss://')) baseWs = baseWs.replace(/^wsss:\/\//, 'wss://');
         wsUrl = `${baseWs}/ws/${channel}`;
       } else {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -137,6 +145,29 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
               ]);
               break;
 
+            case 'BOOKING_CANCELLED':
+              if (wsEvent.payload) {
+                const bId = String(wsEvent.payload.booking_id || wsEvent.payload.id || '');
+                if (bId) {
+                  useLoungeStore.getState().cancelBooking(bId);
+                }
+              }
+              triggerDebouncedInvalidate([
+                'station-matrix',
+                'stations-live',
+                'customer-sessions',
+              ]);
+              break;
+
+            case 'BOOKING_CREATED':
+            case 'BOOKING_UPDATED':
+              triggerDebouncedInvalidate([
+                'station-matrix',
+                'stations-live',
+                'customer-sessions',
+              ]);
+              break;
+
             case 'ORDER_STATUS_CHANGED':
               if (wsEvent.payload) {
                 const lounge = useLoungeStore.getState();
@@ -145,7 +176,7 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
                 const stName = wsEvent.payload.station_name || wsEvent.payload.stationId;
 
                 if (ordId) {
-                  if (ordStatus === 'cancelled') {
+                  if (ordStatus === 'cancelled' || ordStatus === 'rejected') {
                     lounge.removeInSeatOrder(ordId);
                     if (stName) {
                       lounge.clearStationFoodOrders(stName);

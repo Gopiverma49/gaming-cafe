@@ -55,6 +55,8 @@ export const CustomerPortal: React.FC = () => {
 
   // Checkout Modal State
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [orderType, setOrderType] = useState<'GAMING' | 'CAFE'>('GAMING');
+  const [diningOption, setDiningOption] = useState<'Dine-In' | 'Dine-Out'>('Dine-In');
   const [customerName, setCustomerName] = useState('');
   const [selectedMode, setSelectedMode] = useState<string>('solo');
   const [selectedStation, setSelectedStation] = useState<SubstationOption>('PS1');
@@ -70,7 +72,11 @@ export const CustomerPortal: React.FC = () => {
 
   const availableModes = useMemo(() => {
     if (Array.isArray(serverCategories) && serverCategories.length > 0) {
-      const filtered = serverCategories.filter((c) => c.id !== 'vr_sim' && c.id !== 'vr');
+      const filtered = serverCategories.filter((c) => {
+        const id = c.id.toLowerCase();
+        const name = c.name.toLowerCase();
+        return id !== 'vr_sim' && id !== 'vr' && !id.includes('cafe') && !name.includes('cafe');
+      });
       if (filtered.length > 0) return filtered;
     }
     return DEFAULT_CATEGORIES;
@@ -169,10 +175,10 @@ export const CustomerPortal: React.FC = () => {
   const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!customerName.trim()) {
-      setCheckoutError('Please enter your gamer name.');
+      setCheckoutError(orderType === 'CAFE' ? 'Please enter your name or table number.' : 'Please enter your gamer name.');
       return;
     }
-    if (!selectedStation) {
+    if (orderType === 'GAMING' && !selectedStation) {
       setCheckoutError('Please select your console station (PS1, PS2, or PS3).');
       return;
     }
@@ -184,10 +190,13 @@ export const CustomerPortal: React.FC = () => {
     setIsSubmitting(true);
     setCheckoutError(null);
 
+    const effectiveStation = orderType === 'CAFE' ? 'Walk-in CAFE' : selectedStation;
+    const effectiveMode = orderType === 'CAFE' ? diningOption : selectedMode;
+
     const orderPayload: InSeatOrderPayloadClient = {
       orderId: `ORD_${Date.now()}`,
-      stationId: selectedStation,
-      mode: selectedMode,
+      stationId: effectiveStation,
+      mode: effectiveMode,
       customerName: customerName.trim(),
       items: cartItemList.map((i) => ({
         id: i.id,
@@ -200,7 +209,9 @@ export const CustomerPortal: React.FC = () => {
       createdAt: new Date().toISOString(),
     };
 
-    const modeLabel = availableModes.find((m) => m.id === selectedMode)?.name || selectedMode;
+    const modeLabel = orderType === 'CAFE' 
+      ? diningOption 
+      : (availableModes.find((m) => m.id === selectedMode)?.name || selectedMode);
 
     try {
       // 1. Send to backend in-seat ordering API
@@ -213,9 +224,10 @@ export const CustomerPortal: React.FC = () => {
       addInSeatOrder(orderPayload as CustomerInSeatOrder);
 
       // 3. User feedback notification
+      const labelText = orderType === 'CAFE' ? `Walk-in Cafe (${diningOption})` : `${selectedStation} (${modeLabel})`;
       addNotification(
         'FOOD_ORDER',
-        `🍔 Order Placed for ${selectedStation} (${modeLabel})!`,
+        `🍔 Order Placed for ${labelText}!`,
         `${totalCartCount} item(s) (₹${totalCartAmount.toFixed(2)}) sent to the kitchen.`
       );
 
@@ -238,6 +250,8 @@ export const CustomerPortal: React.FC = () => {
     setCustomerName('');
     setSelectedMode('solo');
     setSelectedStation('PS1');
+    setOrderType('GAMING');
+    setDiningOption('Dine-In');
   };
 
   return (
@@ -371,7 +385,7 @@ export const CustomerPortal: React.FC = () => {
                         className="py-1.5 px-3 rounded-xl bg-[#EA580C] hover:bg-[#C2410C] text-[#FFFFFF] text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        <span>+ ADD</span>
+                        <span>ADD</span>
                       </button>
                     )}
                   </div>
@@ -473,9 +487,11 @@ export const CustomerPortal: React.FC = () => {
                     </div>
                     <div>
                       <h3 className="text-base sm:text-lg font-bold text-[#172554] font-display">
-                        Confirm In-Seat Order
+                        Confirm Food Order
                       </h3>
-                      <p className="text-[11px] text-[#64748B]">Deliver to your console station</p>
+                      <p className="text-[11px] text-[#64748B]">
+                        {orderType === 'CAFE' ? 'Walk-in Cafe (Dine-in / Dine-out)' : 'Deliver to your console station'}
+                      </p>
                     </div>
                   </div>
                   <button
@@ -488,99 +504,140 @@ export const CustomerPortal: React.FC = () => {
                 </div>
 
                 <form onSubmit={handlePlaceOrder} className="space-y-4 overflow-y-auto pr-1 flex-1 text-xs">
+                  {/* Order Type Toggle: Gaming Console vs Walk-in Cafe */}
+                  <div className="space-y-1.5">
+                    <label className="block font-semibold text-[#0F172A]">
+                      Select Order Service: <span className="text-[#B91C1C]">*</span>
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setOrderType('GAMING')}
+                        className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all cursor-pointer text-center ${
+                          orderType === 'GAMING'
+                            ? 'bg-[#EFF6FF] border-[#172554] text-[#172554] ring-2 ring-[#172554]/20 shadow-xs font-bold'
+                            : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
+                        }`}
+                      >
+                        <Gamepad2 className="w-4 h-4 text-[#172554]" />
+                        <span className="font-display text-xs">Gaming Console</span>
+                        <span className="text-[10px] text-[#64748B]">PS1, PS2, PS3 In-Seat</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setOrderType('CAFE')}
+                        className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all cursor-pointer text-center ${
+                          orderType === 'CAFE'
+                            ? 'bg-[#FFF7ED] border-[#EA580C] text-[#EA580C] ring-2 ring-[#EA580C]/20 shadow-xs font-bold'
+                            : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
+                        }`}
+                      >
+                        <Coffee className="w-4 h-4 text-[#EA580C]" />
+                        <span className="font-display text-xs">Walk-in CAFE</span>
+                        <span className="text-[10px] text-[#64748B]">Dine-In / Dine-Out</span>
+                      </button>
+                    </div>
+                  </div>
+
                   {/* Customer Name Input */}
                   <div className="space-y-1.5">
                     <label className="block font-semibold text-[#0F172A]">
-                      Your Gamer Name: <span className="text-[#B91C1C]">*</span>
+                      {orderType === 'CAFE' ? 'Customer / Table Name:' : 'Your Gamer Name:'} <span className="text-[#B91C1C]">*</span>
                     </label>
                     <input
                       type="text"
                       required
                       value={customerName}
                       onChange={(e) => setCustomerName(e.target.value)}
-                      placeholder="e.g. Alex / ShadowGamer"
+                      placeholder={orderType === 'CAFE' ? 'e.g. Table 4 / Rahul' : 'e.g. Alex / ShadowGamer'}
                       className="w-full p-2.5 rounded-xl bg-[#FFF7ED] border border-[#E2E8F0] text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] text-xs transition-colors"
                     />
                   </div>
 
-                  {/* Game Mode Selection */}
-                  <div className="space-y-1.5">
-                    <label className="block font-semibold text-[#0F172A]">
-                      Game Mode: <span className="text-[#B91C1C]">*</span>
-                    </label>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {availableModes.map((mode) => {
-                        const modeId = mode.id;
-                        const isSelected = selectedMode === modeId;
-                        const isCar = modeId.toLowerCase().includes('car');
-                        return (
-                          <button
-                            key={modeId}
-                            type="button"
-                            onClick={() => handleSelectMode(modeId)}
-                            className={`p-2.5 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all cursor-pointer text-center ${
-                              isSelected
-                                ? 'bg-[#FFF7ED] border-[#EA580C] text-[#EA580C] ring-2 ring-[#EA580C]/20 shadow-xs font-bold'
-                                : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
-                            }`}
-                          >
-                            <Gamepad2 className="w-4 h-4 text-[#EA580C]" />
-                            <span className="font-display text-xs tracking-wide">{mode.name}</span>
-                            <span className="text-[10px] font-mono-code text-[#64748B]">
-                              ₹{mode.hourly_rate}/hr
-                            </span>
-                            {isCar && (
-                              <span className="text-[9px] font-mono-code text-[#EA580C] font-bold">
-                                Fixed at PS3
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  {/* GAMING MODE ONLY: Game Mode & Console Station Selectors */}
+                  {orderType === 'GAMING' && (
+                    <>
+                      {/* Game Mode Selection */}
+                      <div className="space-y-1.5">
+                        <label className="block font-semibold text-[#0F172A]">
+                          Game Mode: <span className="text-[#B91C1C]">*</span>
+                        </label>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {availableModes.map((mode) => {
+                            const modeId = mode.id;
+                            const isSelected = selectedMode === modeId;
+                            const isCar = modeId.toLowerCase().includes('car');
+                            return (
+                              <button
+                                key={modeId}
+                                type="button"
+                                onClick={() => handleSelectMode(modeId)}
+                                className={`p-2.5 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all cursor-pointer text-center ${
+                                  isSelected
+                                    ? 'bg-[#FFF7ED] border-[#EA580C] text-[#EA580C] ring-2 ring-[#EA580C]/20 shadow-xs font-bold'
+                                    : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
+                                }`}
+                              >
+                                <Gamepad2 className="w-4 h-4 text-[#EA580C]" />
+                                <span className="font-display text-xs tracking-wide">{mode.name}</span>
+                                <span className="text-[10px] font-mono-code text-[#64748B]">
+                                  ₹{mode.hourly_rate}/hr
+                                </span>
+                                {isCar && (
+                                  <span className="text-[9px] font-mono-code text-[#EA580C] font-bold">
+                                    Fixed at PS3
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
 
-                  {/* Substation Selection: Strictly restricted to PS1, PS2, or PS3 */}
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between items-center">
-                      <label className="block font-semibold text-[#0F172A]">
-                        Console Station: <span className="text-[#B91C1C]">*</span>
-                      </label>
-                      {selectedMode.toLowerCase().includes('car') && (
-                        <span className="text-[10px] text-[#EA580C] font-mono-code font-bold">
-                          Fixed to PS3 (Car Sim)
-                        </span>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      {(['PS1', 'PS2', 'PS3'] as SubstationOption[]).map((station) => {
-                        const isCarMode = selectedMode.toLowerCase().includes('car');
-                        const isStationDisabled = isCarMode && station !== 'PS3';
-                        const isSelected = selectedStation === station;
-                        return (
-                          <button
-                            key={station}
-                            type="button"
-                            disabled={isStationDisabled}
-                            onClick={() => handleSelectStation(station)}
-                            className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all ${
-                              isStationDisabled
-                                ? 'opacity-30 cursor-not-allowed bg-[#F8FAFC] border-[#E2E8F0] text-[#94A3B8]'
-                                : isSelected
-                                ? 'bg-[#EFF6FF] border-[#172554] text-[#172554] ring-2 ring-[#172554]/20 shadow-xs font-black cursor-pointer'
-                                : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1] cursor-pointer'
-                            }`}
-                          >
-                            <Tv className="w-4 h-4 text-[#172554]" />
-                            <span className="font-display text-sm tracking-wider">{station}</span>
-                            <span className="text-[9px] font-mono-code text-[#64748B] uppercase">
-                              {station === 'PS3' && isCarMode ? 'Simulator Rig' : 'Console'}
+                      {/* Substation Selection: Strictly restricted to PS1, PS2, or PS3 */}
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between items-center">
+                          <label className="block font-semibold text-[#0F172A]">
+                            Console Station: <span className="text-[#B91C1C]">*</span>
+                          </label>
+                          {selectedMode.toLowerCase().includes('car') && (
+                            <span className="text-[10px] text-[#EA580C] font-mono-code font-bold">
+                              Fixed to PS3 (Car Sim)
                             </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          {(['PS1', 'PS2', 'PS3'] as SubstationOption[]).map((station) => {
+                            const isCarMode = selectedMode.toLowerCase().includes('car');
+                            const isStationDisabled = isCarMode && station !== 'PS3';
+                            const isSelected = selectedStation === station;
+                            return (
+                              <button
+                                key={station}
+                                type="button"
+                                disabled={isStationDisabled}
+                                onClick={() => handleSelectStation(station)}
+                                className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all ${
+                                  isStationDisabled
+                                    ? 'opacity-30 cursor-not-allowed bg-[#F8FAFC] border-[#E2E8F0] text-[#94A3B8]'
+                                    : isSelected
+                                    ? 'bg-[#EFF6FF] border-[#172554] text-[#172554] ring-2 ring-[#172554]/20 shadow-xs font-black cursor-pointer'
+                                    : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1] cursor-pointer'
+                                }`}
+                              >
+                                <Tv className="w-4 h-4 text-[#172554]" />
+                                <span className="font-display text-sm tracking-wider">{station}</span>
+                                <span className="text-[9px] font-mono-code text-[#64748B] uppercase">
+                                  {station === 'PS3' && isCarMode ? 'Simulator Rig' : 'Console'}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </>
+                  )}
 
                   {/* Itemized Order Breakdown */}
                   <div className="p-3.5 rounded-xl bg-[#FFF7ED] border border-[#FED7AA] space-y-2">

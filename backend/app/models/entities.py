@@ -272,3 +272,23 @@ class Payment(Base):
     )
 
     session: Mapped["Session"] = relationship("Session", back_populates="payments")
+
+
+class AdvanceBookingRecord(Base):
+    __tablename__ = "advance_bookings"
+
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    customer_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    phone_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    station_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    session_mode: Mapped[str] = mapped_column(String(50), default="Solo", nullable=False)
+    booking_date: Mapped[str] = mapped_column(String(20), nullable=False)
+    start_time: Mapped[str] = mapped_column(String(10), nullable=False)
+    duration_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    end_time: Mapped[str] = mapped_column(String(10), nullable=False)
+    advance_paid: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    remaining_balance: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="CONFIRMED", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+

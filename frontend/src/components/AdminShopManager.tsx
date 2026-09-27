@@ -13,6 +13,9 @@ import {
   ArrowUpRight,
   Clock,
   Search,
+  Banknote,
+  QrCode,
+  CreditCard,
 } from 'lucide-react';
 import {
   fetchAdminMenuItems,
@@ -30,6 +33,10 @@ const defaultRevenueSummary: RevenueAnalyticsSummary = {
   totalRevenue: 0,
   gamingRevenue: 0,
   foodRevenue: 0,
+  cashRevenue: 0,
+  upiRevenue: 0,
+  cashCount: 0,
+  upiCount: 0,
   sessionsCount: 0,
   averageSessionBill: 0,
   topSellingItem: 'None',
@@ -90,6 +97,7 @@ export const AdminShopManager: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'INVENTORY' | 'REVENUE'>('INVENTORY');
   const [revenuePeriod, setRevenuePeriod] = useState<'DAY' | 'WEEK' | 'MONTH'>('DAY');
+  const [chartViewMode, setChartViewMode] = useState<'CATEGORY' | 'PAYMENT'>('CATEGORY');
 
   // Search & Status Filters for Remade Inventory Table
   const [searchQuery, setSearchQuery] = useState('');
@@ -524,19 +532,246 @@ export const AdminShopManager: React.FC = () => {
             </div>
           </div>
 
+          {/* ========================================================================= */}
+          {/* DEDICATED PAYMENT METHOD COLLECTION BOXES (CASH & UPI/QR) */}
+          {/* ========================================================================= */}
+          <div className="bg-[#FFFFFF] p-5 sm:p-6 rounded-2xl border border-[#E2E8F0] shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#F1F5F9]">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-[#EFF6FF] text-[#1D4ED8]">
+                  <CreditCard className="w-5 h-5 text-[#1D4ED8]" />
+                </div>
+                <div>
+                  <h4 className="text-sm sm:text-base font-bold text-[#0F172A] font-display flex items-center gap-2">
+                    <span>Payment Mode Collections</span>
+                    <span className="text-[11px] font-mono-code font-semibold px-2 py-0.5 rounded-full bg-[#F1F5F9] text-[#475569] border border-[#E2E8F0]">
+                      Settlement Audit
+                    </span>
+                  </h4>
+                  <p className="text-xs text-[#64748B] font-sans mt-0.5">
+                    Real-time split of physical cash counter drawer vs digital instant UPI / QR settlements.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="text-xs font-mono-code text-[#475569] bg-[#F8FAFC] px-3.5 py-1.5 rounded-xl border border-[#E2E8F0] flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[#15803D] animate-pulse"></span>
+                  <span>Total Settled: <strong className="text-[#0F172A] font-bold">₹{revenueData.totalRevenue.toFixed(2)}</strong></span>
+                </div>
+              </div>
+            </div>
+
+            {/* Two Dedicated Collection Boxes: CASH & UPI/QR */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* CASH COLLECTION BOX */}
+              <div className="relative overflow-hidden rounded-2xl border-2 border-[#16A34A]/30 bg-gradient-to-br from-[#F0FDF4] via-[#FFFFFF] to-[#DCFCE7]/40 p-5 shadow-xs transition-all hover:shadow-md hover:border-[#16A34A]/50">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-[#16A34A] text-white flex items-center justify-center shadow-sm">
+                      <Banknote className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-base font-bold text-[#14532D] font-display tracking-tight">
+                          Cash Collection Box
+                        </span>
+                        <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-md bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
+                          Physical Till
+                        </span>
+                      </div>
+                      <p className="text-xs text-[#166534]/80 font-sans mt-0.5">
+                        Counter Cash Drawer & Hand-to-Hand Paper Currency
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex items-baseline justify-between">
+                  <div className="text-2xl sm:text-3xl font-black text-[#14532D] font-mono-code tracking-tight">
+                    ₹{revenueData.cashRevenue.toFixed(2)}
+                  </div>
+                  <div className="text-xs font-mono-code font-bold px-2.5 py-1 rounded-lg bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
+                    {revenueData.totalRevenue > 0
+                      ? ((revenueData.cashRevenue / revenueData.totalRevenue) * 100).toFixed(1)
+                      : '0.0'}% of total
+                  </div>
+                </div>
+
+                {/* Progress Bar & Settlement Counts */}
+                <div className="mt-3.5 space-y-1.5">
+                  <div className="w-full bg-[#DCFCE7] rounded-full h-2.5 overflow-hidden">
+                    <div
+                      className="bg-[#16A34A] h-full rounded-full transition-all duration-500"
+                      style={{
+                        width: `${
+                          revenueData.totalRevenue > 0
+                            ? Math.min(100, (revenueData.cashRevenue / revenueData.totalRevenue) * 100)
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-[#166534] font-mono-code">
+                    <span className="font-semibold">{revenueData.cashCount} Cash Settlement{revenueData.cashCount === 1 ? '' : 's'}</span>
+                    <span>Ready for Drawer Count</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* UPI / QR COLLECTION BOX */}
+              <div className="relative overflow-hidden rounded-2xl border-2 border-[#6366F1]/30 bg-gradient-to-br from-[#EEF2FF] via-[#FFFFFF] to-[#E0E7FF]/50 p-5 shadow-xs transition-all hover:shadow-md hover:border-[#6366F1]/50">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-[#4F46E5] text-white flex items-center justify-center shadow-sm">
+                      <QrCode className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-base font-bold text-[#312E81] font-display tracking-tight">
+                          UPI / QR Collection Box
+                        </span>
+                        <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-md bg-[#E0E7FF] text-[#4338CA] border border-[#C7D2FE]">
+                          Instant UPI / QR
+                        </span>
+                      </div>
+                      <p className="text-xs text-[#3730A3]/80 font-sans mt-0.5">
+                        Dynamic QR Scan, GPay, PhonePe, Paytm, BHIM UPI
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex items-baseline justify-between">
+                  <div className="text-2xl sm:text-3xl font-black text-[#312E81] font-mono-code tracking-tight">
+                    ₹{revenueData.upiRevenue.toFixed(2)}
+                  </div>
+                  <div className="text-xs font-mono-code font-bold px-2.5 py-1 rounded-lg bg-[#E0E7FF] text-[#4338CA] border border-[#C7D2FE]">
+                    {revenueData.totalRevenue > 0
+                      ? ((revenueData.upiRevenue / revenueData.totalRevenue) * 100).toFixed(1)
+                      : '0.0'}% of total
+                  </div>
+                </div>
+
+                {/* Progress Bar & Settlement Counts */}
+                <div className="mt-3.5 space-y-1.5">
+                  <div className="w-full bg-[#E0E7FF] rounded-full h-2.5 overflow-hidden">
+                    <div
+                      className="bg-[#4F46E5] h-full rounded-full transition-all duration-500"
+                      style={{
+                        width: `${
+                          revenueData.totalRevenue > 0
+                            ? Math.min(100, (revenueData.upiRevenue / revenueData.totalRevenue) * 100)
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-[#3730A3] font-mono-code">
+                    <span className="font-semibold">{revenueData.upiCount} Digital Settlement{revenueData.upiCount === 1 ? '' : 's'}</span>
+                    <span>Bank VPA Direct Credit</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Payment Distribution Ratio Stacked Bar */}
+            <div className="pt-2">
+              <div className="flex items-center justify-between text-xs font-mono-code pb-1.5">
+                <span className="text-[#64748B] font-medium">Payment Mode Ratio (Cash vs UPI/QR)</span>
+                <div className="flex items-center gap-3">
+                  <span className="flex items-center gap-1.5 text-[#15803D] font-bold">
+                    <span className="w-2.5 h-2.5 rounded bg-[#16A34A]"></span> Cash: ₹{revenueData.cashRevenue.toFixed(2)}
+                  </span>
+                  <span className="flex items-center gap-1.5 text-[#4338CA] font-bold">
+                    <span className="w-2.5 h-2.5 rounded bg-[#4F46E5]"></span> UPI / QR: ₹{revenueData.upiRevenue.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+              <div className="w-full bg-[#F1F5F9] rounded-full h-3 flex overflow-hidden">
+                <div
+                  className="bg-[#16A34A] h-full transition-all duration-500"
+                  style={{
+                    width: `${
+                      revenueData.totalRevenue > 0
+                        ? (revenueData.cashRevenue / revenueData.totalRevenue) * 100
+                        : 0
+                    }%`,
+                  }}
+                  title={`Cash: ₹${revenueData.cashRevenue.toFixed(2)}`}
+                />
+                <div
+                  className="bg-[#4F46E5] h-full transition-all duration-500"
+                  style={{
+                    width: `${
+                      revenueData.totalRevenue > 0
+                        ? (revenueData.upiRevenue / revenueData.totalRevenue) * 100
+                        : 0
+                    }%`,
+                  }}
+                  title={`UPI / QR: ₹${revenueData.upiRevenue.toFixed(2)}`}
+                />
+              </div>
+            </div>
+          </div>
+
           {/* Visual Daily / Weekly Comparison Chart Bars */}
           <div className="bg-[#FFFFFF] p-5 rounded-2xl border border-[#E2E8F0] shadow-xs space-y-4">
-            <h4 className="text-sm font-bold text-[#172554] flex items-center justify-between">
-              <span>Revenue Distribution ({revenuePeriod === 'DAY' ? 'Today' : revenuePeriod === 'WEEK' ? 'Last 7 Days' : 'Last 14 Days'})</span>
-              <div className="flex items-center gap-3 text-xs font-mono-code font-normal">
-                <span className="flex items-center gap-1 text-[#15803D]">
-                  <span className="w-2.5 h-2.5 rounded bg-[#15803D]"></span> Gaming Console
-                </span>
-                <span className="flex items-center gap-1 text-[#EA580C]">
-                  <span className="w-2.5 h-2.5 rounded bg-[#EA580C]"></span> Cafe & Food
-                </span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <h4 className="text-sm font-bold text-[#172554]">
+                Revenue Distribution ({revenuePeriod === 'DAY' ? 'Today' : revenuePeriod === 'WEEK' ? 'Last 7 Days' : 'Last 14 Days'})
+              </h4>
+
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Switch between Category split vs Payment split */}
+                <div className="inline-flex p-0.5 bg-[#F1F5F9] rounded-lg border border-[#E2E8F0] text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setChartViewMode('CATEGORY')}
+                    className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer transition-all ${
+                      chartViewMode === 'CATEGORY'
+                        ? 'bg-[#172554] text-white shadow-xs'
+                        : 'text-[#64748B] hover:text-[#0F172A]'
+                    }`}
+                  >
+                    Gaming vs Cafe
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setChartViewMode('PAYMENT')}
+                    className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer transition-all ${
+                      chartViewMode === 'PAYMENT'
+                        ? 'bg-[#172554] text-white shadow-xs'
+                        : 'text-[#64748B] hover:text-[#0F172A]'
+                    }`}
+                  >
+                    Cash vs UPI / QR
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-3 text-xs font-mono-code font-normal">
+                  {chartViewMode === 'CATEGORY' ? (
+                    <>
+                      <span className="flex items-center gap-1 text-[#15803D]">
+                        <span className="w-2.5 h-2.5 rounded bg-[#15803D]"></span> Gaming Console
+                      </span>
+                      <span className="flex items-center gap-1 text-[#EA580C]">
+                        <span className="w-2.5 h-2.5 rounded bg-[#EA580C]"></span> Cafe & Food
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="flex items-center gap-1 text-[#16A34A]">
+                        <span className="w-2.5 h-2.5 rounded bg-[#16A34A]"></span> Cash
+                      </span>
+                      <span className="flex items-center gap-1 text-[#4F46E5]">
+                        <span className="w-2.5 h-2.5 rounded bg-[#4F46E5]"></span> UPI / QR
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
-            </h4>
+            </div>
 
             <div className="space-y-3 pt-2">
               {(() => {
@@ -548,25 +783,51 @@ export const AdminShopManager: React.FC = () => {
                   const safeTotal = Number(d?.total || 0);
                   const safeGaming = Number(d?.gaming || 0);
                   const safeFood = Number(d?.food || 0);
+                  const safeCash = Number(d?.cash || 0);
+                  const safeUpi = Number(d?.upi || 0);
                   const pct = Math.min(100, Math.max(8, (safeTotal / maxVal) * 100));
 
                   return (
                     <div key={d?.label || Math.random()} className="space-y-1">
                       <div className="flex justify-between text-xs font-mono-code">
                         <span className="text-[#0F172A] font-semibold">{d?.label || 'Period'}</span>
-                        <span className="text-[#172554] font-bold">₹{safeTotal.toFixed(2)}</span>
+                        <div className="flex items-center gap-2">
+                          {chartViewMode === 'PAYMENT' && (
+                            <span className="text-[11px] text-[#64748B]">
+                              (Cash: ₹{safeCash.toFixed(0)} | UPI: ₹{safeUpi.toFixed(0)})
+                            </span>
+                          )}
+                          <span className="text-[#172554] font-bold">₹{safeTotal.toFixed(2)}</span>
+                        </div>
                       </div>
                       <div className="w-full bg-[#F1F5F9] rounded-full h-3 flex overflow-hidden">
-                        <div
-                          className="bg-[#15803D] h-full transition-all duration-500"
-                          style={{ width: `${safeTotal > 0 ? (safeGaming / safeTotal) * pct : 0}%` }}
-                          title={`Gaming: ₹${safeGaming}`}
-                        />
-                        <div
-                          className="bg-[#EA580C] h-full transition-all duration-500"
-                          style={{ width: `${safeTotal > 0 ? (safeFood / safeTotal) * pct : 0}%` }}
-                          title={`Food: ₹${safeFood}`}
-                        />
+                        {chartViewMode === 'CATEGORY' ? (
+                          <>
+                            <div
+                              className="bg-[#15803D] h-full transition-all duration-500"
+                              style={{ width: `${safeTotal > 0 ? (safeGaming / safeTotal) * pct : 0}%` }}
+                              title={`Gaming: ₹${safeGaming}`}
+                            />
+                            <div
+                              className="bg-[#EA580C] h-full transition-all duration-500"
+                              style={{ width: `${safeTotal > 0 ? (safeFood / safeTotal) * pct : 0}%` }}
+                              title={`Food: ₹${safeFood}`}
+                            />
+                          </>
+                        ) : (
+                          <>
+                            <div
+                              className="bg-[#16A34A] h-full transition-all duration-500"
+                              style={{ width: `${safeTotal > 0 ? (safeCash / safeTotal) * pct : 0}%` }}
+                              title={`Cash: ₹${safeCash}`}
+                            />
+                            <div
+                              className="bg-[#4F46E5] h-full transition-all duration-500"
+                              style={{ width: `${safeTotal > 0 ? (safeUpi / safeTotal) * pct : 0}%` }}
+                              title={`UPI / QR: ₹${safeUpi}`}
+                            />
+                          </>
+                        )}
                       </div>
                     </div>
                   );

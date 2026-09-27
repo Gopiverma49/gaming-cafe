@@ -276,6 +276,8 @@ class StationMatrixResponse(BaseModel):
     modes: List[MatrixModeResponse]
     stations: List[MatrixStationColumn]
     vr_session: Optional[MatrixSessionDetail] = None
+    cafe_session: Optional[MatrixSessionDetail] = None
+    cafe_sessions: List[MatrixSessionDetail] = Field(default_factory=list)
 
 
 # Menu & Order Schemas
