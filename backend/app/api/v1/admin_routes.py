@@ -13,7 +13,7 @@ from app.api.deps import get_db, get_optional_auth_user
 from app.core.config import settings
 from app.core.security import create_admin_token
 from app.models.entities import Station, Session, Order, OrderItem, MenuItem, User
-from app.models.enums import SessionStatus, OrderStatus, PaymentStatus
+from app.models.enums import SessionStatus, OrderStatus, PaymentStatus, StationStatus
 from app.schemas.api_schemas import (
     StationLiveResponse,
     StationCreate,

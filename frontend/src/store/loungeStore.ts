@@ -97,19 +97,6 @@ interface LoungeState {
   // Completed Financial Records & Revenue Analytics
   financialRecords: FinancialRecord[];
   recordTransaction: (record: Omit<FinancialRecord, 'id' | 'timestamp' | 'dateStr'>) => FinancialRecord;
-  getRevenueSummary: (period: 'DAY' | 'WEEK' | 'MONTH') => {
-    totalRevenue: number;
-    gamingRevenue: number;
-    foodRevenue: number;
-    cashRevenue: number;
-    upiRevenue: number;
-    cashCount: number;
-    upiCount: number;
-    sessionsCount: number;
-    averageSessionBill: number;
-    topSellingItem: string;
-    chartData: { label: string; total: number; gaming: number; food: number; cash?: number; upi?: number }[];
-  };
 
   // Local Customer Visit Tracker
   recordCustomerVisit: (name: string, phone?: string, spentAmount?: number) => void;
@@ -481,102 +468,6 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
     return newRecord;
   },
 
-  getRevenueSummary: (period) => {
-    const rawRecords = get().financialRecords;
-    const records = Array.isArray(rawRecords) ? rawRecords : [];
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
-
-    const cutoff = new Date();
-    if (period === 'DAY') {
-      cutoff.setHours(0, 0, 0, 0);
-    } else if (period === 'WEEK') {
-      cutoff.setDate(now.getDate() - 7);
-    } else {
-      cutoff.setDate(now.getDate() - 30);
-    }
-
-    const filtered = records.filter((r) => {
-      if (period === 'DAY') {
-        return r.dateStr === todayStr;
-      }
-      return new Date(r.dateStr) >= cutoff;
-    });
-
-    const totalRevenue = filtered.reduce((s, r) => s + r.totalAmount, 0);
-    const gamingRevenue = filtered.reduce((s, r) => s + r.timeCharge, 0);
-    const foodRevenue = filtered.reduce((s, r) => s + r.foodCharge, 0);
-    const cashRevenue = filtered
-      .filter((r) => r.paymentMethod === 'CASH')
-      .reduce((s, r) => s + r.totalAmount, 0);
-    const upiRevenue = filtered
-      .filter((r) => r.paymentMethod === 'UPI')
-      .reduce((s, r) => s + r.totalAmount, 0);
-    const cashCount = filtered.filter((r) => r.paymentMethod === 'CASH').length;
-    const upiCount = filtered.filter((r) => r.paymentMethod === 'UPI').length;
-    const sessionsCount = filtered.length;
-    const averageSessionBill = sessionsCount > 0 ? totalRevenue / sessionsCount : 0;
-
-    // Single-pass date index to avoid repetitive O(days * records) filtering
-    const recordsByDate = new Map<string, FinancialRecord[]>();
-    for (const r of records) {
-      const list = recordsByDate.get(r.dateStr);
-      if (list) {
-        list.push(r);
-      } else {
-        recordsByDate.set(r.dateStr, [r]);
-      }
-    }
-
-    const daysToShow = period === 'DAY' ? 1 : period === 'WEEK' ? 7 : 14;
-    const chartData: { label: string; total: number; gaming: number; food: number; cash: number; upi: number }[] = [];
-
-    for (let i = daysToShow - 1; i >= 0; i--) {
-      const d = new Date(now.getTime() - i * 86400000);
-      const label = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-      const dStr = d.toISOString().split('T')[0];
-      const dayRecs = recordsByDate.get(dStr) || [];
-      chartData.push({
-        label,
-        total: dayRecs.reduce((s, r) => s + r.totalAmount, 0),
-        gaming: dayRecs.reduce((s, r) => s + r.timeCharge, 0),
-        food: dayRecs.reduce((s, r) => s + r.foodCharge, 0),
-        cash: dayRecs.filter((r) => r.paymentMethod === 'CASH').reduce((s, r) => s + r.totalAmount, 0),
-        upi: dayRecs.filter((r) => r.paymentMethod === 'UPI').reduce((s, r) => s + r.totalAmount, 0),
-      });
-    }
-
-    let topSellingItem = 'Loaded Smash Burger';
-    const itemCounts = new Map<string, number>();
-    for (const r of filtered) {
-      if (r.foodItems) {
-        for (const item of r.foodItems) {
-          itemCounts.set(item.name, (itemCounts.get(item.name) || 0) + item.quantity);
-        }
-      }
-    }
-    let maxCount = 0;
-    for (const [name, count] of itemCounts.entries()) {
-      if (count > maxCount) {
-        maxCount = count;
-        topSellingItem = name;
-      }
-    }
-
-    return {
-      totalRevenue,
-      gamingRevenue,
-      foodRevenue,
-      cashRevenue,
-      upiRevenue,
-      cashCount,
-      upiCount,
-      sessionsCount,
-      averageSessionBill,
-      topSellingItem,
-      chartData,
-    };
-  },
 
   recordCustomerVisit: (_name, _phone, _spentAmount = 0) => {
     // Visits are recorded directly into the backend SQL database via check_in

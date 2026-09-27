@@ -93,44 +93,4 @@ export const DEFAULT_PRICING_TIERS: PricingTier[] = [
 // ---------------------------------------------------------------------------
 // Station Platform Tier Visuals & Specs
 // ---------------------------------------------------------------------------
-export interface TierVisualInfo {
-  label: string;
-  badge: string;
-  display: string;
-  accentColor: string;
-}
-
-export function getStationTierVisuals(tier?: string | null): TierVisualInfo {
-  const safeTier = (tier || 'CONSOLE').toString().toUpperCase();
-  switch (safeTier) {
-    case 'CONSOLE':
-      return {
-        label: 'PS5 Console',
-        badge: 'bg-blue-50 text-blue-700 border-blue-200',
-        display: '65″ 4K 120Hz OLED + DualSense',
-        accentColor: 'text-blue-700',
-      };
-    case 'SIMULATOR':
-      return {
-        label: 'Simulator Rig',
-        badge: 'bg-amber-50 text-amber-700 border-amber-200',
-        display: 'Triple 32″ Curved + DirectDrive',
-        accentColor: 'text-amber-700',
-      };
-    case 'VIP':
-      return {
-        label: 'VIP Station',
-        badge: 'bg-purple-50 text-purple-700 border-purple-200',
-        display: 'Private Acoustic Pod + RTX 4090',
-        accentColor: 'text-purple-700',
-      };
-    default:
-      return {
-        label: 'Gaming PC',
-        badge: 'bg-sky-50 text-sky-700 border-sky-200',
-        display: '240Hz Fast IPS + RTX 4080',
-        accentColor: 'text-sky-700',
-      };
-  }
-}
 

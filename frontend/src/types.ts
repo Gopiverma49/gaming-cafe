@@ -194,13 +194,6 @@ export interface KitchenOrder {
   rawOrder?: Order;
 }
 
-export interface InventoryItem {
-  id: string;
-  name: string;
-  category: 'beverage' | 'snack' | string;
-  stockQuantity: number;
-  unitPrice: number;
-}
 
 export interface DeviceAvailability {
   id: string; // 'PS1' | 'PS2' | 'PS3' | 'VR1'

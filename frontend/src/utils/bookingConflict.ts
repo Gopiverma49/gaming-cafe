@@ -90,12 +90,7 @@ export function toISODateString(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
-/**
- * Core Dynamic Window Check Rule:
- * Two intervals [StartA, EndA) and [StartB, EndB) conflict if and only if:
- * StartA < EndB AND EndA > StartB
- */
-export function checkTimeCollision(
+function checkTimeCollision(
   startA: Date,
   endA: Date,
   startB: Date,
@@ -236,19 +231,6 @@ export function getNextBookingForStation(
   return relevant.length > 0 ? relevant[0] : null;
 }
 
-/**
- * Calculates maximum available window in minutes for walk-in starting at fromTime before next booking.
- */
-export function getMaxAvailableWindowMinutes(
-  stationId: string,
-  bookings: AdvanceBooking[],
-  fromTime: Date = new Date()
-): number | null {
-  const next = getNextBookingForStation(stationId, bookings, fromTime);
-  if (!next) return null;
-  const mins = Math.floor((next.start.getTime() - fromTime.getTime()) / 60000);
-  return Math.max(0, mins);
-}
 
 /**
  * Operational Scenario 1: Walk-In Starting Overlap Protection
