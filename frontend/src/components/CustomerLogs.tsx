@@ -25,18 +25,24 @@ export const CustomerLogs: React.FC = () => {
     refetchInterval: POLL_INTERVALS.CUSTOMERS,
   });
 
-  // Filter for Live Check-in Sessions
+  // Filter for Live Check-in Sessions (Latest check-ins at top)
   const filteredSessions = useMemo(() => {
-    const list = Array.isArray(sessionLogs) ? sessionLogs : [];
-    return list.filter((s) => {
-      const q = searchQuery.toLowerCase().trim();
-      if (!q) return true;
-      const name = (s?.customerName || '').toLowerCase();
-      const phone = (s?.customerPhone || '').toLowerCase();
-      const st = (s?.stationName || '').toLowerCase();
-      const status = (s?.status || '').toLowerCase();
-      return name.includes(q) || phone.includes(q) || st.includes(q) || status.includes(q);
-    });
+    const list = Array.isArray(sessionLogs) ? [...sessionLogs] : [];
+    return list
+      .filter((s) => {
+        const q = searchQuery.toLowerCase().trim();
+        if (!q) return true;
+        const name = (s?.customerName || '').toLowerCase();
+        const phone = (s?.customerPhone || '').toLowerCase();
+        const st = (s?.stationName || '').toLowerCase();
+        const status = (s?.status || '').toLowerCase();
+        return name.includes(q) || phone.includes(q) || st.includes(q) || status.includes(q);
+      })
+      .sort((a, b) => {
+        const timeA = a?.startedAt ? new Date(a.startedAt).getTime() : 0;
+        const timeB = b?.startedAt ? new Date(b.startedAt).getTime() : 0;
+        return timeB - timeA;
+      });
   }, [sessionLogs, searchQuery]);
 
   const formatSessionTime = (isoString: string) => {
@@ -204,6 +210,11 @@ export const CustomerLogs: React.FC = () => {
                         <span className="font-mono-code font-black text-[#172554] text-sm">
                           ₹{Number(sess.totalCost || 0).toFixed(2)}
                         </span>
+                        {Number(sess.ordersCharge || 0) > 0 && (
+                          <span className="block text-[10px] text-[#64748B] font-mono-code">
+                            (Food: ₹{Number(sess.ordersCharge).toFixed(2)})
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );

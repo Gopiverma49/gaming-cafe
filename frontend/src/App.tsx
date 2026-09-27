@@ -17,6 +17,8 @@ import { AdminShopManager } from './components/AdminShopManager';
 import { LoginPage } from './components/LoginPage';
 import { GamingCafeCanvas } from './components/GamingCafeCanvas';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { LegalModal } from './components/LegalModal';
+import { CookieBanner } from './components/CookieBanner';
 import { useAuthStore } from './store/authStore';
 import { useCafeWebSocket } from './hooks/useCafeWebSocket';
 import { fetchKitchenOrders } from './api';
@@ -38,8 +40,16 @@ type ActiveTab = 'matrix' | 'orders' | 'shop' | 'kitchen';
 function MainDashboard() {
   const { currentPortal, adminUser, logout } = useAuthStore();
   const [activeTab, setActiveTab] = useState<ActiveTab>('matrix');
+  const [legalModal, setLegalModal] = useState<'privacy' | 'terms' | null>(null);
 
   useEffect(() => {
+    // Check initial pathname for legal pages
+    const path = window.location.pathname.toLowerCase();
+    if (path === '/privacy') {
+      setLegalModal('privacy');
+    } else if (path === '/terms') {
+      setLegalModal('terms');
+    }
     document.documentElement.classList.remove('dark');
 
     // Prevent unhandled promise rejections from causing blank page halts
@@ -296,6 +306,49 @@ function MainDashboard() {
           </button>
         </nav>
       )}
+
+      {/* Accessible Compliance Footer */}
+      <footer className="relative z-10 border-t border-slate-200/80 bg-white/70 backdrop-blur-xs py-4 px-4 sm:px-8 mt-auto text-center text-xs text-slate-500 font-sans">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse" />
+            <span className="font-medium text-slate-700">All Systems Operational</span>
+            <span className="text-slate-300">|</span>
+            <span>&copy; 2026 Vanya Gaming Lounge</span>
+          </div>
+
+          <div className="flex items-center gap-4 text-xs font-semibold">
+            <button
+              onClick={() => setLegalModal('privacy')}
+              className="text-slate-600 hover:text-orange-600 transition-colors cursor-pointer min-h-[44px] flex items-center"
+            >
+              Privacy Policy
+            </button>
+            <span className="text-slate-300">•</span>
+            <button
+              onClick={() => setLegalModal('terms')}
+              className="text-slate-600 hover:text-orange-600 transition-colors cursor-pointer min-h-[44px] flex items-center"
+            >
+              Terms of Service
+            </button>
+            <span className="text-slate-300">•</span>
+            <a
+              href="/health"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-slate-600 hover:text-orange-600 transition-colors cursor-pointer min-h-[44px] flex items-center"
+            >
+              API Status
+            </a>
+          </div>
+        </div>
+      </footer>
+
+      {/* Cookie Consent Banner */}
+      <CookieBanner onOpenPrivacy={() => setLegalModal('privacy')} />
+
+      {/* Privacy Policy & Terms Modal */}
+      <LegalModal type={legalModal} onClose={() => setLegalModal(null)} />
     </div>
   );
 }

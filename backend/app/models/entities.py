@@ -292,3 +292,7 @@ class AdvanceBookingRecord(Base):
     status: Mapped[str] = mapped_column(String(20), default="CONFIRMED", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
+    __table_args__ = (
+        Index("ix_advance_bookings_date_station", "booking_date", "station_id"),
+    )
+

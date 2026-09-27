@@ -2,7 +2,7 @@ import asyncio
 import functools
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional, Dict, Any, List, Set, Callable
 
@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import DBAPIError
 
 from app.core.config import settings
-from app.models.entities import Station, Session, Order, OrderItem, Payment, PhysicalDevice, User
+from app.models.entities import Station, Session, Order, OrderItem, Payment, PhysicalDevice, User, AdvanceBookingRecord
 from app.models.enums import (
     StationStatus,
     SessionStatus,
@@ -141,6 +141,94 @@ def with_transaction_retry(
     return decorator
 
 
+def parse_booking_range_service(booking_date: str, start_time: str, duration_minutes: int):
+    """
+    Parses a booking's date and start time into naive (start_dt, end_dt) datetimes,
+    handling YYYY-MM-DD and DD-MM-YYYY formats as well as 12h/24h timestamps.
+    """
+    if not booking_date or not start_time:
+        return None, None
+    try:
+        clean_date = booking_date.split("T")[0].strip()
+        parts = [int(p) for p in clean_date.split("-") if p.isdigit()]
+        if len(parts) == 3:
+            if parts[0] > 1000:
+                y, m, d = parts[0], parts[1], parts[2]
+            elif parts[2] > 1000:
+                y, m, d = parts[2], parts[1], parts[0]
+            else:
+                return None, None
+        else:
+            return None, None
+
+        t_clean = start_time.strip().upper()
+        is_pm = "PM" in t_clean
+        is_am = "AM" in t_clean
+        t_clean = t_clean.replace("PM", "").replace("AM", "").strip()
+        t_parts = [int(p) for p in t_clean.split(":") if p.strip().isdigit()]
+        if not t_parts:
+            return None, None
+        h = t_parts[0]
+        mins = t_parts[1] if len(t_parts) > 1 else 0
+        if is_pm and h < 12:
+            h += 12
+        elif is_am and h == 12:
+            h = 0
+
+        start_dt = datetime(y, m, d, h, mins)
+        dur = max(1, int(duration_minutes or 60))
+        end_dt = start_dt + timedelta(minutes=dur)
+        return start_dt, end_dt
+    except Exception:
+        return None, None
+
+
+async def _validate_no_advance_booking_conflict(
+    db: AsyncSession,
+    target_device: str,
+    allocated_minutes: int,
+    customer_name: Optional[str] = None,
+    customer_phone: Optional[str] = None,
+):
+    """
+    Guarantees that a walk-in / on-demand session starting now on target_device
+    does not collide with an upcoming confirmed advance booking reservation.
+    """
+    b_stmt = select(AdvanceBookingRecord).where(
+        AdvanceBookingRecord.station_id == target_device.upper(),
+        AdvanceBookingRecord.status == "CONFIRMED",
+    )
+    b_records = (await db.execute(b_stmt)).scalars().all()
+    if not b_records:
+        return
+
+    now_local = datetime.now()
+    session_end = now_local + timedelta(minutes=max(1, allocated_minutes))
+
+    for eb in b_records:
+        # If this is the booking's own customer checking in, allow it
+        if customer_phone and eb.phone_number and customer_phone.strip() == eb.phone_number.strip():
+            continue
+        if customer_name and eb.customer_name and customer_name.strip().lower() == eb.customer_name.strip().lower() and customer_name.strip().lower() not in ("gamer", "walk-in gamer"):
+            continue
+
+        eb_start, eb_end = parse_booking_range_service(eb.booking_date, eb.start_time, eb.duration_minutes)
+        if not eb_start or not eb_end:
+            continue
+
+        # Check collision: session starts before booking ends AND session ends after booking starts
+        if now_local < eb_end and session_end > eb_start:
+            max_window = max(0, int((eb_start - now_local).total_seconds() / 60))
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Cannot start {allocated_minutes}m session on {target_device}. "
+                    f"Station is reserved for advance booking at {eb.start_time} for {eb.customer_name} "
+                    f"(Maximum available window: {max_window} mins)."
+                ),
+            )
+
+
 @with_transaction_retry()
 async def check_in(
     db: AsyncSession,
@@ -205,6 +293,15 @@ async def check_in(
                 detail=f"All consoles for {station.name} are currently occupied.",
             )
         assigned_device = avail[0]
+
+    # Validate advance booking overlap protection
+    await _validate_no_advance_booking_conflict(
+        db=db,
+        target_device=assigned_device,
+        allocated_minutes=allocated_minutes,
+        customer_name=customer_name,
+        customer_phone=customer_phone,
+    )
 
     # 2. Transition station to OCCUPIED
     station.status = StationStatus.OCCUPIED.value
@@ -695,6 +792,11 @@ async def get_fleet_categories(db: AsyncSession) -> List[Dict[str, Any]]:
         if dev_key:
             device_session_map[dev_key] = s
 
+    # Query confirmed advance bookings to reflect upcoming reservations
+    b_stmt = select(AdvanceBookingRecord).where(AdvanceBookingRecord.status == "CONFIRMED")
+    b_records = (await db.execute(b_stmt)).scalars().all()
+    now_local = datetime.now()
+
     # Query stations to get live pricing / rates if admin has customized them
     st_stmt = select(Station)
     st_res = await db.execute(st_stmt)
@@ -714,21 +816,40 @@ async def get_fleet_categories(db: AsyncSession) -> List[Dict[str, Any]]:
             dev_upper = dev_name.upper()
             active_s = device_session_map.get(dev_upper)
             is_occupied = active_s is not None
+            is_reserved = False
+            upcoming_b = None
             rem_min = None
             if active_s:
                 elapsed = int((now - ensure_utc(active_s.started_at)).total_seconds() / 60)
                 rem_min = max(0, (active_s.allocated_minutes or 60) - elapsed)
+            else:
+                for eb in b_records:
+                    if eb.station_id.strip().upper() == dev_upper:
+                        eb_start, eb_end = parse_booking_range_service(eb.booking_date, eb.start_time, eb.duration_minutes)
+                        if eb_start and eb_end and eb_end > now_local:
+                            diff_m = int((eb_start - now_local).total_seconds() / 60)
+                            if diff_m <= 15 and diff_m >= -15:
+                                is_reserved = True
+                                upcoming_b = {
+                                    "booking_id": eb.id,
+                                    "customer_name": eb.customer_name,
+                                    "start_time": eb.start_time,
+                                    "starts_in_minutes": diff_m,
+                                }
+                                break
 
             devices_list.append({
                 "id": dev_name,
                 "name": dev_name,
                 "is_occupied": is_occupied,
+                "is_reserved": is_reserved,
+                "upcoming_booking": upcoming_b,
                 "current_session_id": str(active_s.id) if active_s else None,
                 "remaining_minutes": rem_min,
             })
 
         total_units = len(devices_list)
-        available_units = sum(1 for d in devices_list if not d["is_occupied"])
+        available_units = sum(1 for d in devices_list if not d["is_occupied"] and not d.get("is_reserved"))
         is_available = available_units > 0
 
         # Read hourly_rate and pricing_tiers directly from the database station record if available
@@ -975,6 +1096,11 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
 
     ordered_devices = ["PS1", "PS2", "PS3"]
 
+    # Query confirmed advance bookings to reflect upcoming reservations
+    b_stmt = select(AdvanceBookingRecord).where(AdvanceBookingRecord.status == "CONFIRMED")
+    b_records = (await db.execute(b_stmt)).scalars().all()
+    now_local = datetime.now()
+
     stations_list = []
     for dev_name in ordered_devices:
         dev_upper = dev_name.upper()
@@ -995,6 +1121,9 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
         ]
 
         active_detail = None
+        upcoming_booking_info = None
+        st_status = "AVAILABLE"
+
         if active_s:
             started_at = ensure_utc(active_s.started_at)
             elapsed_sec = (now - started_at).total_seconds()
@@ -1060,12 +1189,37 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
                 "hourly_rate": st_rate,
                 "pricing_tiers": pricing_tiers,
             }
+        else:
+            # Check for upcoming confirmed advance bookings on this station
+            st_bookings = []
+            for eb in b_records:
+                if eb.station_id.strip().upper() == dev_upper:
+                    eb_start, eb_end = parse_booking_range_service(eb.booking_date, eb.start_time, eb.duration_minutes)
+                    if eb_start and eb_end and eb_end > now_local:
+                        diff_m = int((eb_start - now_local).total_seconds() / 60)
+                        if diff_m >= -15:
+                            st_bookings.append((diff_m, eb))
+
+            st_bookings.sort(key=lambda x: x[0])
+            if st_bookings:
+                diff_m, eb = st_bookings[0]
+                upcoming_booking_info = {
+                    "booking_id": eb.id,
+                    "customer_name": eb.customer_name,
+                    "session_mode": eb.session_mode,
+                    "start_time": eb.start_time,
+                    "end_time": eb.end_time,
+                    "starts_in_minutes": diff_m,
+                }
+                if diff_m <= 15:
+                    st_status = "RESERVED"
 
         stations_list.append({
             "id": dev_name,
             "name": dev_name,
             "device_type": device_type,
-            "status": "OCCUPIED" if is_occupied else "AVAILABLE",
+            "status": "OCCUPIED" if is_occupied else st_status,
+            "upcoming_booking": upcoming_booking_info,
             "supported_modes": supported_modes_for_station,
             "active_session": active_detail,
         })
@@ -1249,6 +1403,15 @@ async def start_category_session(
                 detail=f"Device '{target_device_name}' currently in use.",
             )
 
+        # Validate advance booking overlap protection
+        await _validate_no_advance_booking_conflict(
+            db=db,
+            target_device=target_device_name,
+            allocated_minutes=duration_minutes,
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+        )
+
         # Double check database row lock on existing active sessions for this device
         active_stmt = (
             select(Session)
@@ -1322,6 +1485,15 @@ async def start_category_session(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Station '{station.name}' currently in use.",
             )
+
+        # Validate advance booking overlap protection
+        await _validate_no_advance_booking_conflict(
+            db=db,
+            target_device=target_device_name,
+            allocated_minutes=duration_minutes,
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+        )
 
         pricing_tiers_pool = station.pricing_tiers or []
         fallback_hourly_rate = station.hourly_rate or Decimal(str(settings.DEFAULT_HOURLY_RATE))

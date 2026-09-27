@@ -1,0 +1,13 @@
+# Robots.txt for Vanya Gaming Cafe & Lounge Operations System
+User-agent: *
+Allow: /
+Allow: /privacy
+Allow: /terms
+
+# Disallow administrative control panel and internal API routes
+Disallow: /admin
+Disallow: /admin/
+Disallow: /api/
+Disallow: /ws/
+
+Sitemap: https://vanyagaming.com/sitemap.xml

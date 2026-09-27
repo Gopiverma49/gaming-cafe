@@ -6,14 +6,16 @@ A modern, full-stack management platform for gaming cafes and esports lounges. E
 
 ## ⚡ Features
 
-- 🖥️ **Station Management**: Real-time status of all gaming PCs and consoles (Available, Occupied, Reserved, Maintenance) with a 2D Console Allocation Matrix.
+- 🖥️ **Station Management & 2D Matrix**: Real-time status of all gaming PCs and consoles (Available, Occupied, Reserved, Maintenance) with a 2D Console Allocation Matrix across Solo, Multiplayer, Car Simulator, and VR modes.
+- 📅 **Advance Bookings Management**: Real-time reservation scheduling, conflict detection, advance deposits, and balance tracking directly synchronized with console allocation.
 - 📱 **Customer Check-In with Phone & Name**: Front-desk check-in supports customer name and mobile phone number, stored securely in the database (`sessions.customer_phone`) with full indexing.
 - 📋 **Customer Logs Directory**: Complete session audit trail and searchable history with real-time filtering by player name, phone number, station, and session status.
 - ⏱️ **Live Session Tracking**: Accurate, per-minute billing with grace periods, automatic elapsed time calculation, and quick duration extensions.
-- 🍔 **Kitchen & Snack Orders (Kanban)**: Customers can order food and drinks directly from their desk; staff track preparation in real-time with out-of-stock guards.
+- 🍔 **Kitchen & Snack Orders (Kanban)**: In-seat QR ordering for food and drinks; kitchen staff track ticket preparation in real-time with out-of-stock guards.
 - 💳 **Seamless Settle & Billing**: Consolidated checkout combining station play time and kitchen orders with itemized breakdown, customer phone metadata, and instant UPI QR code & cash options.
+- 🔐 **Cryptographic Payment Webhooks**: Secure HMAC-SHA256 signature verification and memory-efficient idempotency registry for automated payment reconciliation.
 - 🎨 **High-Contrast Cream Design System**: Clean soft cream background (`#FFF7ED`) and crisp `#FFFFFF` panels with high-visibility navy (`#172554`), dark slate (`#0F172A`), and slate-grey (`#64748B`) typography.
-- 🔄 **Real-Time Sync**: Instant updates across admin dashboard and customer screens powered by WebSockets.
+- 🔄 **Real-Time Sync**: Instant updates across admin dashboard and customer screens powered by WebSockets with fallback polling.
 - 🛡️ **Desk-Scoped Access**: Secure, token-based desk access for customers without exposing administrative controls.
 - 🚀 **Cloud & Hosting Ready**: Preconfigured Docker Compose, health check monitors, Nginx caching & security headers, and CORS control.
 
@@ -217,23 +219,28 @@ All primary configurations are defined in `.env` (derived from `.env.example`):
 gaming-cafe/
 ├── backend/
 │   ├── app/
-│   │   ├── api/          # REST API endpoints (admin & customer routes)
-│   │   ├── core/         # Config, database connection, JWT security
-│   │   ├── models/       # SQLAlchemy database models
-│   │   ├── schemas/      # Pydantic request/response schemas
-│   │   ├── services/     # Billing engine, session logic & WebSockets
-│   │   └── main.py       # FastAPI application entrypoint
+│   │   ├── api/          # REST API endpoints (deps & v1 modular routers)
+│   │   │   └── v1/       # admin, customer, auth, booking, payment routes
+│   │   ├── core/         # Config, database engine, rate limiter, JWT security, upload security
+│   │   ├── models/       # SQLAlchemy models (Station, User, Session, Order, AdvanceBookingRecord)
+│   │   ├── schemas/      # Pydantic V2 request & response schemas
+│   │   ├── services/     # Billing engine, session service, order service, WebSockets
+│   │   └── main.py       # FastAPI application lifecycle & tunnel-aware CORS
 │   ├── migrations/       # Alembic database schema migrations
-│   ├── tests/            # Automated test suites
+│   ├── tests/            # Automated test suites (8 modules, 46 tests)
 │   ├── requirements.txt  # Python package dependencies
 │   └── Dockerfile        # Backend production image
 ├── frontend/
 │   ├── src/
-│   │   ├── components/   # StationGrid, CustomerHUD, KitchenKanban
-│   │   ├── hooks/        # WebSocket and state management hooks
-│   │   ├── App.tsx       # Main dashboard layout & navigation
-│   │   ├── api.ts        # API client helpers
-│   │   └── vite-env.d.ts # TypeScript environment typings
+│   │   ├── components/   # ConsoleMatrix, StationGrid, KitchenKanban, AdvanceBookings, CustomerPortal
+│   │   ├── hooks/        # WebSocket real-time subscription hooks
+│   │   ├── store/        # Zustand stores (authStore, loungeStore, notificationStore)
+│   │   ├── utils/        # Conflict detection & Web Audio synthesis alerts
+│   │   ├── App.tsx       # Main dashboard layout, navigation & error boundaries
+│   │   ├── api.ts        # Resilient fetch API client with timeout & token injection
+│   │   ├── constants.ts  # Visual tokens, pricing slabs & tuned polling intervals
+│   │   ├── types.ts      # TypeScript interfaces & domain types
+│   │   └── main.tsx      # React 19 application entrypoint
 │   ├── package.json      # Frontend npm dependencies & scripts
 │   ├── nginx.conf        # Production Nginx reverse proxy & caching config
 │   └── Dockerfile        # Multi-stage frontend container

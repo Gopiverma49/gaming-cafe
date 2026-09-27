@@ -174,6 +174,7 @@ export const CustomerPortal: React.FC = () => {
   // Place Order handler
   const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     if (!customerName.trim()) {
       setCheckoutError(orderType === 'CAFE' ? 'Please enter your name or table number.' : 'Please enter your gamer name.');
       return;
@@ -215,7 +216,10 @@ export const CustomerPortal: React.FC = () => {
 
     try {
       // 1. Send to backend in-seat ordering API
-      await placeInSeatOrderApi(orderPayload);
+      const created = await placeInSeatOrderApi(orderPayload);
+      if (created?.orderId) {
+        orderPayload.orderId = created.orderId;
+      }
       queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
       queryClient.invalidateQueries({ queryKey: ['station-matrix'] });
       queryClient.invalidateQueries({ queryKey: ['stations-live'] });

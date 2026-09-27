@@ -20,6 +20,7 @@ import path from 'path';
 import net from 'net';
 import { fileURLToPath } from 'url';
 import qrcode from 'qrcode-terminal';
+import { env as validatedEnv } from './src/config/env.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -127,7 +128,7 @@ async function main() {
   else if (fs.existsSync(unixVenv)) pythonCmd = unixVenv;
 
   // ── 2. Decide DATABASE_URL (SQLite fallback if no Postgres) ──────────────
-  const env = { ...process.env, PYTHONPATH: backendDir };
+  const env = { ...process.env, HOST: validatedEnv.HOST, PORT: String(validatedEnv.BACKEND_PORT), PYTHONPATH: backendDir };
   const dbUrl = env.DATABASE_URL || '';
   const isLocalPg = dbUrl.includes('localhost:5432') || dbUrl.includes('127.0.0.1:5432') || !dbUrl;
   if (isLocalPg) {

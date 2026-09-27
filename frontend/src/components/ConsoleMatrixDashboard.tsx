@@ -27,6 +27,8 @@ import {
   XCircle,
   Coffee,
   Plus,
+  Check,
+  X,
 } from 'lucide-react';
 import {
   MatrixSession,
@@ -39,6 +41,7 @@ import {
   startCategorySessionApi,
   extendSessionApi,
   cancelCustomerSessionApi,
+  updateKitchenOrderStatus,
 } from '../api';
 import { useNotificationStore } from '../store/notificationStore';
 import { useLoungeStore } from '../store/loungeStore';
@@ -48,10 +51,11 @@ import {
   validateWalkInDuration,
   formatTime12h,
 } from '../utils/bookingConflict';
+import { OrderedReceiptItem } from './SettleInvoiceModal';
 
 interface ConsoleMatrixDashboardProps {
   onOrderFood: (session: MatrixSession, stationName: string) => void;
-  onCheckout: (session: MatrixSession, stationName: string) => void;
+  onCheckout: (session: MatrixSession, stationName: string, directItems?: OrderedReceiptItem[]) => void;
   onTransfer: (session: MatrixSession, stationName: string) => void;
   onQuickExtend?: (session: MatrixSession, minutes: number) => void;
 }
@@ -68,6 +72,7 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
     inSeatOrders,
     updateInSeatOrderStatus,
     getStationInSeatOrders,
+    clearStationInSeatOrders,
     flashingStationId,
     bookings,
     clearStationFoodOrders,
@@ -81,14 +86,38 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
     setExpandedOrdersMap((prev) => ({ ...prev, [orderId]: !prev[orderId] }));
   };
 
-  const handleToggleOrderStatus = (orderId: string, currentStatus: string) => {
-    const nextStatus = currentStatus === 'pending' ? 'preparing' : currentStatus === 'preparing' ? 'delivered' : 'pending';
-    updateInSeatOrderStatus(orderId, nextStatus as any);
-    addNotification(
-      'FOOD_ORDER',
-      'Order Status Advanced',
-      `Order status updated to ${nextStatus.toUpperCase()}.`
-    );
+  const handleAcceptOrder = async (orderId: string, customerName?: string) => {
+    updateInSeatOrderStatus(orderId, 'preparing');
+    try {
+      await updateKitchenOrderStatus(orderId, 'PREPARING');
+    } catch {}
+    queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
+    queryClient.invalidateQueries({ queryKey: ['station-matrix'] });
+    queryClient.invalidateQueries({ queryKey: ['stations-live'] });
+    addNotification('FOOD_ORDER', 'Order Accepted', `Order for ${customerName || 'customer'} is now preparing.`);
+  };
+
+  const handleRejectOrder = async (orderId: string, customerName?: string) => {
+    updateInSeatOrderStatus(orderId, 'rejected');
+    try {
+      await updateKitchenOrderStatus(orderId, 'CANCELLED');
+    } catch {}
+    queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
+    queryClient.invalidateQueries({ queryKey: ['station-matrix'] });
+    queryClient.invalidateQueries({ queryKey: ['stations-live'] });
+    queryClient.invalidateQueries({ queryKey: ['admin-menu'] });
+    addNotification('SYSTEM', 'Order Rejected', `Order for ${customerName || 'customer'} rejected and excluded from bill.`);
+  };
+
+  const handleDeliverOrder = async (orderId: string) => {
+    updateInSeatOrderStatus(orderId, 'delivered');
+    try {
+      await updateKitchenOrderStatus(orderId, 'SERVED');
+    } catch {}
+    queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
+    queryClient.invalidateQueries({ queryKey: ['station-matrix'] });
+    queryClient.invalidateQueries({ queryKey: ['stations-live'] });
+    addNotification('FOOD_ORDER', 'Order Delivered', `Order marked as served / delivered.`);
   };
 
   // Selected duration per cell: map key `${modeId}-${stationId}` -> duration_minutes
@@ -694,32 +723,133 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                     );
                                   })()}
 
-                                  {/* 3. Financials & Actions */}
-                                  <div className="space-y-3">
-                                    <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0]">
-                                      <span className="text-xs text-[#64748B] font-medium">Running Total:</span>
-                                      <span className="text-base font-black font-mono-code text-[#172554]">
-                                        ₹{Number(vrActiveSession.running_total || vrActiveSession.time_charge || 0).toFixed(2)}
-                                      </span>
-                                    </div>
+                                  {/* 3. In-Seat Orders & Financials & Actions */}
+                                  {(() => {
+                                    const vrKitchenOrders = queryClient.getQueryData<Order[]>(['kitchen-orders']) || [];
+                                    const vrOrders = inSeatOrders.filter((o) => {
+                                      if (o.stationId.toUpperCase() !== 'VR1') return false;
+                                      const ordStatus = String(o.status || '').toLowerCase();
+                                      if (ordStatus === 'cancelled' || ordStatus === 'rejected') return false;
+                                      const isCancelledInKitchen = vrKitchenOrders.some(
+                                        (k) => (k.id === o.orderId || (k as any).order_id === o.orderId) && (k.status === 'CANCELLED' || k.status === 'REJECTED')
+                                      );
+                                      return !isCancelledInKitchen;
+                                    });
+                                    const hasPendingVrOrders = vrOrders.some(
+                                      (o) => o.status === 'pending' || (o.status as any) === 'queued' || (o.status as any) === 'QUEUED'
+                                    );
 
-                                    <div className="flex items-center gap-2">
-                                      <button
-                                        onClick={() => onOrderFood(vrActiveSession, 'VR1')}
-                                        className="flex-1 py-2 px-2.5 rounded-xl bg-[#FFF7ED] hover:bg-[#FFEDD5] border border-[#FED7AA] text-[#EA580C] font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
-                                      >
-                                        <UtensilsCrossed className="w-3.5 h-3.5 text-[#EA580C]" />
-                                        <span>Order Food</span>
-                                      </button>
+                                    return (
+                                      <div className="space-y-3">
+                                        {/* VR In-Seat Orders List */}
+                                        {vrOrders.length > 0 && (
+                                          <div className="p-2.5 rounded-xl bg-[#FFF7ED] border border-[#FED7AA] space-y-1.5 text-left">
+                                            <div className="flex items-center justify-between text-xs pb-1 border-b border-[#FED7AA] font-bold text-[#EA580C]">
+                                              <div className="flex items-center gap-1.5">
+                                                <UtensilsCrossed className="w-3.5 h-3.5" />
+                                                <span>In-Seat Orders ({vrOrders.length})</span>
+                                              </div>
+                                              <span className="text-[10px] bg-[#FFEDD5] px-1.5 py-0.5 rounded border border-[#FED7AA]">
+                                                {vrOrders.filter((o) => o.status === 'pending' || (o.status as any) === 'QUEUED').length} pending
+                                              </span>
+                                            </div>
 
-                                      <button
-                                        onClick={() => onCheckout(vrActiveSession, 'VR1')}
-                                        className="flex-1 py-2 px-2.5 rounded-xl bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
-                                      >
-                                        <Receipt className="w-3.5 h-3.5 text-white" />
-                                        <span>Settle Bill</span>
-                                      </button>
-                                    </div>
+                                            <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                                              {vrOrders.map((ord) => (
+                                                <div key={ord.orderId} className="p-1.5 rounded-lg bg-white border border-[#E2E8F0] space-y-1 text-[11px]">
+                                                  <div className="flex items-center justify-between">
+                                                    <span className="font-semibold text-[#0F172A]">{ord.customerName}</span>
+                                                    {ord.status === 'pending' || (ord.status as any) === 'queued' || (ord.status as any) === 'QUEUED' ? (
+                                                      <div className="flex items-center gap-1">
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => handleAcceptOrder(ord.orderId, ord.customerName)}
+                                                          className="px-1.5 py-0.5 rounded bg-[#DCFCE7] hover:bg-[#BBF7D0] text-[#15803D] font-bold text-[9px] flex items-center gap-0.5 border border-[#86EFAC] cursor-pointer"
+                                                        >
+                                                          <Check className="w-2.5 h-2.5" />
+                                                          <span>Accept</span>
+                                                        </button>
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => handleRejectOrder(ord.orderId, ord.customerName)}
+                                                          className="px-1.5 py-0.5 rounded bg-[#FEE2E2] hover:bg-[#FECACA] text-[#DC2626] font-bold text-[9px] flex items-center gap-0.5 border border-[#FCA5A5] cursor-pointer"
+                                                        >
+                                                          <X className="w-2.5 h-2.5" />
+                                                          <span>Reject</span>
+                                                        </button>
+                                                      </div>
+                                                    ) : ord.status === 'preparing' ? (
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => handleDeliverOrder(ord.orderId)}
+                                                        className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#EFF6FF] text-[#1D4ED8] hover:bg-[#DBEAFE] border border-[#BFDBFE] cursor-pointer"
+                                                      >
+                                                        Mark Delivered
+                                                      </button>
+                                                    ) : (
+                                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
+                                                        ✓ Delivered
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                  <div className="text-[10px] text-[#64748B]">
+                                                    {ord.items.map((i) => `${i.qty}x ${i.name}`).join(', ')}
+                                                  </div>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0]">
+                                          <span className="text-xs text-[#64748B] font-medium">Running Total:</span>
+                                          <span className="text-base font-black font-mono-code text-[#172554]">
+                                            ₹{Number(vrActiveSession.running_total || vrActiveSession.time_charge || 0).toFixed(2)}
+                                          </span>
+                                        </div>
+
+                                        {hasPendingVrOrders && (
+                                          <div className="p-1.5 rounded-xl bg-[#FFFBEB] border border-[#FDE68A] text-[#B45309] text-[10px] font-bold flex items-center gap-1">
+                                            <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-[#D97706]" />
+                                            <span>Accept/Reject pending order(s) before checkout</span>
+                                          </div>
+                                        )}
+
+                                        <div className="flex items-center gap-2">
+                                          <button
+                                            type="button"
+                                            onClick={() => onOrderFood(vrActiveSession, 'VR1')}
+                                            className="flex-1 py-2 px-2.5 rounded-xl bg-[#FFF7ED] hover:bg-[#FFEDD5] border border-[#FED7AA] text-[#EA580C] font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                                          >
+                                            <UtensilsCrossed className="w-3.5 h-3.5 text-[#EA580C]" />
+                                            <span>Order Food</span>
+                                          </button>
+
+                                          <button
+                                            type="button"
+                                            disabled={hasPendingVrOrders}
+                                            onClick={() => {
+                                              if (hasPendingVrOrders) {
+                                                addNotification(
+                                                  'SYSTEM',
+                                                  '⚠️ Action Required',
+                                                  'Cannot settle bill for VR1: Player has pending food order(s). Please Accept or Reject every order first.'
+                                                );
+                                                return;
+                                              }
+                                              onCheckout(vrActiveSession, 'VR1');
+                                            }}
+                                            className={`flex-1 py-2 px-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 shadow-sm ${
+                                              hasPendingVrOrders
+                                                ? 'bg-[#94A3B8] text-white opacity-70 cursor-not-allowed'
+                                                : 'bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] cursor-pointer'
+                                            }`}
+                                            title={hasPendingVrOrders ? 'Accept or Reject pending orders before checkout' : 'Settle Bill'}
+                                          >
+                                            <Receipt className="w-3.5 h-3.5 text-white" />
+                                            <span>{hasPendingVrOrders ? 'Resolve Orders to Settle' : 'Settle Bill'}</span>
+                                          </button>
+                                        </div>
 
                                     {/* Quick extend buttons */}
                                     <div className="flex items-center gap-1.5">
@@ -742,9 +872,11 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                       </button>
                                     </div>
                                   </div>
-                                </div>
-                              </div>
-                            ) : (
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        ) : (
                               /* STATE B: VR RIG AVAILABLE / CHECK-IN */
                               <div className="p-4 sm:p-5 rounded-2xl bg-[#FFFFFF] border border-[#E2E8F0] shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-6">
                                 {/* Left: Dedicated Rig Info */}
@@ -851,19 +983,21 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                                 <button
                                                   key={tier.duration_min}
                                                   type="button"
+                                                  disabled={isCapped}
                                                   onClick={() =>
                                                     setSelectedDurations((prev) => ({
                                                       ...prev,
                                                       [vrCellKey]: tier.duration_min,
                                                     }))
                                                   }
-                                                  className={`py-2 px-1.5 rounded-xl text-center transition-all font-display border cursor-pointer relative ${
-                                                    isSelected
-                                                      ? 'bg-[#EA580C] border-[#EA580C] text-[#FFFFFF] shadow-sm'
-                                                      : isCapped
-                                                      ? 'bg-[#FEF2F2] border-[#FCA5A5] text-[#991B1B] hover:border-[#F87171]'
-                                                      : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
+                                                  className={`py-2 px-1.5 rounded-xl text-center transition-all font-display border relative ${
+                                                    isCapped
+                                                      ? 'bg-[#FEF2F2] border-[#FCA5A5] text-[#991B1B] cursor-not-allowed opacity-60'
+                                                      : isSelected
+                                                      ? 'bg-[#EA580C] border-[#EA580C] text-[#FFFFFF] shadow-sm cursor-pointer'
+                                                      : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1] cursor-pointer'
                                                   }`}
+                                                  title={isCapped ? tierCheck.reason : undefined}
                                                 >
                                                   <div className={`text-xs font-bold tracking-tight ${isSelected ? 'text-white' : isCapped ? 'text-[#991B1B]' : 'text-[#0F172A]'}`}>
                                                     {tier.label || `${tier.duration_min}m`}
@@ -894,16 +1028,16 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                               customerPhone: customerPhones[vrCellKey],
                                             })
                                           }
-                                          className={`sm:w-44 py-3 px-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-98 cursor-pointer disabled:opacity-50 shrink-0 ${
+                                          className={`sm:w-44 py-3 px-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-98 disabled:opacity-50 shrink-0 ${
                                             !vrDurationValidation.allowed
                                               ? 'bg-[#94A3B8] text-white cursor-not-allowed'
-                                              : 'bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF]'
+                                              : 'bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] cursor-pointer'
                                           }`}
                                         >
                                           {isInitiating ? (
                                             <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                                           ) : !vrDurationValidation.allowed ? (
-                                            <span>Overlap Blocked</span>
+                                            <span>🚫 Reserved @ {formatTime12h(vrNextBooking?.booking.startTime || '')}</span>
                                           ) : (
                                             <>
                                               <Play className="w-3.5 h-3.5 fill-current" />
@@ -1122,21 +1256,42 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                                 <span className="text-[#0F172A] truncate font-display">{ord.customerName}</span>
                                               </span>
 
-                                              {/* Status Toggle Button (Pending ➔ Preparing ➔ Delivered) */}
-                                              <button
-                                                type="button"
-                                                onClick={() => handleToggleOrderStatus(ord.orderId, ord.status)}
-                                                title="Click to advance order status: Pending ➔ Preparing ➔ Delivered"
-                                                className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase transition-all border cursor-pointer ${
-                                                  ord.status === 'pending'
-                                                    ? 'bg-[#FFEDD5] text-[#C2410C] border-[#FED7AA] hover:bg-[#FED7AA]'
-                                                    : ord.status === 'preparing'
-                                                    ? 'bg-[#EFF6FF] text-[#1E3A8A] border-[#BFDBFE] hover:bg-[#DBEAFE]'
-                                                    : 'bg-[#DCFCE7] text-[#15803D] border-[#BBF7D0] hover:bg-[#BBF7D0]'
-                                                }`}
-                                              >
-                                                ● {ord.status}
-                                              </button>
+                                             {/* Status Action Buttons: Accept / Reject for pending, or Mark Delivered for preparing */}
+                                             {ord.status === 'pending' || (ord.status as any) === 'queued' || (ord.status as any) === 'QUEUED' ? (
+                                               <div className="flex items-center gap-1">
+                                                 <button
+                                                   type="button"
+                                                   onClick={() => handleAcceptOrder(ord.orderId, ord.customerName)}
+                                                   className="px-2 py-0.5 rounded-md bg-[#DCFCE7] hover:bg-[#BBF7D0] text-[#15803D] font-bold text-[9px] flex items-center gap-0.5 border border-[#86EFAC] transition-all cursor-pointer shadow-xs"
+                                                   title="Accept Order"
+                                                 >
+                                                   <Check className="w-2.5 h-2.5 text-[#15803D]" />
+                                                   <span>Accept</span>
+                                                 </button>
+                                                 <button
+                                                   type="button"
+                                                   onClick={() => handleRejectOrder(ord.orderId, ord.customerName)}
+                                                   className="px-2 py-0.5 rounded-md bg-[#FEE2E2] hover:bg-[#FECACA] text-[#DC2626] font-bold text-[9px] flex items-center gap-0.5 border border-[#FCA5A5] transition-all cursor-pointer shadow-xs"
+                                                   title="Reject Order (will not be billed)"
+                                                 >
+                                                   <X className="w-2.5 h-2.5 text-[#DC2626]" />
+                                                   <span>Reject</span>
+                                                 </button>
+                                               </div>
+                                             ) : ord.status === 'preparing' ? (
+                                               <button
+                                                 type="button"
+                                                 onClick={() => handleDeliverOrder(ord.orderId)}
+                                                 title="Mark order as delivered"
+                                                 className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#EFF6FF] text-[#1D4ED8] hover:bg-[#DBEAFE] border border-[#BFDBFE] cursor-pointer"
+                                               >
+                                                 Mark Delivered
+                                               </button>
+                                             ) : (
+                                               <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
+                                                 ✓ Delivered
+                                               </span>
+                                             )}
                                             </div>
 
                                             {/* Item Summary line */}
@@ -1207,24 +1362,63 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                               </div>
 
                               {/* 3. Action Buttons: Order Food & Drinks, Generate Bill & Checkout, Transfer, +30m, +1h */}
-                              <div className="space-y-1.5 pt-1">
-                                {/* Order Food & Drinks */}
-                                <button
-                                  onClick={() => onOrderFood(activeSession, effectiveStationName)}
-                                  className="w-full py-2 px-2.5 rounded-xl bg-[#FFF7ED] hover:bg-[#FFEDD5] border border-[#FED7AA] text-[#EA580C] font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
-                                >
-                                  <UtensilsCrossed className="w-3.5 h-3.5 text-[#EA580C]" />
-                                  <span>Order Food &amp; Drinks</span>
-                                </button>
+                              {(() => {
+                                const kitchenOrders = queryClient.getQueryData<Order[]>(['kitchen-orders']) || [];
+                                const sessionOrders = inSeatOrders.filter((o) => {
+                                  if (o.stationId.toUpperCase() !== effectiveStationName.toUpperCase()) return false;
+                                  const ordStatus = String(o.status || '').toLowerCase();
+                                  if (ordStatus === 'cancelled' || ordStatus === 'rejected') return false;
+                                  const isCancelledInKitchen = kitchenOrders.some(
+                                    (k) => (k.id === o.orderId || (k as any).order_id === o.orderId) && (k.status === 'CANCELLED' || k.status === 'REJECTED')
+                                  );
+                                  return !isCancelledInKitchen;
+                                });
+                                const hasPendingStationOrders = sessionOrders.some(
+                                  (o) => o.status === 'pending' || (o.status as any) === 'QUEUED' || (o.status as any) === 'queued'
+                                );
 
-                                {/* Generate Bill & Checkout */}
-                                <button
-                                  onClick={() => onCheckout(activeSession, effectiveStationName)}
-                                  className="w-full py-2 px-2.5 rounded-xl bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
-                                >
-                                  <Receipt className="w-3.5 h-3.5 text-white" />
-                                  <span>Generate Bill &amp; Checkout</span>
-                                </button>
+                                return (
+                                  <div className="space-y-1.5 pt-1">
+                                    {/* Order Food & Drinks */}
+                                    <button
+                                      onClick={() => onOrderFood(activeSession, effectiveStationName)}
+                                      className="w-full py-2 px-2.5 rounded-xl bg-[#FFF7ED] hover:bg-[#FFEDD5] border border-[#FED7AA] text-[#EA580C] font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                                    >
+                                      <UtensilsCrossed className="w-3.5 h-3.5 text-[#EA580C]" />
+                                      <span>Order Food &amp; Drinks</span>
+                                    </button>
+
+                                    {hasPendingStationOrders && (
+                                      <div className="p-1.5 rounded-xl bg-[#FFFBEB] border border-[#FDE68A] text-[#B45309] text-[10px] font-bold flex items-center gap-1">
+                                        <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-[#D97706]" />
+                                        <span>Accept/Reject pending order(s) before checkout</span>
+                                      </div>
+                                    )}
+
+                                    {/* Generate Bill & Checkout */}
+                                    <button
+                                      disabled={hasPendingStationOrders}
+                                      onClick={() => {
+                                        if (hasPendingStationOrders) {
+                                          addNotification(
+                                            'SYSTEM',
+                                            '⚠️ Action Required',
+                                            `Cannot checkout ${effectiveStationName}: Player has pending food order(s). Please Accept or Reject every order first.`
+                                          );
+                                          return;
+                                        }
+                                        onCheckout(activeSession, effectiveStationName);
+                                      }}
+                                      className={`w-full py-2 px-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 shadow-sm ${
+                                        hasPendingStationOrders
+                                          ? 'bg-[#94A3B8] text-white opacity-70 cursor-not-allowed'
+                                          : 'bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] cursor-pointer'
+                                      }`}
+                                      title={hasPendingStationOrders ? 'Accept or Reject pending orders before checkout' : 'Generate Bill & Checkout'}
+                                    >
+                                      <Receipt className="w-3.5 h-3.5 text-white" />
+                                      <span>{hasPendingStationOrders ? 'Resolve Orders to Checkout' : 'Generate Bill & Checkout'}</span>
+                                    </button>
 
                                 {/* Action Buttons Row: Transfer, +30m, +1h, Cancel */}
                                 <div className="grid grid-cols-4 gap-1 pt-0.5">
@@ -1268,8 +1462,10 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                   </button>
                                 </div>
                               </div>
-                            </div>
-                          )}
+                            );
+                          })()}
+                        </div>
+                      )}
 
                           {/* ========================================================================= */}
                           {/* STATE B: AVAILABLE (WITH DYNAMIC CONFLICT PREVENTION) */}
@@ -1283,13 +1479,39 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                               <div className="p-3.5 rounded-2xl bg-[#FFFFFF] border border-[#E2E8F0] shadow-xs space-y-3">
                                 {/* Station Availability Status */}
                                 <div className="flex items-center justify-between text-xs">
-                                  <span className="text-[#15803D] font-bold">
-                                    {isVrRow ? 'VR Rig Ready: READY' : 'Console Free: READY'}
-                                  </span>
-                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
-                                    <CheckCircle2 className="w-2.5 h-2.5" />
-                                    <span>READY</span>
-                                  </span>
+                                  {hasUpcomingSoon && nextBookingInfo ? (
+                                    nextBookingInfo.diffMinutes <= 15 ? (
+                                      <>
+                                        <span className="text-[#DC2626] font-bold flex items-center gap-1">
+                                          <Lock className="w-3.5 h-3.5 text-[#DC2626]" />
+                                          <span>Reserved for {nextBookingInfo.booking.customerName}</span>
+                                        </span>
+                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-[#FEE2E2] text-[#DC2626] border border-[#FECACA]">
+                                          <span>RESERVED</span>
+                                        </span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <span className="text-[#D97706] font-bold flex items-center gap-1">
+                                          <CalendarClock className="w-3.5 h-3.5 text-[#D97706]" />
+                                          <span>Reserved @ {formatTime12h(nextBookingInfo.booking.startTime)}</span>
+                                        </span>
+                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-[#FEF3C7] text-[#B45309] border border-[#FDE68A]">
+                                          <span>{nextBookingInfo.diffMinutes}m FREE</span>
+                                        </span>
+                                      </>
+                                    )
+                                  ) : (
+                                    <>
+                                      <span className="text-[#15803D] font-bold">
+                                        {isVrRow ? 'VR Rig Ready: READY' : 'Console Free: READY'}
+                                      </span>
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
+                                        <CheckCircle2 className="w-2.5 h-2.5" />
+                                        <span>READY</span>
+                                      </span>
+                                    </>
+                                  )}
                                 </div>
 
                                 {/* Upcoming Advance Booking Amber Badge within 60 mins */}
@@ -1297,7 +1519,7 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                   <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#FFFBEB] border border-[#FDE68A] text-[#B45309] text-[11px] font-bold font-mono-code animate-in fade-in">
                                     <CalendarClock className="w-3.5 h-3.5 text-[#D97706] shrink-0" />
                                     <span>
-                                      Upcoming: Booking at {formatTime12h(nextBookingInfo.booking.startTime)} ({nextBookingInfo.booking.sessionMode})
+                                      Upcoming Reservation: {formatTime12h(nextBookingInfo.booking.startTime)} - {formatTime12h(nextBookingInfo.booking.endTime)} ({nextBookingInfo.booking.sessionMode})
                                     </span>
                                   </div>
                                 )}
@@ -1362,19 +1584,21 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                         <button
                                           key={tier.duration_min}
                                           type="button"
+                                          disabled={isCapped}
                                           onClick={() =>
                                             setSelectedDurations((prev) => ({
                                               ...prev,
                                               [cellKey]: tier.duration_min,
                                             }))
                                           }
-                                          className={`py-2 px-1 rounded-xl text-center transition-all font-display border cursor-pointer relative ${
-                                            isSelected
-                                              ? 'bg-[#EA580C] border-[#EA580C] text-[#FFFFFF] shadow-sm'
-                                              : isCapped
-                                              ? 'bg-[#FEF2F2] border-[#FCA5A5] text-[#991B1B] hover:border-[#F87171]'
-                                              : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1]'
+                                          className={`py-2 px-1 rounded-xl text-center transition-all font-display border relative ${
+                                            isCapped
+                                              ? 'bg-[#FEF2F2] border-[#FCA5A5] text-[#991B1B] cursor-not-allowed opacity-60'
+                                              : isSelected
+                                              ? 'bg-[#EA580C] border-[#EA580C] text-[#FFFFFF] shadow-sm cursor-pointer'
+                                              : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1] cursor-pointer'
                                           }`}
+                                          title={isCapped ? tierCheck.reason : undefined}
                                         >
                                           <div className={`text-[11px] font-bold tracking-tight ${isSelected ? 'text-white' : isCapped ? 'text-[#991B1B]' : 'text-[#0F172A]'}`}>
                                             {tier.label || `${tier.duration_min}m`}
@@ -1414,16 +1638,16 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                       customerPhone: customerPhones[cellKey],
                                     })
                                   }
-                                  className={`w-full py-2.5 px-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-98 cursor-pointer disabled:opacity-50 ${
+                                  className={`w-full py-2.5 px-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-98 disabled:opacity-50 ${
                                     !durationValidation.allowed
                                       ? 'bg-[#94A3B8] text-white cursor-not-allowed'
-                                      : 'bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF]'
+                                      : 'bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] cursor-pointer'
                                   }`}
                                 >
                                   {isInitiating ? (
                                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                                   ) : !durationValidation.allowed ? (
-                                    <span>Overlap Blocked</span>
+                                    <span>🚫 Reserved @ {formatTime12h(nextBookingInfo?.booking.startTime || '')}</span>
                                   ) : (
                                     <>
                                       <Play className="w-3.5 h-3.5 fill-current" />
@@ -1499,6 +1723,77 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                   ? matrixData.cafe_sessions
                   : (matrixData?.cafe_session ? [matrixData.cafe_session] : []);
                 const allCafeInSeatOrders = getStationInSeatOrders('Walk-in CAFE');
+                const kitchenOrders = queryClient.getQueryData<Order[]>(['kitchen-orders']) || [];
+
+                // Deduplicate and combine orders from loungeStore and DB kitchenOrders
+                const seenOrderIds = new Set<string>();
+                const seenFingerprints = new Set<string>();
+                const combinedCafeOrders: typeof allCafeInSeatOrders = [];
+
+                // 1. Add valid in-seat orders from loungeStore
+                allCafeInSeatOrders.forEach((o) => {
+                  const s = String(o.status || '').toLowerCase();
+                  if (s === 'cancelled' || s === 'rejected') return;
+                  if (!seenOrderIds.has(o.orderId)) {
+                    seenOrderIds.add(o.orderId);
+                    const fp = `${(o.customerName || '').toLowerCase().trim()}_${(o.items || [])
+                      .map((i) => `${i.name.toLowerCase().trim()}:${i.qty}`)
+                      .sort()
+                      .join('|')}`;
+                    seenFingerprints.add(fp);
+                    combinedCafeOrders.push(o);
+                  }
+                });
+
+                // 2. Add active / fresh orders from DB kitchenOrders
+                const cafeSessionIdSet = new Set(cafeSessions.map((s) => String(s.session_id)));
+                kitchenOrders.forEach((ko) => {
+                  const koStatus = String(ko.status || '').toUpperCase();
+                  if (koStatus === 'CANCELLED' || koStatus === 'REJECTED') return;
+
+                  // ONLY match if it has an ACTIVE session, OR is a fresh pending walk-in order
+                  const hasActiveSession = Boolean(ko.session_id && cafeSessionIdSet.has(String(ko.session_id)));
+                  const isStationCafe = Boolean(
+                    ko.station_name &&
+                    (ko.station_name.toUpperCase().includes('CAFE') || ko.station_name.toUpperCase().includes('WALK'))
+                  );
+                  const isPendingOrPreparing = koStatus === 'QUEUED' || koStatus === 'PENDING' || koStatus === 'PREPARING';
+                  const isFreshWalkin = isStationCafe && isPendingOrPreparing;
+
+                  // Exclude historical served/closed orders from old sessions
+                  if (!hasActiveSession && !isFreshWalkin) {
+                    return;
+                  }
+
+                  const koId = String(ko.id);
+                  const fp = `${(ko.customer_name || '').toLowerCase().trim()}_${(ko.items || [])
+                    .map((i) => `${(i.menu_item_name || (i as any).name || '').toLowerCase().trim()}:${i.quantity || 1}`)
+                    .sort()
+                    .join('|')}`;
+
+                  if (!seenOrderIds.has(koId) && !seenFingerprints.has(fp)) {
+                    seenOrderIds.add(koId);
+                    seenFingerprints.add(fp);
+                    combinedCafeOrders.push({
+                      orderId: koId,
+                      stationId: 'Walk-in CAFE',
+                      customerName: ko.customer_name || 'Walk-in Cafe Guest',
+                      items: (ko.items || []).map((i) => ({
+                        id: String(i.id || i.menu_item_id || ''),
+                        name: i.menu_item_name || (i as any).menu_item?.name || (i as any).name || 'Food/Drink',
+                        qty: Number(i.quantity || 1),
+                        price: Number(i.unit_price || 0),
+                      })),
+                      totalAmount: Number(ko.total_amount || 0),
+                      status: (koStatus === 'SERVED'
+                        ? 'delivered'
+                        : koStatus === 'PREPARING'
+                        ? 'preparing'
+                        : 'pending') as any,
+                      createdAt: ko.created_at || new Date().toISOString(),
+                    });
+                  }
+                });
 
                 // Customer grouping map
                 interface CafeCustomerData {
@@ -1512,8 +1807,11 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
                 const customerMap = new Map<string, CafeCustomerData>();
 
-                // 1. Group in-seat orders by customerName
-                allCafeInSeatOrders.forEach((o) => {
+                // 1. Group in-seat and DB orders by customerName
+                combinedCafeOrders.forEach((o) => {
+                  const s = String(o.status || '').toLowerCase();
+                  if (s === 'cancelled' || s === 'rejected') return;
+
                   const cName = o.customerName?.trim() || 'Walk-in Guest';
                   if (!customerMap.has(cName)) {
                     customerMap.set(cName, {
@@ -1554,7 +1852,10 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                   }
                 });
 
-                const customerEntries = Array.from(customerMap.values());
+                // Only show active customers with real orders, active sessions, or a bill
+                const customerEntries = Array.from(customerMap.values()).filter(
+                  (c) => c.orders.length > 0 || c.backendSession !== undefined || c.totalBill > 0
+                );
                 const isCafeActive = customerEntries.length > 0;
 
                 // Active customer selection
@@ -1605,6 +1906,12 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                   pricing_tiers: [],
                 };
 
+                const hasPendingCafeOrders = Boolean(
+                  (activeCust?.orders || []).some(
+                    (o) => o.status === 'pending' || (o.status as any) === 'queued' || (o.status as any) === 'QUEUED'
+                  )
+                );
+
                 return (
                   <tr className="hover:bg-[#F8FAFC]/50 transition-colors border-t-2 border-[#FED7AA]">
                     {/* Mode Header Cell (Left Column) */}
@@ -1644,32 +1951,59 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
                           {/* Customer Selection Tabs & Add New Guest */}
                           <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#FED7AA]/60">
-                            <div className="flex items-center gap-1.5 flex-wrap">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider font-mono-code mr-1">
                                 Guests ({customerEntries.length}):
                               </span>
                               {customerEntries.map((c) => {
                                 const isSelected = c.name === activeCustName;
                                 return (
-                                  <button
+                                  <div
                                     key={c.name}
-                                    type="button"
-                                    onClick={() => setSelectedCafeCustomer(c.name)}
-                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                                    className={`inline-flex items-center rounded-xl border transition-all ${
                                       isSelected
                                         ? 'bg-[#EA580C] text-white border-[#EA580C] shadow-xs'
                                         : 'bg-[#FFF7ED] text-[#C2410C] border-[#FED7AA] hover:bg-[#FFEDD5]'
                                     }`}
                                   >
-                                    <span>👤 {c.name}</span>
-                                    <span
-                                      className={`text-[10px] font-mono-code font-bold px-1.5 py-0.5 rounded ${
-                                        isSelected ? 'bg-white/20 text-white' : 'bg-[#FED7AA]/60 text-[#9A3412]'
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedCafeCustomer(c.name)}
+                                      className="px-3 py-1.5 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                                    >
+                                      <span>👤 {c.name}</span>
+                                      <span
+                                        className={`text-[10px] font-mono-code font-bold px-1.5 py-0.5 rounded ${
+                                          isSelected ? 'bg-white/20 text-white' : 'bg-[#FED7AA]/60 text-[#9A3412]'
+                                        }`}
+                                      >
+                                        ₹{c.totalBill.toFixed(2)}
+                                      </span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      title={`Dismiss tab for ${c.name}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        clearStationInSeatOrders('Walk-in CAFE', c.name);
+                                        if (c.backendSession) {
+                                          cancelCustomerSessionApi(c.backendSession.session_id).catch(() => {});
+                                        }
+                                        if (selectedCafeCustomer === c.name) {
+                                          setSelectedCafeCustomer(null);
+                                        }
+                                        queryClient.invalidateQueries({ queryKey: ['station-matrix'] });
+                                        queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
+                                      }}
+                                      className={`p-1.5 rounded-r-xl transition-colors cursor-pointer ${
+                                        isSelected
+                                          ? 'text-white/70 hover:text-white hover:bg-black/10'
+                                          : 'text-[#9A3412]/60 hover:text-[#DC2626] hover:bg-[#FED7AA]'
                                       }`}
                                     >
-                                      ₹{c.totalBill.toFixed(2)}
-                                    </span>
-                                  </button>
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </div>
                                 );
                               })}
                             </div>
@@ -1714,7 +2048,7 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                             </div>
 
                             {/* 2. Itemized Food Orders Breakdown for SELECTED Customer ONLY */}
-                            <div className="p-3 rounded-xl bg-[#FFF7ED] border border-[#FED7AA]/70 space-y-2 max-h-48 overflow-y-auto pr-1">
+                            <div className="p-3 rounded-xl bg-[#FFF7ED] border border-[#FED7AA]/70 space-y-2 max-h-56 overflow-y-auto pr-1">
                               <div className="flex items-center justify-between text-xs pb-1 border-b border-[#FED7AA] font-bold text-[#EA580C]">
                                 <div className="flex items-center gap-1.5">
                                   <UtensilsCrossed className="w-3.5 h-3.5" />
@@ -1760,16 +2094,40 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                       </div>
 
                                       <div className="flex items-center justify-between pt-1 border-t border-[#FED7AA]/30 text-[10px]">
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            const nextStatus = order.status === 'pending' ? 'preparing' : 'delivered';
-                                            updateInSeatOrderStatus(order.orderId, nextStatus);
-                                          }}
-                                          className="text-[#EA580C] hover:text-[#C2410C] font-bold cursor-pointer underline"
-                                        >
-                                          Advance: {order.status === 'pending' ? 'Mark Preparing' : 'Mark Delivered'}
-                                        </button>
+                                        {order.status === 'pending' || (order.status as any) === 'queued' || (order.status as any) === 'QUEUED' ? (
+                                          <div className="flex items-center gap-1.5">
+                                            <button
+                                              type="button"
+                                              onClick={() => handleAcceptOrder(order.orderId, order.customerName)}
+                                              className="px-2 py-0.5 rounded bg-[#DCFCE7] hover:bg-[#BBF7D0] text-[#15803D] font-bold text-[9px] flex items-center gap-1 border border-[#86EFAC] transition-all cursor-pointer shadow-xs"
+                                              title="Accept Order (moves to preparing)"
+                                            >
+                                              <Check className="w-2.5 h-2.5 text-[#15803D]" />
+                                              <span>Accept</span>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleRejectOrder(order.orderId, order.customerName)}
+                                              className="px-2 py-0.5 rounded bg-[#FEE2E2] hover:bg-[#FECACA] text-[#DC2626] font-bold text-[9px] flex items-center gap-1 border border-[#FCA5A5] transition-all cursor-pointer shadow-xs"
+                                              title="Reject Order (will not be billed)"
+                                            >
+                                              <X className="w-2.5 h-2.5 text-[#DC2626]" />
+                                              <span>Reject</span>
+                                            </button>
+                                          </div>
+                                        ) : order.status === 'preparing' ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeliverOrder(order.orderId)}
+                                            className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#EFF6FF] text-[#1D4ED8] hover:bg-[#DBEAFE] border border-[#BFDBFE] cursor-pointer"
+                                          >
+                                            Mark Delivered
+                                          </button>
+                                        ) : (
+                                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
+                                            ✓ Delivered
+                                          </span>
+                                        )}
                                         <span className="font-bold text-[#15803D] font-mono-code">
                                           ₹{Number(order.totalAmount || 0).toFixed(2)}
                                         </span>
@@ -1779,7 +2137,7 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                 </div>
                               ) : (
                                 <p className="text-[11px] text-[#64748B] italic text-center py-2">
-                                  Orders attached to {activeCust.name}.
+                                  No pending orders for {activeCust.name}.
                                 </p>
                               )}
                             </div>
@@ -1798,6 +2156,13 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                 </span>
                               </div>
 
+                              {hasPendingCafeOrders && (
+                                <div className="p-1.5 rounded-xl bg-[#FFFBEB] border border-[#FDE68A] text-[#B45309] text-[10px] font-bold flex items-center gap-1">
+                                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-[#D97706]" />
+                                  <span>Accept/Reject pending order(s) before settling</span>
+                                </div>
+                              )}
+
                               <div className="flex items-center gap-2">
                                 <button
                                   type="button"
@@ -1810,11 +2175,43 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
                                 <button
                                   type="button"
-                                  onClick={() => onCheckout(activeSessionForSelected, 'Walk-in CAFE')}
-                                  className="flex-1 py-2.5 px-3 rounded-xl bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                                  disabled={hasPendingCafeOrders}
+                                  onClick={() => {
+                                    if (hasPendingCafeOrders) {
+                                      addNotification(
+                                        'SYSTEM',
+                                        '⚠️ Action Required',
+                                        `Cannot settle invoice for ${activeCust?.name}: Please Accept or Reject every pending order first.`
+                                      );
+                                      return;
+                                    }
+                                    const items: OrderedReceiptItem[] = [];
+                                    (activeCust?.orders || []).forEach((o) => {
+                                      const s = String(o.status || '').toLowerCase();
+                                      if (s === 'cancelled' || s === 'rejected') return;
+                                      (o.items || []).forEach((item) => {
+                                        const uPrice = Number(item.price) || 0;
+                                        const qty = Number(item.qty) || 1;
+                                        items.push({
+                                          id: item.id,
+                                          name: item.name,
+                                          quantity: qty,
+                                          unitPrice: uPrice,
+                                          totalPrice: uPrice * qty,
+                                        });
+                                      });
+                                    });
+                                    onCheckout(activeSessionForSelected, 'Walk-in CAFE', items);
+                                  }}
+                                  className={`flex-1 py-2.5 px-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 shadow-sm ${
+                                    hasPendingCafeOrders
+                                      ? 'bg-[#94A3B8] text-white opacity-70 cursor-not-allowed'
+                                      : 'bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] cursor-pointer'
+                                  }`}
+                                  title={hasPendingCafeOrders ? 'Accept or Reject pending orders before settling invoice' : 'Settle Invoice'}
                                 >
                                   <Receipt className="w-3.5 h-3.5 text-white" />
-                                  <span>Settle Invoice</span>
+                                  <span>{hasPendingCafeOrders ? 'Resolve Orders to Settle' : 'Settle Invoice'}</span>
                                 </button>
                               </div>
                             </div>

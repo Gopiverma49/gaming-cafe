@@ -44,7 +44,7 @@ export interface MenuItem {
   description?: string;
 }
 
-export type OrderStatus = 'QUEUED' | 'PREPARING' | 'SERVED' | 'CANCELLED';
+export type OrderStatus = 'QUEUED' | 'PREPARING' | 'SERVED' | 'CANCELLED' | 'REJECTED';
 
 export interface OrderItem {
   id: string;

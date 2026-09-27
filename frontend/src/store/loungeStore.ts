@@ -150,19 +150,7 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
       return { inSeatOrders: updated };
     });
 
-    // 2. Also register into stationFoodOrders so live invoice calculations & breakdown automatically include it
-    get().addStationFoodOrder(
-      order.stationId,
-      order.items.map((i) => ({
-        id: i.id,
-        name: i.name,
-        category: 'Food',
-        quantity: i.qty,
-        price: i.price,
-      }))
-    );
-
-    // 3. Audio & Visual Ping for Admin Station Column
+    // 2. Audio & Visual Ping for Admin Station Column
     get().triggerStationPing(order.stationId);
   },
 

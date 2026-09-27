@@ -44,6 +44,7 @@ export interface SettleInvoiceModalProps {
   allocatedMinutes?: number;
   orderedItems?: OrderedReceiptItem[];
   ordersCharge?: number;
+  isWalkin?: boolean;
   isSubmitting?: boolean;
   errorMessage?: string | null;
 }
@@ -60,10 +61,17 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
   allocatedMinutes,
   orderedItems = [],
   ordersCharge,
+  isWalkin,
   isSubmitting = false,
   errorMessage = null,
 }) => {
   const discountInputId = useId();
+
+  const isWalkinSection = Boolean(
+    isWalkin ||
+    stationName.toUpperCase().includes('WALK') ||
+    stationName.toUpperCase().includes('CAFE')
+  );
 
   // State
   const [discountInput, setDiscountInput] = useState<string>('');
@@ -78,8 +86,8 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
     return Number(ordersCharge || 0);
   }, [orderedItems, ordersCharge]);
 
-  // Safe subtotal calculation
-  const safeTimeCharge = Math.max(0, Number(timeCharge) || 0);
+  // Safe subtotal calculation: for walk-in section, time charge is strictly 0
+  const safeTimeCharge = isWalkinSection ? 0 : Math.max(0, Number(timeCharge) || 0);
   const subTotal = safeTimeCharge + Math.max(0, computedOrdersTotal);
 
   // Parse discount amount
@@ -191,82 +199,141 @@ export const SettleInvoiceModal: React.FC<SettleInvoiceModalProps> = ({
         <div className="space-y-4 overflow-y-auto pr-1 text-xs flex-1">
           {/* Top Receipt Breakdown Card */}
           <div className="p-4 bg-[#F8FAFC] rounded-2xl border border-[#E2E8F0] space-y-3 shadow-xs">
-            <div className="flex items-center justify-between text-[#64748B] font-semibold border-b border-[#E2E8F0] pb-2">
-              <span className="uppercase tracking-wider text-[10px] text-[#64748B]">
-                Itemized Summary
-              </span>
-              <span className="text-[10px] text-[#64748B]">
-                Currency (₹ INR)
-              </span>
-            </div>
-
-            {/* 1. Console Play Time Breakdown */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-[#0F172A]">
-                <div className="flex items-center gap-2">
-                  <Gamepad2 className="w-4 h-4 text-[#172554] shrink-0" />
-                  <span className="font-medium text-[#0F172A]">Console Play Time</span>
-                  {elapsedMinutes !== undefined && (
-                    <span className="text-[10px] text-[#64748B] bg-[#E2E8F0] px-1.5 py-0.5 rounded font-mono-code">
-                      {elapsedMinutes}m{allocatedMinutes ? ` / ${allocatedMinutes}m` : ''}
+            {isWalkinSection ? (
+              /* Walk-in Section: Direct Items Ordered List without console play time or itemized summary header */
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between pb-2 border-b border-[#E2E8F0]">
+                  <span className="flex items-center gap-1.5 font-bold text-xs text-[#0F172A]">
+                    <UtensilsCrossed className="w-4 h-4 text-[#EA580C] shrink-0" />
+                    <span>Items Ordered:</span>
+                  </span>
+                  {orderedItems.length > 0 && (
+                    <span className="text-[10px] font-semibold text-[#EA580C] bg-[#FFF7ED] border border-[#FED7AA] px-2 py-0.5 rounded-full font-mono-code">
+                      {orderedItems.reduce((acc, i) => acc + (i.quantity || 1), 0)} item{orderedItems.length > 1 ? 's' : ''}
                     </span>
                   )}
                 </div>
-                <span className="font-bold text-[#172554] font-mono-code">
-                  ₹{safeTimeCharge.toFixed(2)}
-                </span>
-              </div>
-            </div>
 
-            {/* 2. Itemized Food & Drink Receipts */}
-            <div className="pt-2 border-t border-[#E2E8F0] space-y-2">
-              <div className="flex items-center justify-between text-[11px] text-[#64748B]">
-                <span className="flex items-center gap-1.5 font-medium">
-                  <UtensilsCrossed className="w-3.5 h-3.5 text-[#EA580C] shrink-0" />
-                  <span>Food &amp; Beverage Orders:</span>
-                </span>
-                {orderedItems.length > 0 && (
-                  <span className="text-[10px] text-[#64748B]">
-                    {orderedItems.length} item{orderedItems.length > 1 ? 's' : ''}
-                  </span>
-                )}
-              </div>
-
-              {orderedItems.length > 0 ? (
-                <div className="space-y-1.5 pl-2 max-h-36 overflow-y-auto pr-1">
-                  {orderedItems.map((item, idx) => (
-                    <div
-                      key={item.id || `${item.name}-${idx}`}
-                      className="flex items-center justify-between py-1 px-2 rounded-lg bg-[#FFFFFF] border border-[#E2E8F0] text-[11px] shadow-xs"
-                    >
-                      <div className="flex items-center gap-2 truncate pr-2">
-                        <span className="text-[#0F172A] font-medium truncate">
-                          {item.name}
-                        </span>
-                        <span className="text-[#EA580C] text-[10px] shrink-0 font-bold bg-[#FFF7ED] px-1.5 py-0.2 rounded border border-[#FED7AA]">
-                          x{item.quantity}
+                {orderedItems.length > 0 ? (
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                    {orderedItems.map((item, idx) => (
+                      <div
+                        key={item.id || `${item.name}-${idx}`}
+                        className="flex items-center justify-between py-1.5 px-2.5 rounded-xl bg-[#FFFFFF] border border-[#E2E8F0] text-xs shadow-2xs hover:border-[#CBD5E1] transition-colors"
+                      >
+                        <div className="flex items-center gap-2 truncate pr-2">
+                          <span className="text-[#0F172A] font-semibold truncate">
+                            {item.name}
+                          </span>
+                          <span className="text-[#EA580C] text-[10px] shrink-0 font-bold bg-[#FFF7ED] px-1.5 py-0.5 rounded border border-[#FED7AA]">
+                            x{item.quantity}
+                          </span>
+                          {item.unitPrice ? (
+                            <span className="text-[10px] text-[#64748B] font-mono-code shrink-0">
+                              (@₹{Number(item.unitPrice).toFixed(2)})
+                            </span>
+                          ) : null}
+                        </div>
+                        <span className="font-bold text-[#0F172A] font-mono-code shrink-0">
+                          ₹{(Number(item.totalPrice) || 0).toFixed(2)}
                         </span>
                       </div>
-                      <span className="font-semibold text-[#0F172A] font-mono-code shrink-0">
-                        ₹{(Number(item.totalPrice) || 0).toFixed(2)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : computedOrdersTotal > 0 ? (
-                /* Fallback if individual items are not expanded but orders charge is present */
-                <div className="flex items-center justify-between py-1 px-2 rounded-lg bg-[#FFFFFF] border border-[#E2E8F0] text-[11px]">
-                  <span className="text-[#0F172A]">Food &amp; Beverage Orders</span>
-                  <span className="font-semibold text-[#0F172A] font-mono-code">
-                    ₹{computedOrdersTotal.toFixed(2)}
+                    ))}
+                  </div>
+                ) : computedOrdersTotal > 0 ? (
+                  <div className="flex items-center justify-between py-2 px-2.5 rounded-xl bg-[#FFFFFF] border border-[#E2E8F0] text-xs">
+                    <span className="text-[#0F172A] font-medium">Food &amp; Beverage Orders</span>
+                    <span className="font-bold text-[#0F172A] font-mono-code">
+                      ₹{computedOrdersTotal.toFixed(2)}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-[#94A3B8] italic py-2 text-center bg-[#FFFFFF] rounded-xl border border-[#E2E8F0]">
+                    No food or drink items ordered.
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Gaming Console Stations: Full breakdown with play time */
+              <>
+                <div className="flex items-center justify-between text-[#64748B] font-semibold border-b border-[#E2E8F0] pb-2">
+                  <span className="uppercase tracking-wider text-[10px] text-[#64748B]">
+                    Itemized Summary
+                  </span>
+                  <span className="text-[10px] text-[#64748B]">
+                    Currency (₹ INR)
                   </span>
                 </div>
-              ) : (
-                <div className="text-[11px] text-[#94A3B8] italic pl-5 py-0.5">
-                  No food or drink items ordered.
+
+                {/* 1. Console Play Time Breakdown */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[#0F172A]">
+                    <div className="flex items-center gap-2">
+                      <Gamepad2 className="w-4 h-4 text-[#172554] shrink-0" />
+                      <span className="font-medium text-[#0F172A]">Console Play Time</span>
+                      {elapsedMinutes !== undefined && (
+                        <span className="text-[10px] text-[#64748B] bg-[#E2E8F0] px-1.5 py-0.5 rounded font-mono-code">
+                          {elapsedMinutes}m{allocatedMinutes ? ` / ${allocatedMinutes}m` : ''}
+                        </span>
+                      )}
+                    </div>
+                    <span className="font-bold text-[#172554] font-mono-code">
+                      ₹{safeTimeCharge.toFixed(2)}
+                    </span>
+                  </div>
                 </div>
-              )}
-            </div>
+
+                {/* 2. Itemized Food & Drink Receipts */}
+                <div className="pt-2 border-t border-[#E2E8F0] space-y-2">
+                  <div className="flex items-center justify-between text-[11px] text-[#64748B]">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <UtensilsCrossed className="w-3.5 h-3.5 text-[#EA580C] shrink-0" />
+                      <span>Food &amp; Beverage Orders:</span>
+                    </span>
+                    {orderedItems.length > 0 && (
+                      <span className="text-[10px] text-[#64748B]">
+                        {orderedItems.length} item{orderedItems.length > 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+
+                  {orderedItems.length > 0 ? (
+                    <div className="space-y-1.5 pl-2 max-h-36 overflow-y-auto pr-1">
+                      {orderedItems.map((item, idx) => (
+                        <div
+                          key={item.id || `${item.name}-${idx}`}
+                          className="flex items-center justify-between py-1 px-2 rounded-lg bg-[#FFFFFF] border border-[#E2E8F0] text-[11px] shadow-xs"
+                        >
+                          <div className="flex items-center gap-2 truncate pr-2">
+                            <span className="text-[#0F172A] font-medium truncate">
+                              {item.name}
+                            </span>
+                            <span className="text-[#EA580C] text-[10px] shrink-0 font-bold bg-[#FFF7ED] px-1.5 py-0.2 rounded border border-[#FED7AA]">
+                              x{item.quantity}
+                            </span>
+                          </div>
+                          <span className="font-semibold text-[#0F172A] font-mono-code shrink-0">
+                            ₹{(Number(item.totalPrice) || 0).toFixed(2)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : computedOrdersTotal > 0 ? (
+                    /* Fallback if individual items are not expanded but orders charge is present */
+                    <div className="flex items-center justify-between py-1 px-2 rounded-lg bg-[#FFFFFF] border border-[#E2E8F0] text-[11px]">
+                      <span className="text-[#0F172A]">Food &amp; Beverage Orders</span>
+                      <span className="font-semibold text-[#0F172A] font-mono-code">
+                        ₹{computedOrdersTotal.toFixed(2)}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-[#94A3B8] italic pl-5 py-0.5">
+                      No food or drink items ordered.
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
 
             {/* Subtotal line */}
             <div className="pt-2 border-t border-[#E2E8F0] flex justify-between text-[#64748B] text-xs">

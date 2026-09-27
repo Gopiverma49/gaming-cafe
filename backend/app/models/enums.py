@@ -20,6 +20,7 @@ class OrderStatus(str, Enum):
     PREPARING = "PREPARING"
     SERVED = "SERVED"
     CANCELLED = "CANCELLED"
+    REJECTED = "REJECTED"
 
 
 class PaymentMethod(str, Enum):

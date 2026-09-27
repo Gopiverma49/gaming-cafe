@@ -1,19 +1,33 @@
-# Environment files
+# ==============================================================================
+# Secrets & Environment Configurations
+# ==============================================================================
 .env
-.env.local
-.env.*.local
-frontend/.env.local
+.env.*
 !.env.example
+!backend/.env.example
+*.pem
+*.key
+*.cert
+*.crt
 
-# Python
+# ==============================================================================
+# Build Artifacts & Dependencies
+# ==============================================================================
+node_modules/
+dist/
+build/
+.next/
+frontend/dist/
+frontend/node_modules/
+*.tsbuildinfo
+
+# Python Artifacts & Caches
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
@@ -28,32 +42,37 @@ share/python-wheels/
 .installed.cfg
 *.egg
 .pytest_cache/
+backend/.pytest_cache/
 .coverage
+coverage/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
 
 # Virtual Environments
 .venv/
+backend/.venv/
 venv/
 ENV/
 env/
 env.bak/
 venv.bak/
 
-# Node & Frontend
-node_modules/
-frontend/dist/
-frontend/node_modules/
-*.tsbuildinfo
+# Logs & Runtime Diagnostics
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# Database & Storage
+# Database & Persistent Storage (Local development files)
 *.sqlite3
 *.db
+*.db-shm
+*.db-wal
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
 pgdata/
 
 # IDE & Editor files
@@ -68,3 +87,4 @@ pgdata/
 .DS_Store
 Thumbs.db
 desktop.ini
+

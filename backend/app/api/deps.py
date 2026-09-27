@@ -31,36 +31,6 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
-async def verify_admin_token(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
-) -> Dict[str, Any]:
-    """
-    Authenticates Bearer JWT and enforces admin scope.
-    """
-    if not credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Authorization header",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    token = credentials.credentials
-    try:
-        payload = decode_jwt_token(token)
-        scope = payload.get("scope")
-        if scope != "admin":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Insufficient permissions: Admin scope required",
-            )
-        return payload
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-
 async def verify_customer_token(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
 ) -> Dict[str, Any]:
@@ -139,29 +109,6 @@ async def get_optional_auth_user(
     except Exception as exc:
         logger.debug("Failed to resolve optional auth user: %s", exc)
         return None
-
-
-async def get_required_auth_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
-    db: AsyncSession = Depends(get_db),
-) -> "User":
-    """
-    Requires valid Bearer JWT and returns authenticated User record.
-    """
-    if not credentials or not credentials.credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Authorization header",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    user = await get_optional_auth_user(credentials=credentials, db=db)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return user
 
 
 # In-memory Idempotency Store with LRU eviction and TTL

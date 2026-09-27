@@ -454,7 +454,7 @@ async def place_in_seat_order(
         channel="admin",
         event_type="CUSTOMER_IN_SEAT_ORDER",
         payload={
-            "orderId": payload.orderId,
+            "orderId": payload.orderId or str(new_order.id),
             "stationId": st_name,
             "customerName": payload.customerName,
             "items": [it.model_dump() for it in payload.items],
@@ -465,6 +465,8 @@ async def place_in_seat_order(
     )
 
     await db.commit()
+    if not payload.orderId:
+        payload.orderId = str(new_order.id)
     payload.stationId = st_name
     payload.mode = target_mode
     return payload
@@ -515,29 +517,65 @@ async def get_customer_sessions(
     now = datetime.now(timezone.utc)
     for s in sessions:
         started_at = ensure_utc(s.started_at)
-        elapsed_min = max(0, int((now - started_at).total_seconds() // 60))
-        station_name = s.station.name if s.station else "Station"
-        hourly_rate = float(s.station.hourly_rate) if s.station else settings.DEFAULT_HOURLY_RATE
+        ended_at = ensure_utc(s.ended_at) if s.ended_at else None
 
-        if s.status == SessionStatus.ACTIVE.value and s.station:
-            started_s = ensure_utc(s.started_at)
-            time_charge = float(_compute_time_charge(
-                tier_price=s.tier_price,
-                elapsed_minutes=elapsed_min,
-                allocated_minutes=s.allocated_minutes or 60,
-                hourly_rate=s.station.hourly_rate,
-                started_at=started_s,
-                reference_time=now,
-            ))
+        is_active = s.status == SessionStatus.ACTIVE.value
+        if is_active or not ended_at:
+            elapsed_min = max(0, int((now - started_at).total_seconds() // 60))
         else:
-            time_charge = float(s.total_amount or 0)
+            elapsed_min = max(0, int((ended_at - started_at).total_seconds() // 60))
 
+        station_name = s.station.name if s.station else (s.station_name or "Station")
+        is_cafe = (
+            (s.station and s.station.tier == "CAFE")
+            or "CAFE" in station_name.upper()
+            or "WALK" in station_name.upper()
+        )
+        hourly_rate = 0.0 if is_cafe else (float(s.station.hourly_rate) if s.station else settings.DEFAULT_HOURLY_RATE)
+
+        # Orders charge for non-cancelled food & drink orders
         orders_charge = sum(
             float(itm.unit_price * Decimal(str(itm.quantity)))
-            for o in s.orders if o.status != OrderStatus.CANCELLED.value
+            for o in s.orders if o.status not in (OrderStatus.CANCELLED.value, "REJECTED", "rejected")
             for itm in o.items
         )
-        total_cost = time_charge + orders_charge
+
+        if is_active:
+            if is_cafe:
+                time_charge = 0.0
+            elif s.station:
+                started_s = ensure_utc(s.started_at)
+                time_charge = float(_compute_time_charge(
+                    tier_price=s.tier_price,
+                    elapsed_minutes=elapsed_min,
+                    allocated_minutes=s.allocated_minutes or 60,
+                    hourly_rate=s.station.hourly_rate,
+                    started_at=started_s,
+                    reference_time=now,
+                ))
+            else:
+                time_charge = float(s.tier_price or 0.0)
+            total_cost = round(time_charge + orders_charge, 2)
+        else:
+            # COMPLETED / CLOSED: s.total_amount is the finalized settlement grand total!
+            if s.total_amount is not None and float(s.total_amount) > 0:
+                total_cost = float(s.total_amount)
+                time_charge = max(0.0, round(total_cost - orders_charge, 2))
+            else:
+                if is_cafe:
+                    time_charge = 0.0
+                elif s.station:
+                    time_charge = float(_compute_time_charge(
+                        tier_price=s.tier_price,
+                        elapsed_minutes=elapsed_min,
+                        allocated_minutes=s.allocated_minutes or 60,
+                        hourly_rate=s.station.hourly_rate,
+                        started_at=started_at,
+                        reference_time=ended_at or now,
+                    ))
+                else:
+                    time_charge = float(s.tier_price or 0.0)
+                total_cost = round(time_charge + orders_charge, 2)
 
         out.append({
             "id": str(s.id),
@@ -548,7 +586,7 @@ async def get_customer_sessions(
             "status": s.status,
             "startedAt": started_at.isoformat(),
             "elapsedMinutes": elapsed_min,
-            "durationMinutes": max(60, ((elapsed_min // 60) + 1) * 60) if s.status == SessionStatus.ACTIVE.value else max(30, elapsed_min),
+            "durationMinutes": max(60, ((elapsed_min // 60) + 1) * 60) if is_active else max(30, elapsed_min),
             "hourlyRate": hourly_rate,
             "timeCharge": time_charge,
             "ordersCharge": orders_charge,

@@ -1,6 +1,7 @@
 import os from 'os';
 import qrcode from 'qrcode-terminal';
 import concurrently from 'concurrently';
+import { env } from './src/config/env.js';
 
 // 1. Get primary non-internal IPv4 address
 function getLocalIp() {
@@ -16,10 +17,12 @@ function getLocalIp() {
 }
 
 const localIp = getLocalIp();
-const mobileUrl = `http://${localIp}:5173`;
-const localUrl = 'http://localhost:5173';
-const backendUrl = 'http://localhost:8000';
-const docsUrl = 'http://localhost:8000/docs';
+const frontendPort = 5173;
+const backendPort = env.BACKEND_PORT || 8000;
+const mobileUrl = `http://${localIp}:${frontendPort}`;
+const localUrl = `http://localhost:${frontendPort}`;
+const backendUrl = `http://localhost:${backendPort}`;
+const docsUrl = `http://localhost:${backendPort}/docs`;
 
 const showQr = process.argv.includes('--qr');
 

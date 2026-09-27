@@ -20,7 +20,26 @@ export interface CollisionResult {
 }
 
 /**
- * Parses YYYY-MM-DD and HH:mm or combined ISO YYYY-MM-DDTHH:mm into a JavaScript Date object.
+ * Normalizes any DD-MM-YYYY or YYYY-MM-DD string to canonical YYYY-MM-DD.
+ */
+export function normalizeDateStr(dateStr: string): string {
+  if (!dateStr) return '';
+  const clean = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr.trim();
+  const parts = clean.split('-').map(Number);
+  if (parts.length === 3) {
+    if (parts[0] > 1000) {
+      // YYYY-MM-DD
+      return `${parts[0]}-${String(parts[1]).padStart(2, '0')}-${String(parts[2]).padStart(2, '0')}`;
+    } else if (parts[2] > 1000) {
+      // DD-MM-YYYY
+      return `${parts[2]}-${String(parts[1]).padStart(2, '0')}-${String(parts[0]).padStart(2, '0')}`;
+    }
+  }
+  return clean;
+}
+
+/**
+ * Parses YYYY-MM-DD or DD-MM-YYYY and HH:mm or combined ISO YYYY-MM-DDTHH:mm into a JavaScript Date object.
  */
 export function parseBookingDateTime(dateStr: string, timeStr?: string): Date {
   if (!dateStr) return new Date();
@@ -28,10 +47,19 @@ export function parseBookingDateTime(dateStr: string, timeStr?: string): Date {
     const d = new Date(dateStr);
     if (!isNaN(d.getTime())) return d;
   }
-  const cleanDateStr = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+  const cleanDateStr = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr.trim();
   const rawTimeStr = timeStr || (dateStr.includes('T') ? dateStr.split('T')[1] : '00:00');
 
-  const [year, month, day] = cleanDateStr.split('-').map(Number);
+  const parts = cleanDateStr.split('-').map(Number);
+  let year = parts[0] || new Date().getFullYear();
+  let month = parts[1] || 1;
+  let day = parts[2] || 1;
+  if (parts.length === 3 && parts[2] > 1000) {
+    // DD-MM-YYYY format
+    year = parts[2];
+    month = parts[1];
+    day = parts[0];
+  }
 
   let isPM = false;
   let cleanTime = (rawTimeStr || '00:00').trim().toUpperCase();
@@ -41,13 +69,39 @@ export function parseBookingDateTime(dateStr: string, timeStr?: string): Date {
   } else if (cleanTime.includes('AM')) {
     cleanTime = cleanTime.replace('AM', '').trim();
   }
-  const parts = cleanTime.split(':').map((x) => parseInt(x, 10) || 0);
-  let hours = parts[0] || 0;
-  const minutes = parts[1] || 0;
+  const tParts = cleanTime.split(':').map((x) => parseInt(x, 10) || 0);
+  let hours = tParts[0] || 0;
+  const minutes = tParts[1] || 0;
   if (isPM && hours < 12) hours += 12;
   if (!isPM && cleanTime.includes('AM') && hours === 12) hours = 0;
 
   return new Date(year, (month || 1) - 1, day || 1, hours, minutes, 0, 0);
+}
+
+/**
+ * Returns exact start and end Date objects for a booking,
+ * cleanly handling midnight rollover across calendar days.
+ */
+export function getBookingInterval(
+  bookingDate: string,
+  startTime: string,
+  durationMinutes: number = 60,
+  endTime?: string
+): { start: Date; end: Date } {
+  const start = parseBookingDateTime(bookingDate, startTime);
+  let dur = Number(durationMinutes);
+  if (!dur || isNaN(dur) || dur <= 0) {
+    if (endTime) {
+      const parsedEnd = parseBookingDateTime(bookingDate, endTime);
+      let diff = Math.floor((parsedEnd.getTime() - start.getTime()) / 60000);
+      if (diff <= 0) diff += 24 * 60; // rolled past midnight
+      dur = diff;
+    } else {
+      dur = 60;
+    }
+  }
+  const end = new Date(start.getTime() + dur * 60000);
+  return { start, end };
 }
 
 /**
@@ -90,7 +144,7 @@ export function toISODateString(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
-function checkTimeCollision(
+export function checkTimeCollision(
   startA: Date,
   endA: Date,
   startB: Date,
@@ -220,17 +274,25 @@ export function getNextBookingForStation(
       return bStation === targetStation;
     })
     .map((b) => {
-      const start = parseBookingDateTime(b.bookingDate, b.startTime);
-      const end = parseBookingDateTime(b.bookingDate, b.endTime);
-      return { booking: b, start, end, diffMinutes: Math.floor((start.getTime() - fromMs) / 60000) };
+      const interval = getBookingInterval(
+        b.bookingDate,
+        b.startTime,
+        b.durationMinutes,
+        b.endTime
+      );
+      return {
+        booking: b,
+        start: interval.start,
+        end: interval.end,
+        diffMinutes: Math.floor((interval.start.getTime() - fromMs) / 60000),
+      };
     })
-    // Only future or current bookings that haven't ended yet
-    .filter((item) => item.end.getTime() > fromMs && item.start.getTime() >= fromMs - 5 * 60000)
+    // Future bookings or current ongoing bookings (within 24 hours)
+    .filter((item) => item.end.getTime() > fromMs && item.start.getTime() >= fromMs - 15 * 60000)
     .sort((a, b) => a.start.getTime() - b.start.getTime());
 
   return relevant.length > 0 ? relevant[0] : null;
 }
-
 
 /**
  * Operational Scenario 1: Walk-In Starting Overlap Protection
@@ -254,13 +316,13 @@ export function validateWalkInDuration(
   }
 
   const proposedEnd = new Date(fromTime.getTime() + durationMinutes * 60000);
+  const maxWindow = Math.max(0, Math.floor((next.start.getTime() - fromTime.getTime()) / 60000));
+  const bookingTimeFormatted = formatTime12h(next.booking.startTime);
 
   // Check collision with next booking
   if (checkTimeCollision(fromTime, proposedEnd, next.start, next.end)) {
-    const maxWindow = Math.max(0, Math.floor((next.start.getTime() - fromTime.getTime()) / 60000));
     const durationLabel =
       durationMinutes >= 60 ? `${durationMinutes / 60}-hour` : `${durationMinutes}-minute`;
-    const bookingTimeFormatted = formatTime12h(next.booking.startTime);
 
     return {
       allowed: false,
@@ -271,7 +333,7 @@ export function validateWalkInDuration(
     };
   }
 
-  return { allowed: true };
+  return { allowed: true, maxAvailableMinutes: maxWindow, nextBooking: next.booking };
 }
 
 /**
@@ -290,8 +352,13 @@ export function validateNewBooking(
   liveSessions?: { stationId: string; startedAt: Date; allocatedMinutes: number }[]
 ): CollisionResult {
   const targetStation = (candidate.stationId || '').toUpperCase().trim();
-  const candStart = parseBookingDateTime(candidate.bookingDate, candidate.startTime);
-  const candEnd = new Date(candStart.getTime() + candidate.durationMinutes * 60000);
+  const candInterval = getBookingInterval(
+    candidate.bookingDate,
+    candidate.startTime,
+    candidate.durationMinutes
+  );
+  const candStart = candInterval.start;
+  const candEnd = candInterval.end;
 
   // 1. Check against other confirmed advance bookings
   for (const b of existingBookings) {
@@ -305,28 +372,31 @@ export function validateNewBooking(
       continue;
     }
     if ((b.stationId || '').toUpperCase().trim() !== targetStation) continue;
-    if (b.bookingDate !== candidate.bookingDate) continue;
 
-    const bStart = parseBookingDateTime(b.bookingDate, b.startTime);
-    const bEnd = parseBookingDateTime(b.bookingDate, b.endTime);
+    const bInterval = getBookingInterval(
+      b.bookingDate,
+      b.startTime,
+      b.durationMinutes,
+      b.endTime
+    );
 
-    if (checkTimeCollision(candStart, candEnd, bStart, bEnd)) {
+    if (checkTimeCollision(candStart, candEnd, bInterval.start, bInterval.end)) {
+      const displayEnd = b.endTime || calculateEndTime(b.startTime, b.durationMinutes);
       return {
         hasConflict: true,
         conflictingBooking: b,
         reason: `Collision detected! ${targetStation} is already booked from ${formatTime12h(
           b.startTime
-        )} to ${formatTime12h(b.endTime)} for ${b.customerName}.`,
+        )} to ${formatTime12h(displayEnd)} for ${b.customerName}.`,
       };
     }
   }
 
-  // 2. Check against live sessions if booking is for today
-  const todayStr = toISODateString(new Date());
-  if (candidate.bookingDate === todayStr && Array.isArray(liveSessions)) {
+  // 2. Check against live sessions
+  if (Array.isArray(liveSessions)) {
     for (const s of liveSessions) {
       if ((s.stationId || '').toUpperCase().trim() !== targetStation) continue;
-      const sStart = s.startedAt;
+      const sStart = s.startedAt instanceof Date ? s.startedAt : new Date(s.startedAt);
       const sEnd = new Date(sStart.getTime() + (s.allocatedMinutes || 60) * 60000);
 
       // Only active live sessions running in the present/future can collide
@@ -347,3 +417,4 @@ export function validateNewBooking(
 
   return { hasConflict: false };
 }
+

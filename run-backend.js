@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import net from 'net';
 import { fileURLToPath } from 'url';
+import { env as validatedEnv } from './src/config/env.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,11 +44,14 @@ async function main() {
 
   const isTest = process.argv.includes('--test');
   const isVerbose = process.argv.includes('--verbose');
+  const host = validatedEnv.HOST || '0.0.0.0';
+  const port = String(validatedEnv.BACKEND_PORT || 8000);
+
   const uvicornArgs = [
     '-m', 'uvicorn', 'app.main:app',
     '--reload',
-    '--host', '0.0.0.0',
-    '--port', '8000',
+    '--host', host,
+    '--port', port,
     ...(isVerbose ? [] : ['--no-access-log'])
   ];
   const args = isTest
@@ -77,7 +81,14 @@ async function main() {
 
   const rootEnv = parseEnvFile(path.join(__dirname, '.env'));
   const backendEnv = parseEnvFile(path.join(backendDir, '.env'));
-  const env = { ...rootEnv, ...backendEnv, ...process.env, PYTHONPATH: backendDir };
+  const env = {
+    ...rootEnv,
+    ...backendEnv,
+    ...process.env,
+    HOST: host,
+    PORT: port,
+    PYTHONPATH: backendDir,
+  };
 
   // If running dev server without tests, verify database target
   if (!isTest) {

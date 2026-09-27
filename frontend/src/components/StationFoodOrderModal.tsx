@@ -7,12 +7,14 @@ import {
   Search,
   AlertCircle,
   ShoppingBag,
+  User,
 } from 'lucide-react';
 import { StationLive, MenuItem } from '../types';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchAdminMenuItems, placeStationOrderApi } from '../api';
 import { useAuthStore } from '../store/authStore';
 import { useNotificationStore } from '../store/notificationStore';
+import { useLoungeStore } from '../store/loungeStore';
 
 interface StationFoodOrderModalProps {
   isOpen: boolean;
@@ -33,10 +35,18 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
   const { user } = useAuthStore();
   const { addNotification } = useNotificationStore();
 
+  const isCafe = Boolean(
+    station?.name?.toUpperCase().includes('CAFE') ||
+    station?.name?.toUpperCase().includes('WALK') ||
+    (station?.tier as string) === 'CAFE'
+  );
+
   const [cart, setCart] = useState<Record<string, number>>({});
   const [selectedCategory, setSelectedCategory] = useState<'ALL' | 'Food' | 'Drinks'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [customerName, setCustomerName] = useState('');
+  const [diningOption, setDiningOption] = useState<'Dine-In' | 'Takeaway'>('Dine-In');
 
   // Fetch real menu items with live stock from Database
   const { data: menuItems = [] } = useQuery<MenuItem[]>({
@@ -47,7 +57,34 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
 
   const orderMutation = useMutation({
     mutationFn: placeStationOrderApi,
-    onSuccess: async () => {
+    onSuccess: async (orderRes) => {
+      const effectiveCustName =
+        customerName.trim() ||
+        (station?.customer_name &&
+        !['walk-in cafe guest', 'walk-in guest', 'customer'].includes(station.customer_name.toLowerCase())
+          ? station.customer_name
+          : isCafe
+          ? 'Walk-in Cafe Guest'
+          : user?.name || 'Customer');
+
+      if (isCafe) {
+        useLoungeStore.getState().addInSeatOrder({
+          orderId: orderRes?.id ? String(orderRes.id) : `cafe-${Date.now()}`,
+          stationId: 'Walk-in CAFE',
+          customerName: effectiveCustName,
+          items: selectedItemsList.map((i) => ({
+            id: i.id,
+            name: i.name,
+            qty: i.quantity,
+            price: i.price,
+          })),
+          totalAmount: totalCost,
+          status: 'pending',
+          mode: diningOption,
+          createdAt: new Date().toISOString(),
+        });
+      }
+
       // Refresh DB data everywhere immediately
       await Promise.all([
         queryClient.refetchQueries({ queryKey: ['stations-live'] }),
@@ -60,8 +97,8 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
 
       addNotification(
         'FOOD_ORDER',
-        `🍽️ Food Order: ${station?.name}`,
-        `Order saved to DB! Stock decremented for ${totalItemsCount} item(s) (₹${totalCost.toFixed(2)}).`
+        `🍽️ Food Order: ${station?.name || 'Walk-in CAFE'}`,
+        `Order saved for ${effectiveCustName}! Stock decremented for ${totalItemsCount} item(s) (₹${totalCost.toFixed(2)}).`
       );
 
       onSuccess?.();
@@ -78,8 +115,15 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
       setSelectedCategory('ALL');
       setSearchQuery('');
       setError(null);
+      const initialCustName =
+        station?.customer_name &&
+        !['walk-in cafe guest', 'walk-in guest', 'customer'].includes(station.customer_name.toLowerCase())
+          ? station.customer_name
+          : '';
+      setCustomerName(initialCustName);
+      setDiningOption('Dine-In');
     }
-  }, [isOpen]);
+  }, [isOpen, station]);
 
   const safeMenuItems = Array.isArray(menuItems) ? menuItems : [];
 
@@ -136,6 +180,15 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
         return;
       }
 
+      const effectiveCustName =
+        customerName.trim() ||
+        (station?.customer_name &&
+        !['walk-in cafe guest', 'walk-in guest', 'customer'].includes(station.customer_name.toLowerCase())
+          ? station.customer_name
+          : isCafe
+          ? 'Walk-in Cafe Guest'
+          : user?.name || 'Customer');
+
       // Call backend API to save order in DB and decrement inventory stock atomically (if tracked)
       orderMutation.mutate({
         station_id: station.id,
@@ -144,7 +197,7 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
           menu_item_id: i.id,
           quantity: i.quantity,
         })),
-        customer_name: user?.name || station.customer_name || 'Customer',
+        customer_name: effectiveCustName,
       });
     } catch (err: any) {
       setError(err?.message || 'Failed to place order.');
@@ -184,6 +237,58 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
             <span>{error}</span>
           </div>
         )}
+
+        {/* Customer / Guest Name & Dining Option Input */}
+        <div className="pt-3 pb-1 shrink-0 space-y-2">
+          <div className="flex flex-col sm:flex-row gap-2.5">
+            <div className="flex-1">
+              <label className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider block mb-1">
+                Customer Name {isCafe ? <span className="text-[#EA580C]">*</span> : '(Optional)'}
+              </label>
+              <div className="relative">
+                <User className="w-4 h-4 absolute left-3 top-2.5 text-[#94A3B8]" />
+                <input
+                  type="text"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder={isCafe ? "Enter customer / guest name (e.g. Rahul, John)..." : "Customer / Guest name..."}
+                  className="w-full pl-9 pr-3 py-2 bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl text-xs font-semibold text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] focus:bg-white transition-all"
+                />
+              </div>
+            </div>
+            {isCafe && (
+              <div className="sm:w-44 shrink-0">
+                <label className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider block mb-1">
+                  Dining Option
+                </label>
+                <div className="flex rounded-xl border border-[#FED7AA] bg-[#FFF7ED]/60 p-0.5 h-[38px] items-center">
+                  <button
+                    type="button"
+                    onClick={() => setDiningOption('Dine-In')}
+                    className={`flex-1 h-full text-[11px] font-bold rounded-lg transition-all ${
+                      diningOption === 'Dine-In'
+                        ? 'bg-[#EA580C] text-white shadow-xs'
+                        : 'text-[#64748B] hover:text-[#0F172A]'
+                    }`}
+                  >
+                    Dine-In
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDiningOption('Takeaway')}
+                    className={`flex-1 h-full text-[11px] font-bold rounded-lg transition-all ${
+                      diningOption === 'Takeaway'
+                        ? 'bg-[#EA580C] text-white shadow-xs'
+                        : 'text-[#64748B] hover:text-[#0F172A]'
+                    }`}
+                  >
+                    Takeaway
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* Category Filter Pills & Search */}
         <div className="pt-3 pb-2 flex flex-col sm:flex-row gap-2.5 shrink-0">

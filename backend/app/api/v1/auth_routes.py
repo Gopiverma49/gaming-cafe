@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.core.config import settings
+from app.core.rate_limiter import RateLimiter
 from app.core.security import get_password_hash, verify_password, create_user_token, decode_jwt_token
 from app.models.entities import User
 from app.schemas.api_schemas import (
@@ -19,15 +20,26 @@ from app.schemas.api_schemas import (
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
-@router.post("/register", response_model=AuthTokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=AuthTokenResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RateLimiter(max_requests=10, window_seconds=60, scope="auth_register"))],
+)
 async def register_customer(
     payload: UserRegisterRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """
     Registers a new gamer account with name, phone, and hashed password.
-    Enforces unique phone number constraint.
+    Enforces unique phone number constraint and honeypot spam protection.
     """
+    if payload.website:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Spam bot registration rejected.",
+        )
+
     clean_phone = payload.phone.strip()
     clean_name = payload.name.strip()
 
@@ -64,7 +76,11 @@ async def register_customer(
     )
 
 
-@router.post("/login", response_model=AuthTokenResponse)
+@router.post(
+    "/login",
+    response_model=AuthTokenResponse,
+    dependencies=[Depends(RateLimiter(max_requests=15, window_seconds=60, scope="auth_login"))],
+)
 async def login_user(
     payload: UserLoginRequest,
     db: AsyncSession = Depends(get_db),

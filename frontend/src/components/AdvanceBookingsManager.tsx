@@ -330,12 +330,15 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
     }
   };
 
-  // Filtered Bookings List
+  // Filtered Bookings List (Latest check-ins and bookings at top)
   const sortedBookings = useMemo(() => {
     return [...bookings].sort((a, b) => {
       const dateA = parseBookingDateTime(a.bookingDate, a.startTime).getTime();
       const dateB = parseBookingDateTime(b.bookingDate, b.startTime).getTime();
-      return dateA - dateB;
+      if (dateB !== dateA) return dateB - dateA;
+      const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return createdB - createdA;
     });
   }, [bookings]);
 
@@ -379,9 +382,9 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
               <span>Slot Accepted &amp; Available ({stationId}: {formatTime12h(startTime)} - {formatTime12h(calculatedEndTime)})</span>
             </div>
           ) : (
-            <div className="flex items-center gap-1.5 text-xs text-[#B91C1C] font-bold bg-[#FEF2F2] px-3 py-1 rounded-xl border border-[#FECACA] shadow-2xs">
-              <AlertTriangle className="w-3.5 h-3.5 text-[#DC2626]" />
-              <span>Slot Reserved ({stationId})</span>
+            <div className="flex items-center gap-1.5 text-xs text-[#B91C1C] font-bold bg-[#FEF2F2] px-3 py-1 rounded-xl border border-[#FECACA] shadow-2xs animate-in fade-in duration-150">
+              <AlertTriangle className="w-3.5 h-3.5 text-[#DC2626] shrink-0" />
+              <span>🚫 Slot Occupied ({stationId} Collision)</span>
             </div>
           )}
         </div>

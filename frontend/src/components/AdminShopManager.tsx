@@ -97,7 +97,6 @@ export const AdminShopManager: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'INVENTORY' | 'REVENUE'>('INVENTORY');
   const [revenuePeriod, setRevenuePeriod] = useState<'DAY' | 'WEEK' | 'MONTH'>('DAY');
-  const [chartViewMode, setChartViewMode] = useState<'CATEGORY' | 'PAYMENT'>('CATEGORY');
 
   // Search & Status Filters for Remade Inventory Table
   const [searchQuery, setSearchQuery] = useState('');
@@ -712,127 +711,6 @@ export const AdminShopManager: React.FC = () => {
                   title={`UPI / QR: ₹${revenueData.upiRevenue.toFixed(2)}`}
                 />
               </div>
-            </div>
-          </div>
-
-          {/* Visual Daily / Weekly Comparison Chart Bars */}
-          <div className="bg-[#FFFFFF] p-5 rounded-2xl border border-[#E2E8F0] shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <h4 className="text-sm font-bold text-[#172554]">
-                Revenue Distribution ({revenuePeriod === 'DAY' ? 'Today' : revenuePeriod === 'WEEK' ? 'Last 7 Days' : 'Last 14 Days'})
-              </h4>
-
-              <div className="flex flex-wrap items-center gap-3">
-                {/* Switch between Category split vs Payment split */}
-                <div className="inline-flex p-0.5 bg-[#F1F5F9] rounded-lg border border-[#E2E8F0] text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setChartViewMode('CATEGORY')}
-                    className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer transition-all ${
-                      chartViewMode === 'CATEGORY'
-                        ? 'bg-[#172554] text-white shadow-xs'
-                        : 'text-[#64748B] hover:text-[#0F172A]'
-                    }`}
-                  >
-                    Gaming vs Cafe
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setChartViewMode('PAYMENT')}
-                    className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer transition-all ${
-                      chartViewMode === 'PAYMENT'
-                        ? 'bg-[#172554] text-white shadow-xs'
-                        : 'text-[#64748B] hover:text-[#0F172A]'
-                    }`}
-                  >
-                    Cash vs UPI / QR
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-3 text-xs font-mono-code font-normal">
-                  {chartViewMode === 'CATEGORY' ? (
-                    <>
-                      <span className="flex items-center gap-1 text-[#15803D]">
-                        <span className="w-2.5 h-2.5 rounded bg-[#15803D]"></span> Gaming Console
-                      </span>
-                      <span className="flex items-center gap-1 text-[#EA580C]">
-                        <span className="w-2.5 h-2.5 rounded bg-[#EA580C]"></span> Cafe & Food
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="flex items-center gap-1 text-[#16A34A]">
-                        <span className="w-2.5 h-2.5 rounded bg-[#16A34A]"></span> Cash
-                      </span>
-                      <span className="flex items-center gap-1 text-[#4F46E5]">
-                        <span className="w-2.5 h-2.5 rounded bg-[#4F46E5]"></span> UPI / QR
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-3 pt-2">
-              {(() => {
-                const chartData = Array.isArray(revenueData?.chartData) ? revenueData.chartData : [];
-                const totals = chartData.map((c) => Number(c?.total || 0));
-                const maxVal = totals.length > 0 ? Math.max(...totals, 1000) : 1000;
-
-                return chartData.map((d) => {
-                  const safeTotal = Number(d?.total || 0);
-                  const safeGaming = Number(d?.gaming || 0);
-                  const safeFood = Number(d?.food || 0);
-                  const safeCash = Number(d?.cash || 0);
-                  const safeUpi = Number(d?.upi || 0);
-                  const pct = Math.min(100, Math.max(8, (safeTotal / maxVal) * 100));
-
-                  return (
-                    <div key={d?.label || Math.random()} className="space-y-1">
-                      <div className="flex justify-between text-xs font-mono-code">
-                        <span className="text-[#0F172A] font-semibold">{d?.label || 'Period'}</span>
-                        <div className="flex items-center gap-2">
-                          {chartViewMode === 'PAYMENT' && (
-                            <span className="text-[11px] text-[#64748B]">
-                              (Cash: ₹{safeCash.toFixed(0)} | UPI: ₹{safeUpi.toFixed(0)})
-                            </span>
-                          )}
-                          <span className="text-[#172554] font-bold">₹{safeTotal.toFixed(2)}</span>
-                        </div>
-                      </div>
-                      <div className="w-full bg-[#F1F5F9] rounded-full h-3 flex overflow-hidden">
-                        {chartViewMode === 'CATEGORY' ? (
-                          <>
-                            <div
-                              className="bg-[#15803D] h-full transition-all duration-500"
-                              style={{ width: `${safeTotal > 0 ? (safeGaming / safeTotal) * pct : 0}%` }}
-                              title={`Gaming: ₹${safeGaming}`}
-                            />
-                            <div
-                              className="bg-[#EA580C] h-full transition-all duration-500"
-                              style={{ width: `${safeTotal > 0 ? (safeFood / safeTotal) * pct : 0}%` }}
-                              title={`Food: ₹${safeFood}`}
-                            />
-                          </>
-                        ) : (
-                          <>
-                            <div
-                              className="bg-[#16A34A] h-full transition-all duration-500"
-                              style={{ width: `${safeTotal > 0 ? (safeCash / safeTotal) * pct : 0}%` }}
-                              title={`Cash: ₹${safeCash}`}
-                            />
-                            <div
-                              className="bg-[#4F46E5] h-full transition-all duration-500"
-                              style={{ width: `${safeTotal > 0 ? (safeUpi / safeTotal) * pct : 0}%` }}
-                              title={`UPI / QR: ₹${safeUpi}`}
-                            />
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  );
-                });
-              })()}
             </div>
           </div>
         </div>

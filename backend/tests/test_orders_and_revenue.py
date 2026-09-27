@@ -1,8 +1,10 @@
 import uuid
+from datetime import datetime
 from decimal import Decimal
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from app.core.database import Base
@@ -445,6 +447,87 @@ async def test_walkin_cafe_dine_in_out_order_and_matrix_settlement(orders_test_d
         assert bill_data["payment_status"] in ("COMPLETED", "PAID")
         assert float(bill_data["station_charge"]) == 0.0
         assert float(bill_data["total_amount"]) == 320.0
+
+
+@pytest.mark.asyncio
+async def test_admin_walkin_cafe_standalone_order_by_station_uuid_and_settlement(orders_test_db):
+    """
+    Tests:
+    1. Admin places a food order directly for 'Walk-in CAFE' station using Station UUID.
+    2. No active gaming/playing session exists on that station.
+    3. Standalone Walk-in Cafe session is automatically provisioned with 0 gaming charge.
+    4. Customer name is preserved.
+    5. Admin can settle invoice with full itemized food total.
+    """
+    from app.core.security import create_admin_token
+    from app.models.entities import Station, StationStatus
+    transport = ASGITransport(app=app)
+    headers = {"Authorization": f"Bearer {create_admin_token()}"}
+    
+    # 1. Fetch or create Walk-in CAFE station to obtain its UUID
+    async with orders_test_db() as session:
+        st_stmt = select(Station).where(Station.name == "Walk-in CAFE")
+        cafe_st = (await session.execute(st_stmt)).scalar_one_or_none()
+        if not cafe_st:
+            cafe_st = Station(
+                name="Walk-in CAFE",
+                tier="CAFE",
+                hourly_rate=Decimal("0.00"),
+                pricing_tiers=[],
+                status=StationStatus.AVAILABLE.value,
+            )
+            session.add(cafe_st)
+            await session.commit()
+            await session.refresh(cafe_st)
+        cafe_st_id = str(cafe_st.id)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Get a valid menu item
+        menu_res = await client.get("/api/v1/admin/menu")
+        assert menu_res.status_code == 200
+        menu_items = menu_res.json()
+        item = menu_items[0]
+
+        # 2. Admin places food order using station UUID (just like the frontend modal does)
+        order_res = await client.post(
+            "/api/v1/admin/orders/station-order",
+            headers=headers,
+            json={
+                "station_id": cafe_st_id,
+                "session_id": f"cafe-walkin-new-{int(datetime.now().timestamp())}",
+                "customer_name": "Pooja Verma",
+                "items": [{"menu_item_id": item["id"], "quantity": 2}],
+            },
+        )
+        assert order_res.status_code == 201
+        order_data = order_res.json()
+        assert order_data["customer_name"] == "Pooja Verma"
+        assert order_data["status"] == "QUEUED"
+
+        # 3. Verify fleet matrix reflects cafe session
+        matrix_res = await client.get("/api/v1/admin/fleet/matrix", headers=headers)
+        assert matrix_res.status_code == 200
+        matrix_data = matrix_res.json()
+        cafe_sessions = matrix_data.get("cafe_sessions", [])
+        matched_sess = next((s for s in cafe_sessions if s["customer_name"] == "Pooja Verma"), None)
+        assert matched_sess is not None
+        assert float(matched_sess["time_charge"]) == 0.0
+
+        # 4. Settle invoice
+        checkout_res = await client.post(
+            "/api/v1/admin/sessions/checkout",
+            headers=headers,
+            json={
+                "session_id": matched_sess["session_id"],
+                "payment_method": "CASH",
+            },
+        )
+        assert checkout_res.status_code == 200
+        bill = checkout_res.json()
+        assert bill["payment_status"] in ("COMPLETED", "PAID")
+        assert float(bill["station_charge"]) == 0.0
+        assert float(bill["orders_charge"]) == float(item["price"]) * 2
+
 
 
 

@@ -36,13 +36,17 @@ services:
       db:
         condition: service_healthy
     environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      HOST: ${HOST:-0.0.0.0}
+      PORT: ${BACKEND_PORT:-8000}
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-cafe_admin}:${POSTGRES_PASSWORD:-cyber_secret_2026}@db:5432/${POSTGRES_DB:-gaming_cafe_db}}
       JWT_SECRET: ${JWT_SECRET:-enterprise_gaming_cafe_super_secret_jwt_key_2026}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       UPI_MERCHANT_VPA: ${UPI_MERCHANT_VPA:-gamingcafe@upi}
       UPI_MERCHANT_NAME: ${UPI_MERCHANT_NAME:-ApexCyberLounge}
-      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-${CORS_ORIGINS:-*}}
+      CORS_ORIGINS: ${CORS_ORIGINS:-${ALLOWED_ORIGINS:-*}}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     healthcheck:

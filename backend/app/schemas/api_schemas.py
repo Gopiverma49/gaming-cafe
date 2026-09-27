@@ -1,7 +1,7 @@
 import uuid
 from decimal import Decimal
 from datetime import datetime
-from typing import List, Optional, Any, Union
+from typing import List, Optional, Any, Union, Dict
 from pydantic import BaseModel, Field, ConfigDict, model_validator, AliasChoices
 
 from app.core.config import settings
@@ -261,6 +261,7 @@ class MatrixStationColumn(BaseModel):
     status: str = "AVAILABLE"
     supported_modes: List[str] = Field(default_factory=list)
     active_session: Optional[MatrixSessionDetail] = None
+    upcoming_booking: Optional[Dict[str, Any]] = None
 
 
 class MatrixModeResponse(BaseModel):
@@ -414,11 +415,12 @@ class UserRegisterRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=100)
     phone: str = Field(..., min_length=10, max_length=15)
     password: str = Field(..., min_length=4, max_length=50)
+    website: Optional[str] = Field(default=None, max_length=50, description="Honeypot field for bot spam detection")
 
 
 class UserLoginRequest(BaseModel):
-    identifier: str = Field(..., description="Phone number or username")
-    password: str = Field(..., min_length=1)
+    identifier: str = Field(..., min_length=1, max_length=100, description="Phone number or username")
+    password: str = Field(..., min_length=1, max_length=100)
 
 
 class UserResponse(BaseModel):

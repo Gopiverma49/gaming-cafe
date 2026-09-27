@@ -56,6 +56,7 @@ export const StationGrid: React.FC = () => {
 
   // Checkout Modal
   const [checkoutStationTarget, setCheckoutStationTarget] = useState<StationLive | null>(null);
+  const [checkoutDirectItems, setCheckoutDirectItems] = useState<OrderedReceiptItem[] | null>(null);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
 
   // Station Matrix Query for column availability & active sessions
@@ -153,8 +154,16 @@ export const StationGrid: React.FC = () => {
       const isCafe = checkoutStationTarget.name.toUpperCase().includes('CAFE');
 
       if (!targetSessionId || targetSessionId.startsWith('cafe-walkin')) {
-        if (isCafe && matrixData?.cafe_session?.session_id) {
-          targetSessionId = matrixData.cafe_session.session_id;
+        if (isCafe) {
+          const matchedCafe = (matrixData?.cafe_sessions || []).find(
+            (cs) => cs.session_id === targetSessionId ||
+            (checkoutStationTarget.customer_name && cs.customer_name?.toLowerCase() === checkoutStationTarget.customer_name.toLowerCase())
+          );
+          if (matchedCafe?.session_id) {
+            targetSessionId = matchedCafe.session_id;
+          } else if (matrixData?.cafe_session?.session_id) {
+            targetSessionId = matrixData.cafe_session.session_id;
+          }
         } else {
           // Attempt fresh token & station refetch before failing
           const freshToken = await useAuthStore.getState().ensureAdminToken(true);
@@ -170,13 +179,22 @@ export const StationGrid: React.FC = () => {
 
       let apiRes: any = null;
       if (targetSessionId && !targetSessionId.startsWith('cafe-walkin')) {
-        // Call backend with payment method, discount percent, and flat discount amount
-        apiRes = await checkoutSession(
-          targetSessionId,
-          payload.paymentMethod,
-          payload.discountPercent,
-          payload.discountAmount
-        );
+        try {
+          // Call backend with payment method, discount percent, and flat discount amount
+          apiRes = await checkoutSession(
+            targetSessionId,
+            payload.paymentMethod,
+            payload.discountPercent,
+            payload.discountAmount
+          );
+        } catch (checkoutErr: any) {
+          const errText = String(checkoutErr?.message || '').toLowerCase();
+          if (errText.includes('already closed') || errText.includes('not found')) {
+            // Already closed on backend - proceed to purge local and reactive state
+          } else {
+            throw checkoutErr;
+          }
+        }
       }
 
       // Record offline transaction ledger entry for lounge analytics
@@ -228,12 +246,19 @@ export const StationGrid: React.FC = () => {
 
   // Matrix action adapters
   const handleMatrixOrderFood = (session: MatrixSession, stationName: string) => {
+    const isCafe = stationName.toUpperCase().includes('CAFE') || session.station_id?.toUpperCase().includes('CAFE');
     const matched = safeStations.find(
       (s) => s.id === session.station_id || s.name.toUpperCase() === stationName.toUpperCase()
     );
     setFoodOrderStation(
       matched
-        ? { ...matched, active_session_id: session.session_id, name: stationName || matched.name }
+        ? {
+            ...matched,
+            active_session_id: session.session_id,
+            name: stationName || matched.name,
+            customer_name: session.customer_name || matched.customer_name,
+            tier: (isCafe ? 'CAFE' : matched.tier) as any,
+          }
         : {
             id: session.station_id || session.session_id,
             name: stationName,
@@ -254,7 +279,12 @@ export const StationGrid: React.FC = () => {
     );
   };
 
-  const handleMatrixCheckout = (session: MatrixSession, stationName: string) => {
+  const handleMatrixCheckout = (
+    session: MatrixSession,
+    stationName: string,
+    directItems?: OrderedReceiptItem[]
+  ) => {
+    setCheckoutDirectItems(directItems && directItems.length > 0 ? directItems : null);
     const isCafe = stationName.toUpperCase().includes('CAFE') || session.station_id?.toUpperCase().includes('CAFE');
     const matched = !isCafe
       ? safeStations.find(
@@ -356,118 +386,160 @@ export const StationGrid: React.FC = () => {
     return list;
   }, [safeStations, matrixData, transferStationTarget]);
 
-  // Itemized food receipt list derived from active in-memory orders & kitchen orders
-  // Itemized food receipt list: strictly uses real database kitchen orders as single source of truth.
-  // Excludes any CANCELLED/rejected orders, matching backend settle_checkout calculation exactly.
+  // Itemized food receipt list: strictly gathers real orders for accurate settlement invoice display.
   const checkoutOrderedItems = useMemo<OrderedReceiptItem[]>(() => {
     if (!checkoutStationTarget) return [];
 
-    const isCafe = checkoutStationTarget.name.toUpperCase().includes('CAFE');
+    const isCafe = checkoutStationTarget.name.toUpperCase().includes('CAFE') ||
+                   checkoutStationTarget.name.toUpperCase().includes('WALK');
     const targetCust = checkoutStationTarget.customer_name?.trim().toLowerCase();
     const itemsMap = new Map<string, OrderedReceiptItem>();
 
-    // 1. Primary ground-truth: Kitchen orders from database cache
-    const kitchenOrders = queryClient.getQueryData<Order[]>(['kitchen-orders']) || [];
-    const allStationOrders = kitchenOrders.filter((o) => {
-      if (isCafe) {
-        if (checkoutStationTarget.active_session_id && o.session_id === checkoutStationTarget.active_session_id) {
-          return true;
+    // 0. Direct items passed from active customer selection in Walk-in CAFE
+    if (checkoutDirectItems && checkoutDirectItems.length > 0) {
+      checkoutDirectItems.forEach((item) => {
+        const key = item.name.trim().toLowerCase();
+        const uPrice = Number(item.unitPrice) || 0;
+        const qty = Number(item.quantity) || 1;
+        const sTotal = Number(item.totalPrice) || uPrice * qty;
+        if (itemsMap.has(key)) {
+          const existing = itemsMap.get(key)!;
+          existing.quantity += qty;
+          existing.totalPrice += sTotal;
+        } else {
+          itemsMap.set(key, {
+            id: item.id,
+            name: item.name,
+            quantity: qty,
+            unitPrice: uPrice,
+            totalPrice: sTotal,
+            category: item.category,
+          });
         }
-        if (targetCust && o.customer_name && o.customer_name.trim().toLowerCase() === targetCust) {
-          return true;
-        }
-        return false;
-      }
-      return (
-        (checkoutStationTarget.active_session_id && o.session_id === checkoutStationTarget.active_session_id) ||
-        (o.station_name && o.station_name.toUpperCase() === checkoutStationTarget.name.toUpperCase())
-      );
-    });
-
-    if (allStationOrders.length > 0) {
-      // Only SERVED orders are billable. Cancelled/rejected orders are strictly omitted.
-      const billableOrders = allStationOrders.filter(
-        (o) => o.status === 'SERVED' && !['CANCELLED', 'cancelled', 'REJECTED', 'rejected'].includes(o.status as string)
-      );
-
-      billableOrders.forEach((order) => {
-        (order.items || []).forEach((item) => {
-          const key = (item.menu_item_name || 'Item').trim().toLowerCase();
-          const uPrice = Number(item.unit_price) || 0;
-          const sTotal = Number(item.subtotal) || uPrice * item.quantity;
-          if (itemsMap.has(key)) {
-            const existing = itemsMap.get(key)!;
-            existing.quantity += item.quantity;
-            existing.totalPrice += sTotal;
-          } else {
-            itemsMap.set(key, {
-              id: item.id || item.menu_item_id,
-              name: item.menu_item_name || 'Item',
-              quantity: item.quantity,
-              unitPrice: uPrice,
-              totalPrice: sTotal,
-            });
-          }
-        });
       });
-    } else {
-      // 2. Fallback: check in-seat orders from loungeStore for this specific customer
-      const activeInSeat = useLoungeStore.getState().inSeatOrders.filter((o) => {
-        const s = String(o.status).toLowerCase();
-        if (s === 'cancelled' || s === 'rejected') return false;
+    }
+
+    // 1. Primary ground-truth: Kitchen orders from database cache (only if direct items were not provided)
+    if (itemsMap.size === 0) {
+      const kitchenOrders = queryClient.getQueryData<Order[]>(['kitchen-orders']) || [];
+      const allStationOrders = kitchenOrders.filter((o) => {
+        const s = String(o.status).toUpperCase();
+        if (s === 'CANCELLED' || s === 'REJECTED') return false;
+
         if (isCafe) {
-          return targetCust ? o.customerName?.trim().toLowerCase() === targetCust : true;
+          if (checkoutStationTarget.active_session_id && o.session_id === checkoutStationTarget.active_session_id) {
+            return true;
+          }
+          if (targetCust && o.customer_name && o.customer_name.trim().toLowerCase() === targetCust) {
+            return true;
+          }
+          if (o.station_name && (o.station_name.toUpperCase().includes('CAFE') || o.station_name.toUpperCase().includes('WALK'))) {
+            if (!targetCust || targetCust === 'walk-in guest' || targetCust === 'walk-in cafe guest' || !o.customer_name) {
+              return true;
+            }
+            if (o.customer_name.trim().toLowerCase() === targetCust) {
+              return true;
+            }
+          }
+          return false;
         }
-        return o.stationId?.toUpperCase() === checkoutStationTarget.name.toUpperCase();
+        return (
+          (checkoutStationTarget.active_session_id && o.session_id === checkoutStationTarget.active_session_id) ||
+          (o.station_name && o.station_name.toUpperCase() === checkoutStationTarget.name.toUpperCase())
+        );
       });
 
-      if (activeInSeat.length > 0) {
-        activeInSeat.forEach((ord) => {
-          (ord.items || []).forEach((item) => {
-            const key = item.name.trim().toLowerCase();
-            const uPrice = Number(item.price) || 0;
-            const qty = Number(item.qty) || 1;
-            const sTotal = uPrice * qty;
+      if (allStationOrders.length > 0) {
+        // For cafe/walkin, all non-cancelled orders are billable and auto-served at settlement
+        const billableOrders = isCafe
+          ? allStationOrders
+          : allStationOrders.filter((o) => o.status === 'SERVED' || !['CANCELLED', 'REJECTED'].includes(String(o.status).toUpperCase()));
+
+        billableOrders.forEach((order) => {
+          (order.items || []).forEach((item) => {
+            const key = (item.menu_item_name || 'Item').trim().toLowerCase();
+            const uPrice = Number(item.unit_price) || 0;
+            const sTotal = Number(item.subtotal) || uPrice * item.quantity;
             if (itemsMap.has(key)) {
               const existing = itemsMap.get(key)!;
-              existing.quantity += qty;
+              existing.quantity += item.quantity;
               existing.totalPrice += sTotal;
             } else {
               itemsMap.set(key, {
-                id: item.id,
-                name: item.name,
-                quantity: qty,
+                id: item.id || item.menu_item_id,
+                name: item.menu_item_name || 'Item',
+                quantity: item.quantity,
                 unitPrice: uPrice,
                 totalPrice: sTotal,
               });
             }
           });
         });
-      } else {
-        // 3. Fallback to stationFoodOrders
-        const localOrders = getStationFoodOrders(checkoutStationTarget.name) || [];
-        localOrders.forEach((item) => {
+      }
+    }
+
+    // 2. Fallback: check in-seat orders from loungeStore for this specific customer
+    if (itemsMap.size === 0) {
+      const activeInSeat = useLoungeStore.getState().inSeatOrders.filter((o) => {
+        const s = String(o.status).toLowerCase();
+        if (s === 'cancelled' || s === 'rejected') return false;
+        if (isCafe) {
+          if (targetCust && targetCust !== 'walk-in guest' && targetCust !== 'walk-in cafe guest') {
+            return o.customerName?.trim().toLowerCase() === targetCust;
+          }
+          return o.stationId?.toUpperCase().includes('CAFE') || o.stationId?.toUpperCase().includes('WALK');
+        }
+        return o.stationId?.toUpperCase() === checkoutStationTarget.name.toUpperCase();
+      });
+
+      activeInSeat.forEach((ord) => {
+        (ord.items || []).forEach((item) => {
           const key = item.name.trim().toLowerCase();
+          const uPrice = Number(item.price) || 0;
+          const qty = Number(item.qty) || 1;
+          const sTotal = uPrice * qty;
           if (itemsMap.has(key)) {
             const existing = itemsMap.get(key)!;
-            existing.quantity += item.quantity;
-            existing.totalPrice += item.total || item.price * item.quantity;
+            existing.quantity += qty;
+            existing.totalPrice += sTotal;
           } else {
             itemsMap.set(key, {
               id: item.id,
               name: item.name,
-              quantity: item.quantity,
-              unitPrice: item.price,
-              totalPrice: item.total || item.price * item.quantity,
-              category: item.category,
+              quantity: qty,
+              unitPrice: uPrice,
+              totalPrice: sTotal,
             });
           }
         });
-      }
+      });
+    }
+
+    // 3. Fallback to stationFoodOrders
+    if (itemsMap.size === 0) {
+      const localOrders = getStationFoodOrders(checkoutStationTarget.name) || 
+                          (isCafe ? getStationFoodOrders('Walk-in CAFE') : []);
+      localOrders.forEach((item) => {
+        const key = item.name.trim().toLowerCase();
+        if (itemsMap.has(key)) {
+          const existing = itemsMap.get(key)!;
+          existing.quantity += item.quantity;
+          existing.totalPrice += item.total || item.price * item.quantity;
+        } else {
+          itemsMap.set(key, {
+            id: item.id,
+            name: item.name,
+            quantity: item.quantity,
+            unitPrice: item.price,
+            totalPrice: item.total || item.price * item.quantity,
+            category: item.category,
+          });
+        }
+      });
     }
 
     return Array.from(itemsMap.values());
-  }, [checkoutStationTarget, getStationFoodOrders, queryClient]);
+  }, [checkoutStationTarget, checkoutDirectItems, getStationFoodOrders, queryClient]);
 
   return (
     <div className="space-y-6 relative z-10">
@@ -671,6 +743,7 @@ export const StationGrid: React.FC = () => {
           isOpen={!!checkoutStationTarget}
           onClose={() => {
             setCheckoutStationTarget(null);
+            setCheckoutDirectItems(null);
             setActionError(null);
           }}
           onSettle={handleExecuteCheckout}
@@ -686,6 +759,11 @@ export const StationGrid: React.FC = () => {
               : undefined
           }
           orderedItems={checkoutOrderedItems}
+          isWalkin={
+            checkoutStationTarget.name.toUpperCase().includes('CAFE') ||
+            checkoutStationTarget.name.toUpperCase().includes('WALK') ||
+            (checkoutStationTarget.tier as string) === 'CAFE'
+          }
           isSubmitting={isCheckingOut}
           errorMessage={actionError}
         />

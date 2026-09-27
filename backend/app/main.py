@@ -1,18 +1,26 @@
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from decimal import Decimal
 import logging
 import re
+import time
 from typing import List, Optional
 
+BOOT_TIME = time.time()
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, status
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import engine, Base, async_session_factory
+from app.core.rate_limiter import RateLimiter
 from app.models.entities import Station, Session, User, PhysicalDevice, MenuItem
 from app.models.enums import StationStatus, SessionStatus
 from app.api.deps import IdempotencyMiddleware, get_db, get_optional_auth_user
@@ -20,6 +28,7 @@ from app.api.v1.admin_routes import router as admin_router
 from app.api.v1.customer_routes import router as customer_router
 from app.api.v1.auth_routes import router as auth_router
 from app.api.v1.booking_routes import router as booking_router
+from app.api.v1.payment_routes import router as payment_router
 from app.schemas.api_schemas import CategoryAvailabilityResponse, SessionStartRequest, SessionResponse, StationMatrixResponse
 from app.services.session_service import get_fleet_categories, start_category_session, get_fleet_matrix
 from app.services.ws_notifier import manager
@@ -267,6 +276,8 @@ async def ensure_canonical_domain_hierarchy():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Fail-fast validation of production environment variables
+    settings.validate_production_config()
     logger.info("Starting Gaming Cafe Operations System...")
     # Initialize tables if running without migrations
     async with engine.begin() as conn:
@@ -315,40 +326,61 @@ _CORS_ALLOW_METHODS = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
 
 
 class TunnelAwareCORSMiddleware(BaseHTTPMiddleware):
-    """CORS middleware that accepts wildcard tunnel origins (trycloudflare.com, ngrok)
-    as well as any explicit origins listed in CORS_ORIGINS env var."""
+    """CORS middleware that validates authorized origins with strict dynamic enforcement
+    in production while supporting local development and secure tunnels."""
 
     def __init__(self, app, explicit_origins: list[str]):
         super().__init__(app)
-        # Pre-build a set for O(1) exact-match lookups (e.g. when operator sets specific domains)
+        # Pre-build a set for O(1) exact-match lookups
         self._explicit = set(o.strip().rstrip("/") for o in explicit_origins if o != "*")
-        self._allow_all = "*" in explicit_origins
+        # In production, wildcards are strictly disallowed
+        self._allow_all = ("*" in explicit_origins) and (not settings.is_production)
 
     def _is_allowed(self, origin: str) -> bool:
+        if not origin:
+            return False
+        clean_origin = origin.strip().rstrip("/")
+        if clean_origin in self._explicit:
+            return True
+        if settings.is_production:
+            return False
         if self._allow_all:
             return True
-        if origin in self._explicit:
-            return True
-        return bool(_TUNNEL_ORIGIN_PATTERNS.match(origin))
+        return bool(_TUNNEL_ORIGIN_PATTERNS.match(clean_origin))
 
     async def dispatch(self, request: Request, call_next) -> Response:
         origin = request.headers.get("origin", "")
         allowed = self._is_allowed(origin) if origin else False
 
-        # Handle pre-flight OPTIONS immediately — FastAPI never sees it
-        if request.method == "OPTIONS" and allowed:
-            req_headers = request.headers.get("access-control-request-headers")
-            allow_headers = req_headers if req_headers else _CORS_ALLOW_HEADERS
+        # In production, immediately reject unauthorized cross-origin state mutations
+        if origin and not allowed and settings.is_production and request.method in ("POST", "PUT", "PATCH", "DELETE"):
             return Response(
-                status_code=204,
-                headers={
-                    "Access-Control-Allow-Origin": origin,
-                    "Access-Control-Allow-Credentials": "true",
-                    "Access-Control-Allow-Methods": _CORS_ALLOW_METHODS,
-                    "Access-Control-Allow-Headers": allow_headers,
-                    "Access-Control-Max-Age": "86400",
-                },
+                status_code=403,
+                content='{"detail":"CORS origin forbidden in production"}',
+                media_type="application/json",
             )
+
+        # Handle pre-flight OPTIONS immediately — FastAPI never sees it
+        if request.method == "OPTIONS":
+            if allowed:
+                req_headers = request.headers.get("access-control-request-headers")
+                allow_headers = req_headers if req_headers else _CORS_ALLOW_HEADERS
+                return Response(
+                    status_code=204,
+                    headers={
+                        "Access-Control-Allow-Origin": origin,
+                        "Access-Control-Allow-Credentials": "true",
+                        "Access-Control-Allow-Methods": _CORS_ALLOW_METHODS,
+                        "Access-Control-Allow-Headers": allow_headers,
+                        "Access-Control-Max-Age": "86400",
+                    },
+                )
+            elif settings.is_production and origin:
+                return Response(
+                    status_code=403,
+                    content='{"detail":"CORS origin forbidden"}',
+                    media_type="application/json",
+                )
 
         response: Response = await call_next(request)
 
@@ -363,6 +395,29 @@ class TunnelAwareCORSMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Enforces enterprise security headers across all API responses."""
+    async def dispatch(self, request: Request, call_next) -> Response:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com data:; "
+            "img-src 'self' data: blob: https:; "
+            "connect-src 'self' ws: wss: http: https:; "
+            "frame-ancestors 'self';"
+        )
+        if settings.is_production:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(TunnelAwareCORSMiddleware, explicit_origins=settings.cors_origin_list)
 
 # Idempotency Middleware for POST and PATCH
@@ -373,6 +428,52 @@ app.include_router(auth_router, prefix=settings.API_V1_STR)
 app.include_router(admin_router, prefix=settings.API_V1_STR)
 app.include_router(customer_router, prefix=settings.API_V1_STR)
 app.include_router(booking_router, prefix=settings.API_V1_STR)
+app.include_router(payment_router, prefix=settings.API_V1_STR)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Unified API Error Handling
+# ─────────────────────────────────────────────────────────────────────
+@app.exception_handler(StarletteHTTPException)
+async def unified_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "detail": exc.detail,
+            "code": "HTTP_ERROR",
+            "status": exc.status_code,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+        headers=getattr(exc, "headers", None),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def unified_validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "detail": "Request validation failed. Please check your input parameters.",
+            "errors": exc.errors(),
+            "code": "VALIDATION_ERROR",
+            "status": 422,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def unified_unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled server exception on %s: %s", request.url.path, exc, exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "detail": "An internal server error occurred.",
+            "code": "INTERNAL_SERVER_ERROR",
+            "status": 500,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+    )
 
 
 @app.get("/api/v1/fleet/categories", response_model=List[CategoryAvailabilityResponse], tags=["Fleet Categories"])
@@ -385,7 +486,13 @@ async def public_fleet_matrix(db: AsyncSession = Depends(get_db)):
     return await get_fleet_matrix(db)
 
 
-@app.post("/api/v1/sessions/start", response_model=SessionResponse, status_code=status.HTTP_201_CREATED, tags=["Fleet Categories"])
+@app.post(
+    "/api/v1/sessions/start",
+    response_model=SessionResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Fleet Categories"],
+    dependencies=[Depends(RateLimiter(max_requests=30, window_seconds=60, scope="session_start"))],
+)
 async def public_start_session(
     payload: SessionStartRequest,
     auth_user: Optional[User] = Depends(get_optional_auth_user),
@@ -410,19 +517,29 @@ async def public_start_session(
 
 
 @app.get("/health", tags=["Health"])
+@app.get("/api/health", tags=["Health"])
 async def health_check(db: AsyncSession = Depends(get_db)):
-    db_status = "healthy"
+    is_healthy = True
+    db_status = "connected"
     try:
         await db.execute(select(1))
     except Exception as exc:
         logger.error(f"Database health check failed: {exc}")
-        db_status = "unreachable"
+        is_healthy = False
+        db_status = "degraded"
+
+    uptime_sec = round(time.time() - BOOT_TIME, 2)
+    timestamp_utc = datetime.now(timezone.utc).isoformat()
 
     return {
-        "status": "healthy" if db_status == "healthy" else "degraded",
-        "database": db_status,
+        "status": "ok" if is_healthy else "degraded",
+        "uptime": uptime_sec,
+        "timestamp": timestamp_utc,
+        "dbStatus": db_status,
+        "database": "healthy" if is_healthy else "unreachable",
         "system": settings.PROJECT_NAME,
         "version": settings.VERSION,
+        "environment": settings.NODE_ENV,
     }
 
 

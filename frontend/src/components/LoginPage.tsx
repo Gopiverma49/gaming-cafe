@@ -48,6 +48,7 @@ export const LoginPage: React.FC = () => {
 
   const handleCustomerLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setErrorMessage(null);
 
     const id = loginIdentifier.trim();
@@ -74,6 +75,7 @@ export const LoginPage: React.FC = () => {
 
   const handleCustomerRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setErrorMessage(null);
 
     const name = regFullName.trim();
@@ -111,6 +113,7 @@ export const LoginPage: React.FC = () => {
 
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setErrorMessage(null);
 
     const user = adminUsername.trim();

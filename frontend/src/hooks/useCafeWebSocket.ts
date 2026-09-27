@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { WebSocketEvent } from '../types';
 import { useLoungeStore } from '../store/loungeStore';
+import { env } from '../config/env';
 
 interface UseCafeWebSocketOptions {
   channel: string;
@@ -73,7 +74,7 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
     if (typeof window !== 'undefined') {
       const host = window.location.hostname;
       const isLocalhost = host === 'localhost' || host === '127.0.0.1';
-      const envWs = import.meta.env.VITE_WS_URL as string | undefined;
+      const envWs = env.VITE_WS_URL;
 
       if (envWs && !isLocalhost) {
         let baseWs = envWs.replace(/\/+$/, '');

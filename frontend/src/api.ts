@@ -14,6 +14,7 @@ import {
 } from './types';
 
 import { useAuthStore } from './store/authStore';
+import { env } from './config/env';
 
 function resolveApiBase(): string {
   if (typeof window !== 'undefined') {
@@ -30,11 +31,7 @@ function resolveApiBase(): string {
       return '';
     }
   }
-  const envBase = import.meta.env.VITE_API_BASE_URL;
-  if (envBase) {
-    return String(envBase).replace(/\/+$/, '');
-  }
-  return '';
+  return env.VITE_API_BASE_URL || '';
 }
 
 export const API_BASE = `${resolveApiBase()}/api/v1`;

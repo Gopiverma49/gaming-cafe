@@ -1,5 +1,4 @@
-from decimal import Decimal
-from typing import List, Union
+from typing import List, Optional, Union
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,6 +10,11 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Gaming Cafe Operations & Financial Management System"
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
+
+    # Runtime Environment & Network Bindings
+    NODE_ENV: str = "development"
+    HOST: str = "0.0.0.0"
+    PORT: int = 8000
 
     # Database Configuration & Pool Lifecycles
     DATABASE_URL: str = "sqlite+aiosqlite:///./gaming_cafe_dev.db"
@@ -48,15 +52,21 @@ class Settings(BaseSettings):
 
     # CORS Settings (can be "*" or comma-separated domains)
     CORS_ORIGINS: Union[str, List[str]] = "*"
+    ALLOWED_ORIGINS: Optional[Union[str, List[str]]] = None
+
+    @property
+    def is_production(self) -> bool:
+        return self.NODE_ENV.lower() == "production"
 
     @property
     def cors_origin_list(self) -> List[str]:
-        if isinstance(self.CORS_ORIGINS, list):
-            return self.CORS_ORIGINS
-        if isinstance(self.CORS_ORIGINS, str):
-            if self.CORS_ORIGINS.strip() == "*":
+        target = self.ALLOWED_ORIGINS if self.ALLOWED_ORIGINS is not None else self.CORS_ORIGINS
+        if isinstance(target, list):
+            return target
+        if isinstance(target, str):
+            if target.strip() == "*":
                 return ["*"]
-            return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+            return [origin.strip() for origin in target.split(",") if origin.strip()]
         return ["*"]
 
     @property
@@ -69,7 +79,39 @@ class Settings(BaseSettings):
             return url.replace("postgresql://", "postgresql+asyncpg://", 1)
         return url
 
+    def validate_production_config(self) -> None:
+        """
+        Fail-fast validation for production readiness.
+        Ensures secure database, cryptographic tokens, and network boundaries.
+        """
+        if not self.is_production:
+            return
+
+        errors = []
+        if "sqlite" in self.DATABASE_URL.lower():
+            errors.append("DATABASE_URL: SQLite is not permitted in production. Configure a production PostgreSQL connection string.")
+        
+        origins = self.cors_origin_list
+        if not origins or "*" in origins:
+            errors.append("ALLOWED_ORIGINS / CORS_ORIGINS: Wildcard '*' is strictly forbidden in production. Explicit domain whitelist is required.")
+
+        if self.JWT_SECRET == "enterprise_gaming_cafe_super_secret_jwt_key_2026" or len(self.JWT_SECRET) < 32:
+            errors.append("JWT_SECRET: Default or weak secret detected. Production requires at least 32 random characters.")
+
+        if self.ADMIN_PASSWORD == "admin123" or len(self.ADMIN_PASSWORD) < 8:
+            errors.append("ADMIN_PASSWORD: Insecure default credentials detected. Set a complex administrative password.")
+
+        if errors:
+            diagnostic = (
+                "\n" + "=" * 76 + "\n"
+                "🚨 [FAIL-FAST ERROR] Application boot rejected due to production security violations:\n"
+                + "\n".join(f"   [{idx + 1}] {err}" for idx, err in enumerate(errors))
+                + "\n" + "=" * 76 + "\n"
+            )
+            raise RuntimeError(diagnostic)
+
     model_config = SettingsConfigDict(env_file=(".env", "../.env"), extra="ignore")
 
 
 settings = Settings()
+

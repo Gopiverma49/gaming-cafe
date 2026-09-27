@@ -20,6 +20,7 @@ import { useAuthStore } from '../store/authStore';
 import { useLoungeStore } from '../store/loungeStore';
 import { useNotificationStore } from '../store/notificationStore';
 import { SlideToConfirm } from './SlideToConfirm';
+import { validateWalkInDuration, formatTime12h, getNextBookingForStation } from '../utils/bookingConflict';
 
 interface SessionUpsellDrawerProps {
   isOpen: boolean;
@@ -46,7 +47,7 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
 }) => {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
-  const { addBooking, recordCustomerVisit } = useLoungeStore();
+  const { bookings, addBooking, recordCustomerVisit } = useLoungeStore();
   const { addNotification } = useNotificationStore();
 
   // Selected hardware device when booking a Category (Solo/Multiplayer -> PS1, PS2, PS3)
@@ -188,14 +189,26 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
         } else if (effectiveCategory.id.toLowerCase() === 'vr_sim' || effectiveCategory.id.toLowerCase() === 'vr') {
           setSelectedDeviceId('VR1');
         } else if (Array.isArray(effectiveCategory.devices) && effectiveCategory.devices.length > 0) {
-          const firstFree = effectiveCategory.devices.find((d) => !d.is_occupied);
+          // Prioritize device that is neither busy nor colliding with an advance booking
+          const nonColliding = effectiveCategory.devices.find((d) => {
+            if (d.is_occupied) return false;
+            const chk = validateWalkInDuration(d.id, durationMinutes, bookings);
+            return chk.allowed;
+          });
+          const firstFree = nonColliding || effectiveCategory.devices.find((d) => !d.is_occupied);
           setSelectedDeviceId(firstFree ? firstFree.id : effectiveCategory.devices[0].id);
         } else {
           setSelectedDeviceId(effectiveCategory.name || 'PS1');
         }
       }
     }
-  }, [isOpen, defaultCustomerName, defaultCustomerPhone, user, isAdmin, effectiveCategory]);
+  }, [isOpen, defaultCustomerName, defaultCustomerPhone, user, isAdmin, effectiveCategory, durationMinutes, bookings]);
+
+  // Real-time advance booking collision verification for selected device & duration
+  const deviceDurationValidation = useMemo(() => {
+    const targetDev = selectedDeviceId || effectiveCategory?.name || station?.name || 'PS1';
+    return validateWalkInDuration(targetDev, durationMinutes, bookings);
+  }, [selectedDeviceId, effectiveCategory, station, durationMinutes, bookings]);
 
   // Filtered snacks list
   const displayedSnacks = useMemo(() => {
@@ -250,6 +263,11 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
 
     const finalName = customerName.trim() || user?.name || (isAdmin ? 'Walk-in Gamer' : 'Gamer');
     const finalPhone = customerPhone.trim() || user?.phone || undefined;
+
+    if (!deviceDurationValidation.allowed) {
+      setErrorMessage(deviceDurationValidation.reason || 'This station is reserved for an upcoming advance booking.');
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -413,30 +431,37 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
                   {effectiveCategory.devices.map((dev) => {
                     const isSelected = selectedDeviceId === dev.id;
                     const isBusy = dev.is_occupied;
+                    const devCheck = validateWalkInDuration(dev.id, durationMinutes, bookings);
+                    const isColliding = !devCheck.allowed;
+                    const nextB = getNextBookingForStation(dev.id, bookings);
+
                     return (
                       <button
                         key={dev.id}
                         type="button"
-                        disabled={isBusy}
+                        disabled={isBusy || isColliding}
                         onClick={() => setSelectedDeviceId(dev.id)}
                         className={`py-2 px-2.5 rounded-xl border font-bold text-xs flex flex-col items-center justify-center gap-0.5 transition-all ${
                           isBusy
                             ? 'bg-[#F1F5F9] border-[#E2E8F0] text-[#94A3B8] cursor-not-allowed line-through'
+                            : isColliding
+                            ? 'bg-[#FEF2F2] border-[#FCA5A5] text-[#991B1B] cursor-not-allowed opacity-80'
                             : isSelected
-                            ? 'bg-[#FFF7ED] border-[#EA580C] text-[#EA580C] shadow-sm'
+                            ? 'bg-[#FFF7ED] border-[#EA580C] text-[#EA580C] shadow-sm cursor-pointer'
                             : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#0F172A] hover:border-[#CBD5E1] cursor-pointer'
                         }`}
+                        title={isColliding ? devCheck.reason : undefined}
                       >
                         <div className="flex items-center gap-1.5">
                           <span
                             className={`w-2 h-2 rounded-full ${
-                              isBusy ? 'bg-[#B91C1C]' : isSelected ? 'bg-[#EA580C] animate-pulse' : 'bg-[#15803D]'
+                              isBusy ? 'bg-[#B91C1C]' : isColliding ? 'bg-[#DC2626]' : isSelected ? 'bg-[#EA580C] animate-pulse' : 'bg-[#15803D]'
                             }`}
                           />
                           <span className="font-['Plus_Jakarta_Sans',sans-serif]">{dev.name}</span>
                         </div>
                         <span className="text-[10px] font-mono font-normal">
-                          {isBusy ? 'Busy' : isSelected ? 'Selected' : 'Available'}
+                          {isBusy ? 'Busy' : isColliding ? `Res @ ${formatTime12h(nextB?.booking.startTime || '')}` : isSelected ? 'Selected' : 'Available'}
                         </span>
                       </button>
                     );
@@ -632,11 +657,24 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
             </div>
           </div>
 
+          {/* Advance Booking Overlap Warning */}
+          {!deviceDurationValidation.allowed && (
+            <div className="p-2.5 rounded-xl bg-[#FEF2F2] border border-[#FECACA] text-[#B91C1C] text-xs font-semibold flex items-start gap-2 animate-in fade-in">
+              <AlertCircle className="w-4 h-4 text-[#DC2626] shrink-0 mt-0.5" />
+              <span>{deviceDurationValidation.reason}</span>
+            </div>
+          )}
+
           {/* Slide-to-Confirm Knob */}
           <SlideToConfirm
             onConfirm={handleConfirmSession}
+            disabled={!deviceDurationValidation.allowed || isSubmitting}
             isLoading={isSubmitting}
-            label={`SLIDE TO START • ₹${grandTotalCost}`}
+            label={
+              !deviceDurationValidation.allowed
+                ? `RESERVED @ ${deviceDurationValidation.conflictBookingTimeStr || 'UPCOMING'}`
+                : `SLIDE TO START • ₹${grandTotalCost}`
+            }
             confirmedLabel="SESSION ACTIVE!"
           />
         </div>

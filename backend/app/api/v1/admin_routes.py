@@ -569,16 +569,18 @@ async def update_kitchen_order_status(
         for itm in order.items:
             if itm.menu_item:
                 itm.menu_item.stock = max(0, itm.menu_item.stock - itm.quantity)
-    # 2. On Cancel after having been accepted: Restore inventory stock
-    elif old_status in (OrderStatus.PREPARING.value, OrderStatus.SERVED.value) and new_status == OrderStatus.CANCELLED.value:
+    is_reject_or_cancel = new_status in (OrderStatus.CANCELLED.value, OrderStatus.REJECTED.value, "CANCELLED", "REJECTED")
+
+    # 2. On Cancel/Reject after having been accepted: Restore inventory stock
+    if old_status in (OrderStatus.PREPARING.value, OrderStatus.SERVED.value) and is_reject_or_cancel:
         for itm in order.items:
             if itm.menu_item:
                 itm.menu_item.stock = itm.menu_item.stock + itm.quantity
 
     order.status = new_status
 
-    # If this was a Walk-in CAFE session and all its orders are now cancelled, cancel the session immediately
-    if new_status == OrderStatus.CANCELLED.value and order.session:
+    # If this was a Walk-in CAFE session and all its orders are now cancelled/rejected, cancel the session immediately
+    if is_reject_or_cancel and order.session:
         is_cafe_sess = (
             (order.session.category_id and any(c in order.session.category_id.lower() for c in ("dine-in", "dine-out", "cafe")))
             or (order.session.device_name and "cafe" in order.session.device_name.lower())
@@ -787,60 +789,82 @@ async def place_station_food_order(
         except ValueError:
             pass
 
-    # 2. Try UUID station_id lookup
-    if not cafe_session:
-        try:
-            st_uuid = uuid.UUID(target_st_id_str)
-            stmt = (
+    # 2. Resolve target station if possible
+    target_station = None
+    try:
+        st_uuid = uuid.UUID(target_st_id_str)
+        target_station = await db.get(Station, st_uuid)
+    except ValueError:
+        st_stmt = select(Station).where(
+            or_(
+                func.upper(Station.name) == target_st_id_str.upper(),
+                func.upper(Station.tier) == target_st_id_str.upper(),
+            )
+        )
+        target_station = (await db.execute(st_stmt)).scalar_one_or_none()
+
+    st_upper = target_st_id_str.upper()
+    is_cafe_order = (
+        "CAFE" in st_upper
+        or "DINE" in st_upper
+        or (
+            target_station is not None
+            and (
+                (target_station.tier and target_station.tier.upper() == "CAFE")
+                or "CAFE" in (target_station.name or "").upper()
+                or "DINE" in (target_station.name or "").upper()
+            )
+        )
+    )
+
+    clean_cust_name = payload.customer_name.strip() if payload.customer_name and payload.customer_name.strip() else ""
+    is_generic_name = clean_cust_name.lower() in ("", "customer", "walk-in guest", "walk-in cafe guest")
+
+    if is_cafe_order:
+        # Check if an existing active cafe session matches this customer
+        if not cafe_session and clean_cust_name and not is_generic_name:
+            existing_cafe_stmt = (
                 select(Session)
-                .where(Session.station_id == st_uuid, Session.status == SessionStatus.ACTIVE.value)
+                .where(
+                    Session.status == SessionStatus.ACTIVE.value,
+                    func.upper(Session.customer_name) == clean_cust_name.upper(),
+                    or_(
+                        Session.station_id == (target_station.id if target_station else None),
+                        func.upper(Session.station_name) == "WALK-IN CAFE",
+                        func.upper(Session.device_name) == "WALK-IN CAFE",
+                        func.upper(Session.console_room) == "WALK-IN CAFE",
+                        Session.category_id.ilike("%dine%"),
+                        Session.category_id.ilike("%cafe%"),
+                    ),
+                )
                 .options(selectinload(Session.station))
             )
-            cafe_session = (await db.execute(stmt)).scalar_one_or_none()
-        except ValueError:
-            pass
+            cafe_session = (await db.execute(existing_cafe_stmt)).scalars().first()
 
-    # 3. Match by device_name, console_room, or station name (e.g. 'PS3', 'PS1', 'VR1')
-    if not cafe_session:
-        st_upper = target_st_id_str.upper()
-        active_stmt = (
-            select(Session)
-            .join(Session.station, isouter=True)
-            .where(
-                Session.status == SessionStatus.ACTIVE.value,
-                or_(
-                    func.upper(Session.device_name) == st_upper,
-                    func.upper(Session.console_room) == st_upper,
-                    func.upper(Station.name) == st_upper,
-                ),
-            )
-            .options(selectinload(Session.station))
-        )
-        cafe_session = (await db.execute(active_stmt)).scalars().first()
+        # If still no session, create a standalone Walk-in CAFE session
+        if not cafe_session:
+            if not target_station:
+                st_stmt = select(Station).where(func.upper(Station.name) == "WALK-IN CAFE")
+                target_station = (await db.execute(st_stmt)).scalar_one_or_none()
+                if not target_station:
+                    target_station = Station(
+                        name="Walk-in CAFE",
+                        tier="CAFE",
+                        hourly_rate=Decimal("0.00"),
+                        pricing_tiers=[],
+                        status=StationStatus.AVAILABLE.value,
+                    )
+                    db.add(target_station)
+                    await db.flush()
 
-    if not cafe_session:
-        st_upper = target_st_id_str.upper()
-        if "CAFE" in st_upper or "DINE" in st_upper:
-            st_stmt = select(Station).where(func.upper(Station.name) == "WALK-IN CAFE")
-            cafe_st = (await db.execute(st_stmt)).scalar_one_or_none()
-            if not cafe_st:
-                cafe_st = Station(
-                    name="Walk-in CAFE",
-                    tier="CAFE",
-                    hourly_rate=Decimal("0.00"),
-                    pricing_tiers=[],
-                    status=StationStatus.AVAILABLE.value,
-                )
-                db.add(cafe_st)
-                await db.flush()
-
+            effective_cafe_cust = clean_cust_name if clean_cust_name and not is_generic_name else "Walk-in Cafe Guest"
             cafe_session = Session(
-                station_id=cafe_st.id,
-                station_name="Walk-in CAFE",
-                device_name="Walk-in CAFE",
-                console_room="Walk-in CAFE",
+                station_id=target_station.id,
+                station_name=target_station.name or "Walk-in CAFE",
+                device_name=target_station.name or "Walk-in CAFE",
+                console_room=target_station.name or "Walk-in CAFE",
                 category_id="dine-in",
-                customer_name=payload.customer_name or "Walk-in Cafe Guest",
+                customer_name=effective_cafe_cust,
                 status=SessionStatus.ACTIVE.value,
                 started_at=datetime.now(timezone.utc),
                 allocated_minutes=0,
@@ -848,7 +872,34 @@ async def place_station_food_order(
             )
             db.add(cafe_session)
             await db.flush()
-        else:
+
+    else:
+        # Standard gaming console station logic: must find active gaming session
+        if not cafe_session and target_station:
+            stmt = (
+                select(Session)
+                .where(Session.station_id == target_station.id, Session.status == SessionStatus.ACTIVE.value)
+                .options(selectinload(Session.station))
+            )
+            cafe_session = (await db.execute(stmt)).scalars().first()
+
+        if not cafe_session:
+            active_stmt = (
+                select(Session)
+                .join(Session.station, isouter=True)
+                .where(
+                    Session.status == SessionStatus.ACTIVE.value,
+                    or_(
+                        func.upper(Session.device_name) == st_upper,
+                        func.upper(Session.console_room) == st_upper,
+                        func.upper(Station.name) == st_upper,
+                    ),
+                )
+                .options(selectinload(Session.station))
+            )
+            cafe_session = (await db.execute(active_stmt)).scalars().first()
+
+        if not cafe_session:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"No active playing session found on station '{target_st_id_str}'. Please verify the session is active before ordering snacks.",
@@ -918,7 +969,7 @@ async def place_station_food_order(
         event_type="ORDER_CREATED",
         payload={
             "order_id": str(order.id),
-            "station_name": cafe_session.station.name if cafe_session.station else "Gaming Station",
+            "station_name": cafe_session.station.name if (cafe_session.station and cafe_session.station.name) else (cafe_session.station_name or "Walk-in CAFE"),
             "customer_name": order.customer_name,
         },
     )
@@ -987,18 +1038,18 @@ async def get_customer_directory(db: AsyncSession = Depends(get_db)):
 
         visit_count = len(u_sessions)
         last_visit_str = None
-        total_spent = sum_order_charges(
-            [o for s in u_sessions for o in s.orders],
-            statuses=["PREPARING", "SERVED"],
-        )
         if u_sessions:
             sorted_s = sorted(u_sessions, key=lambda s: s.started_at, reverse=True)
             last_visit_str = sorted_s[0].started_at.strftime("%d %b, %I:%M %p")
+
+        total_spent = Decimal("0.00")
         for s in u_sessions:
-            if s.total_amount:
-                total_spent += s.total_amount
-            elif s.tier_price:
-                total_spent += s.tier_price
+            if s.status == SessionStatus.COMPLETED.value:
+                total_spent += (s.total_amount if s.total_amount is not None else Decimal("0.00"))
+            else:
+                sess_time = s.tier_price or Decimal("0.00")
+                sess_orders = sum_order_charges(s.orders, statuses=["PREPARING", "SERVED"])
+                total_spent += (sess_time + sess_orders)
 
         out.append(
             CustomerProfileResponse(
@@ -1034,12 +1085,14 @@ async def get_customer_directory(db: AsyncSession = Depends(get_db)):
         phone = primary_s.customer_phone or "Walk-in"
         last_visit_str = primary_s.started_at.strftime("%d %b, %I:%M %p")
 
-        total_spent = sum(
-            (s.total_amount or s.tier_price or Decimal("0.00")) for s in s_list
-        ) + sum_order_charges(
-            [o for s in s_list for o in s.orders],
-            statuses=["PREPARING", "SERVED"],
-        )
+        total_spent = Decimal("0.00")
+        for s in s_list:
+            if s.status == SessionStatus.COMPLETED.value:
+                total_spent += (s.total_amount if s.total_amount is not None else Decimal("0.00"))
+            else:
+                sess_time = s.tier_price or Decimal("0.00")
+                sess_orders = sum_order_charges(s.orders, statuses=["PREPARING", "SERVED"])
+                total_spent += (sess_time + sess_orders)
 
         out.append(
             CustomerProfileResponse(
@@ -1115,10 +1168,10 @@ async def get_revenue_analytics(
         started_at = ensure_utc(s.started_at)
         day_key = started_at.strftime("%Y-%m-%d")
 
-        s_time_charge = s.total_amount or Decimal("0.00")
+        s_total = s.total_amount if (s.total_amount is not None and s.total_amount > Decimal("0.00")) else Decimal("0.00")
         s_food_charge = Decimal("0.00")
         for o in s.orders:
-            if o.status != OrderStatus.CANCELLED.value:
+            if o.status not in (OrderStatus.CANCELLED.value, "REJECTED", "rejected"):
                 for itm in o.items:
                     s_food_charge += (itm.unit_price * Decimal(str(itm.quantity))).quantize(
                         CURRENCY_QUANTIZATION
@@ -1126,7 +1179,15 @@ async def get_revenue_analytics(
                     name = itm.menu_item.name if itm.menu_item else "Item"
                     item_counts[name] += itm.quantity
 
-        s_total = s_time_charge + s_food_charge
+        if s.status == SessionStatus.COMPLETED.value:
+            if s_total > Decimal("0.00"):
+                s_time_charge = max(Decimal("0.00"), s_total - s_food_charge)
+            else:
+                s_time_charge = Decimal("0.00")
+                s_total = s_time_charge + s_food_charge
+        else:
+            s_time_charge = s.tier_price or Decimal("0.00")
+            s_total = s_time_charge + s_food_charge
 
         gaming_revenue += s_time_charge
         food_revenue += s_food_charge
