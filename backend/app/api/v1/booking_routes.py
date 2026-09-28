@@ -1,8 +1,8 @@
 import logging
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, or_, case, func
@@ -12,6 +12,7 @@ from app.api.deps import get_db
 from app.core.rate_limiter import RateLimiter
 from app.models.entities import AdvanceBookingRecord, Session
 from app.models.enums import SessionStatus
+from app.services.session_service import parse_booking_range
 from app.services.ws_notifier import buffer_ws_event
 
 logger = logging.getLogger("booking_routes")
@@ -58,48 +59,6 @@ def _serialize_booking(b: AdvanceBookingRecord) -> dict:
         "status": b.status,
         "createdAt": b.created_at.isoformat() if b.created_at else None,
     }
-
-
-def parse_booking_range(booking_date: str, start_time: str, duration_minutes: int):
-    """
-    Parses a booking's date and start time into naive (start_dt, end_dt) datetimes,
-    correctly handling both YYYY-MM-DD and DD-MM-YYYY formats, as well as 12h/24h time.
-    """
-    if not booking_date or not start_time:
-        return None, None
-    try:
-        clean_date = booking_date.split("T")[0].strip()
-        parts = [int(p) for p in clean_date.split("-") if p.isdigit()]
-        if len(parts) == 3:
-            if parts[0] > 1000:
-                y, m, d = parts[0], parts[1], parts[2]
-            elif parts[2] > 1000:
-                y, m, d = parts[2], parts[1], parts[0]
-            else:
-                return None, None
-        else:
-            return None, None
-
-        t_clean = start_time.strip().upper()
-        is_pm = "PM" in t_clean
-        is_am = "AM" in t_clean
-        t_clean = t_clean.replace("PM", "").replace("AM", "").strip()
-        t_parts = [int(p) for p in t_clean.split(":") if p.strip().isdigit()]
-        if not t_parts:
-            return None, None
-        h = t_parts[0]
-        mins = t_parts[1] if len(t_parts) > 1 else 0
-        if is_pm and h < 12:
-            h += 12
-        elif is_am and h == 12:
-            h = 0
-
-        start_dt = datetime(y, m, d, h, mins)
-        dur = max(1, int(duration_minutes or 60))
-        end_dt = start_dt + timedelta(minutes=dur)
-        return start_dt, end_dt
-    except Exception:
-        return None, None
 
 
 @router.get("", response_model=List[dict])
@@ -202,13 +161,15 @@ async def create_advance_booking(
                     detail=f"Collision detected: Station {target_station} is occupied until {end_str}",
                 )
 
-        # 2. Check against existing confirmed bookings for this station
+        # 2. Check against existing confirmed bookings for this station (excluding self)
         existing_stmt = (
             select(AdvanceBookingRecord)
             .where(
                 func.upper(AdvanceBookingRecord.station_id) == target_station,
                 AdvanceBookingRecord.status == "CONFIRMED",
                 AdvanceBookingRecord.id != raw_id,
+                AdvanceBookingRecord.id != f"BK-{raw_id}",
+                AdvanceBookingRecord.id != raw_id.replace("BK-", ""),
             )
             .with_for_update()
         )
@@ -232,6 +193,19 @@ async def create_advance_booking(
 
     # Upsert if already exists
     existing = await db.get(AdvanceBookingRecord, raw_id)
+    if not existing:
+        res = await db.execute(
+            select(AdvanceBookingRecord).where(
+                or_(
+                    AdvanceBookingRecord.id == raw_id,
+                    AdvanceBookingRecord.id == f"BK-{raw_id}",
+                    AdvanceBookingRecord.id == raw_id.replace("BK-", ""),
+                )
+            )
+        )
+        existing = res.scalar_one_or_none()
+
+    is_update = existing is not None
     if existing:
         existing.customer_name = payload.customerName
         existing.phone_number = phone
@@ -265,21 +239,38 @@ async def create_advance_booking(
         db.add(booking)
 
     serialized = _serialize_booking(booking)
+    evt_type = "BOOKING_UPDATED" if is_update else "BOOKING_CREATED"
     buffer_ws_event(
         db,
         channel="admin",
-        event_type="BOOKING_CREATED",
+        event_type=evt_type,
         payload=serialized,
     )
     buffer_ws_event(
         db,
         channel="customer",
-        event_type="BOOKING_CREATED",
+        event_type=evt_type,
         payload=serialized,
     )
 
     await db.commit()
     return serialized
+
+
+@router.put("/{booking_id}")
+@router.patch("/{booking_id}")
+async def update_advance_booking(
+    booking_id: str,
+    payload: BookingPayload,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Updates an existing advance booking, persists changes to DB,
+    and broadcasts BOOKING_UPDATED across WebSocket.
+    """
+    payload.bookingId = booking_id
+    payload.id = booking_id
+    return await create_advance_booking(payload, db)
 
 
 @router.post("/{booking_id}/cancel")

@@ -107,12 +107,34 @@ export function getBookingInterval(
 /**
  * Calculates end time string HH:mm given start time string and duration in minutes.
  */
+/**
+ * Converts any time format (e.g. "6:00 PM", "18:00", "06:00pm") to standard 24h "HH:mm".
+ */
+export function to24hTime(timeStr?: string): string {
+  if (!timeStr) return '12:00';
+  const trimmed = timeStr.trim();
+  const isPM = /pm/i.test(trimmed);
+  const isAM = /am/i.test(trimmed);
+  const clean = (trimmed.includes('T') ? trimmed.split('T')[1] : trimmed).replace(/am|pm/gi, '').trim();
+  const parts = clean.split(':');
+  let h = parseInt(parts[0], 10) || 0;
+  const m = parts.length > 1 ? parseInt(parts[1], 10) || 0 : 0;
+  if (isPM && h < 12) h += 12;
+  if (isAM && h === 12) h = 0;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 export function calculateEndTime(startTimeStr: string, durationMinutes: number): string {
   if (!startTimeStr) return '00:00';
-  const cleanTime = startTimeStr.includes('T') ? startTimeStr.split('T')[1] : startTimeStr;
-  const [hStr, mStr] = cleanTime.split(':');
-  const h = parseInt(hStr, 10) || 0;
+  const cleanTime = startTimeStr.includes('T') ? startTimeStr.split('T')[1].trim() : startTimeStr.trim();
+  const isPM = /pm/i.test(cleanTime);
+  const isAM = /am/i.test(cleanTime);
+  const stripped = cleanTime.replace(/am|pm/gi, '').trim();
+  const [hStr, mStr] = stripped.split(':');
+  let h = parseInt(hStr, 10) || 0;
   const m = parseInt(mStr || '0', 10) || 0;
+  if (isPM && h < 12) h += 12;
+  if (isAM && h === 12) h = 0;
   const totalMins = h * 60 + m + (durationMinutes || 0);
   const endH = Math.floor(totalMins / 60) % 24;
   const endM = totalMins % 60;
@@ -367,7 +389,9 @@ export function validateNewBooking(
     if (
       candidate.ignoreBookingId &&
       (String(b.bookingId || '').trim() === String(candidate.ignoreBookingId).trim() ||
-        String(b.id || '').trim() === String(candidate.ignoreBookingId).trim())
+        String(b.id || '').trim() === String(candidate.ignoreBookingId).trim() ||
+        String(b.bookingId || '').replace(/^BK-/, '').trim() === String(candidate.ignoreBookingId).replace(/^BK-/, '').trim() ||
+        String(b.id || '').replace(/^BK-/, '').trim() === String(candidate.ignoreBookingId).replace(/^BK-/, '').trim())
     ) {
       continue;
     }

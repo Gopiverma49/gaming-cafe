@@ -157,6 +157,7 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
                 'station-matrix',
                 'stations-live',
                 'customer-sessions',
+                'advance-bookings',
               ]);
               break;
 
@@ -166,6 +167,7 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
                 'station-matrix',
                 'stations-live',
                 'customer-sessions',
+                'advance-bookings',
               ]);
               break;
 

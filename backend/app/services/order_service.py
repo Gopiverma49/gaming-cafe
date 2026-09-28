@@ -83,12 +83,14 @@ def serialize_order(order: Order) -> OrderResponse:
     station_name = "Desk"
     station_id = None
     customer_name = order.customer_name
+    session_status = None
     if getattr(order, "session", None):
         if not customer_name and getattr(order.session, "customer_name", None):
             customer_name = order.session.customer_name
         if getattr(order.session, "station", None):
             station_name = order.session.station.name
             station_id = order.session.station.id
+        session_status = getattr(order.session, "status", None)
 
     return OrderResponse(
         id=order.id,
@@ -100,4 +102,5 @@ def serialize_order(order: Order) -> OrderResponse:
         created_at=order.created_at,
         items=items_out,
         total_amount=total,
+        session_status=session_status,
     )

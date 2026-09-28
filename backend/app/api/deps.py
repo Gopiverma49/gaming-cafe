@@ -111,6 +111,57 @@ async def get_optional_auth_user(
         return None
 
 
+async def require_admin_role(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """
+    Enforces strict role-based access control (RBAC).
+    Rejects unauthorized requests with 401 Unauthorized or 403 Forbidden.
+    """
+    if not credentials or not credentials.credentials:
+        if settings.is_production:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Admin authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        # Development fallback
+        user = await get_optional_auth_user(credentials, db)
+        if not user:
+            user = User(
+                name="System Administrator",
+                phone="0000000000",
+                password_hash=get_password_hash(settings.ADMIN_PASSWORD),
+                role="ADMIN",
+            )
+        return user
+
+    try:
+        payload = decode_jwt_token(credentials.credentials)
+        role = payload.get("role") or payload.get("scope") or ""
+        if str(role).lower() != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Administrative privileges required",
+            )
+        user = await get_optional_auth_user(credentials, db)
+        if not user or str(user.role).upper() != "ADMIN":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Administrative privileges required",
+            )
+        return user
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired admin token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 # In-memory Idempotency Store with LRU eviction and TTL
 # In high-volume distributed production, this can be backed by Redis.
 class IdempotencyCache:

@@ -547,4 +547,15 @@ export async function cancelAdvanceBookingApi(bookingId: string): Promise<any> {
   return handleResponse<any>(res);
 }
 
-
+export async function updateAdvanceBookingApi(bookingId: string, booking: any): Promise<any> {
+  const payload = { ...booking, bookingId, id: bookingId };
+  const res = await safeFetch(`${API_BASE}/bookings/${bookingId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    return createAdvanceBookingApi(payload);
+  }
+  return handleResponse<any>(res);
+}

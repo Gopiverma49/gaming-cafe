@@ -1,121 +1,140 @@
 """
-Test Data Cleansing Script
-Safely purges synthetic development/test data from the database
-without altering canonical stations, console rooms, or base menu items.
+Test Data Cleansing Script for Production Deployment.
+Scans and safely purges mock/test sessions, test orders, and test advance bookings
+prior to production launch or post-staging verification.
 
 Usage:
-    python scripts/clean_test_data.py --dry-run
-    python scripts/clean_test_data.py --force
+  python scripts/clean_test_data.py --dry-run
+  python scripts/clean_test_data.py --force
 """
+
 import argparse
 import asyncio
 import os
+import socket
 import sys
+from typing import List
 
-# Ensure backend root is on python path
+# Ensure backend root is on sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from sqlalchemy import select, delete, or_
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+# Pre-check database reachability before initializing connection engine
 from app.core.config import settings
-from app.core.database import async_session_factory as default_session_factory
-from app.models.entities import Session, Order, OrderItem, User, AdvanceBookingRecord
 
-
-async def get_working_session_factory():
-    """Returns working session factory, falling back to local SQLite if Postgres is offline."""
+def is_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
     try:
-        async with default_session_factory() as session:
-            await session.execute(select(1))
-            return default_session_factory
-    except Exception:
-        sqlite_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "gaming_cafe_dev.db"))
-        if os.path.exists(sqlite_path):
-            print(f"[*] Postgres offline. Switching to local SQLite: {sqlite_path}")
-            engine = create_async_engine(f"sqlite+aiosqlite:///{sqlite_path}")
-            return async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
-        raise
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except (socket.timeout, ConnectionRefusedError, OSError):
+        return False
+
+raw_db_url = settings.DATABASE_URL
+if "localhost:5432" in raw_db_url or "127.0.0.1:5432" in raw_db_url:
+    if not is_port_open("127.0.0.1", 5432, timeout=0.3):
+        # Auto-fallback to local SQLite file for development/staging environments
+        settings.DATABASE_URL = "sqlite+aiosqlite:///./gaming_cafe_dev.db"
+
+from sqlalchemy import select, delete, or_, func
+from app.core.database import async_session_factory
+from app.models.entities import Session, Order, OrderItem, Payment, AdvanceBookingRecord
 
 
-async def clean_test_data(dry_run: bool = True):
+TEST_NAME_PATTERNS = ["%test%", "%mock%", "%dummy%", "%sample%"]
+TEST_PHONE_PATTERNS = ["%0000000000%", "%1234567890%", "%9999999999%", "%1111111111%"]
+
+
+async def clean_test_data(dry_run: bool = True, verbose: bool = False):
     print("=" * 70)
-    print(f"[CLEANUP] GAMING CAFE TEST DATA CLEANSING (Dry Run: {dry_run})")
+    print("[TEST DATA CLEANSING] Scanning database for test/mock artifacts...")
+    print(f"   Target Database: {settings.DATABASE_URL.split('@')[-1]}")
+    print(f"   Mode: {'PREVIEW (DRY-RUN)' if dry_run else 'ACTIVE PURGE (--force)'}")
     print("=" * 70)
 
-    try:
-        session_factory = await get_working_session_factory()
-    except Exception as exc:
-        print(f"[ERROR] Could not connect to database: {exc}")
-        return
+    async with async_session_factory() as db:
+        # 1. Identify test sessions
+        session_filters = []
+        for p in TEST_NAME_PATTERNS:
+            session_filters.append(func.lower(Session.customer_name).like(p))
+        for p in TEST_PHONE_PATTERNS:
+            session_filters.append(Session.customer_phone.like(p))
 
-    async with session_factory() as db:
-        # 1. Identify test users
-        user_stmt = select(User).where(
-            or_(
-                User.name.ilike("%test%"),
-                User.phone.like("98765%"),
-                User.phone.in_(["0000000000", "1234567890", "9999999999"]),
-            )
+        test_sessions_res = await db.execute(
+            select(Session).where(or_(*session_filters))
         )
-        test_users = (await db.execute(user_stmt)).scalars().all()
-        test_user_ids = [u.id for u in test_users]
-        print(f"[*] Found {len(test_users)} synthetic test user(s).")
+        test_sessions = test_sessions_res.scalars().all()
+        session_ids = [s.id for s in test_sessions]
 
         # 2. Identify test advance bookings
-        booking_stmt = select(AdvanceBookingRecord).where(
-            or_(
-                AdvanceBookingRecord.customer_name.ilike("%test%"),
-                AdvanceBookingRecord.phone_number.like("98765%"),
-                AdvanceBookingRecord.phone_number.in_(["0000000000", "1234567890"]),
-            )
-        )
-        test_bookings = (await db.execute(booking_stmt)).scalars().all()
-        print(f"[*] Found {len(test_bookings)} synthetic advance booking(s).")
+        booking_filters = []
+        for p in TEST_NAME_PATTERNS:
+            booking_filters.append(func.lower(AdvanceBookingRecord.customer_name).like(p))
+        for p in TEST_PHONE_PATTERNS:
+            booking_filters.append(AdvanceBookingRecord.phone_number.like(p))
 
-        # 3. Identify test sessions
-        session_stmt = select(Session).where(
-            or_(
-                Session.customer_name.ilike("%test%"),
-                Session.customer_phone.like("98765%"),
-                Session.user_id.in_(test_user_ids) if test_user_ids else False,
-            )
+        test_bookings_res = await db.execute(
+            select(AdvanceBookingRecord).where(or_(*booking_filters))
         )
-        test_sessions = (await db.execute(session_stmt)).scalars().all()
-        test_session_ids = [s.id for s in test_sessions]
-        print(f"[*] Found {len(test_sessions)} synthetic session(s).")
+        test_bookings = test_bookings_res.scalars().all()
 
-        # 4. Identify orders attached to test sessions
-        if test_session_ids:
-            order_stmt = select(Order).where(Order.session_id.in_(test_session_ids))
-            test_orders = (await db.execute(order_stmt)).scalars().all()
-        else:
-            test_orders = []
-        print(f"[*] Found {len(test_orders)} test order(s).")
+        # 3. Identify orders tied to test sessions
+        test_orders = []
+        if session_ids:
+            test_orders_res = await db.execute(
+                select(Order).where(Order.session_id.in_(session_ids))
+            )
+            test_orders = test_orders_res.scalars().all()
+
+        print(f"\nIdentified Test Records:")
+        print(f"   * Test Sessions:         {len(test_sessions)}")
+        print(f"   * Linked Orders:         {len(test_orders)}")
+        print(f"   * Test Advance Bookings: {len(test_bookings)}")
+
+        if verbose:
+            if test_sessions:
+                print("\n   Sample Sessions:")
+                for s in test_sessions[:5]:
+                    print(f"     - ID: {s.id}, Customer: {s.customer_name}, Phone: {s.customer_phone}")
+            if test_bookings:
+                print("\n   Sample Bookings:")
+                for b in test_bookings[:5]:
+                    print(f"     - ID: {b.id}, Customer: {b.customer_name}, Date: {b.booking_date}")
 
         if dry_run:
-            print("\n[DRY RUN COMPLETE] No records were modified. Run with --force to execute.")
+            print("\n[DRY-RUN COMPLETE] No database modifications were committed.")
+            print("Run with '--force' to permanently delete identified test records.\n")
             return
 
-        # Execute cascading purge
-        for o in test_orders:
-            await db.delete(o)
-        for s in test_sessions:
-            await db.delete(s)
-        for b in test_bookings:
-            await db.delete(b)
-        for u in test_users:
-            if u.role != "ADMIN":  # Preserve root admin
-                await db.delete(u)
+        # Perform atomic deletion
+        if session_ids:
+            order_ids = [o.id for o in test_orders]
+            if order_ids:
+                await db.execute(delete(OrderItem).where(OrderItem.order_id.in_(order_ids)))
+                await db.execute(delete(Order).where(Order.id.in_(order_ids)))
+
+            await db.execute(delete(Payment).where(Payment.session_id.in_(session_ids)))
+            await db.execute(delete(Session).where(Session.id.in_(session_ids)))
+
+        booking_ids = [b.id for b in test_bookings]
+        if booking_ids:
+            await db.execute(delete(AdvanceBookingRecord).where(AdvanceBookingRecord.id.in_(booking_ids)))
 
         await db.commit()
-        print("\n[SUCCESS] Successfully purged test records. Canonical inventory and stations preserved.")
+        print("\n[PURGE SUCCESSFUL] All test records cleanly removed from database.")
+        print("=" * 70 + "\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Clean test/mock records from database before production launch.")
+    parser.add_argument("--force", action="store_true", help="Execute permanent deletion (default is dry-run)")
+    parser.add_argument("--dry-run", action="store_true", default=False, help="Preview records without deleting")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Print details of matched records")
+    args = parser.parse_args()
+
+    dry_run = not args.force
+    asyncio.run(clean_test_data(dry_run=dry_run, verbose=args.verbose))
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Purge synthetic test data from database.")
-    parser.add_argument("--force", action="store_true", help="Execute deletions (disables dry-run).")
-    parser.add_argument("--dry-run", action="store_true", default=False, help="Preview deletions without modifying database.")
-    args = parser.parse_args()
-
-    is_dry = not args.force
-    asyncio.run(clean_test_data(dry_run=is_dry))
+    main()

@@ -80,6 +80,8 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
     bookings,
     clearStationFoodOrders,
     completeActiveBookingForStation,
+    settledCafeCustomers,
+    settleCafeCustomer,
   } = useLoungeStore();
 
   // Accordion expanded state for orders: orderId -> boolean
@@ -126,8 +128,9 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
       setSelectedCafeCustomer(null);
     }
 
-    // 2. Clear from Zustand inSeatOrders
+    // 2. Clear from Zustand inSeatOrders & mark settled
     clearStationInSeatOrders('Walk-in CAFE', c.name);
+    settleCafeCustomer(c.name);
 
     // 3. Immediately purge from React Query kitchen-orders cache
     queryClient.setQueryData<Order[]>(['kitchen-orders'], (old) =>
@@ -811,16 +814,29 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
                                   {/* 3. In-Seat Orders & Financials & Actions */}
                                   {(() => {
-                                    const vrKitchenOrders = queryClient.getQueryData<Order[]>(['kitchen-orders']) || [];
-                                    const vrOrders = inSeatOrders.filter((o) => {
-                                      if (o.stationId.toUpperCase() !== 'VR1') return false;
-                                      const ordStatus = String(o.status || '').toLowerCase();
-                                      if (ordStatus === 'cancelled' || ordStatus === 'rejected') return false;
-                                      const isCancelledInKitchen = vrKitchenOrders.some(
-                                        (k) => (k.id === o.orderId || (k as any).order_id === o.orderId) && (k.status === 'CANCELLED' || k.status === 'REJECTED')
-                                      );
-                                      return !isCancelledInKitchen;
-                                    });
+                                    const vrKitchenOrders = (kitchenOrders && kitchenOrders.length > 0)
+                                      ? kitchenOrders
+                                      : (queryClient.getQueryData<Order[]>(['kitchen-orders']) || []);
+                                    const vrOrders = inSeatOrders
+                                      .map((o) => {
+                                        if (o.stationId.toUpperCase() !== 'VR1') return null;
+                                        const ordStatus = String(o.status || '').toLowerCase();
+                                        if (ordStatus === 'cancelled' || ordStatus === 'rejected') return null;
+                                        const matchingKo = vrKitchenOrders.find(
+                                          (k) => String(k.id) === o.orderId || String((k as any).order_id) === o.orderId
+                                        );
+                                        if (matchingKo) {
+                                          const s = String(matchingKo.status).toUpperCase();
+                                          if (s === 'CANCELLED' || s === 'REJECTED') return null;
+                                          return {
+                                            ...o,
+                                            status: (s === 'SERVED' ? 'delivered' : s === 'PREPARING' ? 'preparing' : 'pending') as any,
+                                          };
+                                        }
+                                        return o;
+                                      })
+                                      .filter((o): o is NonNullable<typeof o> => o !== null);
+
                                     const hasPendingVrOrders = vrOrders.some(
                                       (o) => o.status === 'pending' || (o.status as any) === 'queued' || (o.status as any) === 'QUEUED'
                                     );
@@ -846,13 +862,13 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                                   <div className="flex items-center justify-between">
                                                     <span className="font-semibold text-[#0F172A]">{ord.customerName}</span>
                                                     <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
-                                                      ord.status === 'delivered'
+                                                      ord.status === 'delivered' || (ord.status as any) === 'SERVED'
                                                         ? 'bg-[#DCFCE7] text-[#15803D]'
-                                                        : ord.status === 'preparing'
+                                                        : ord.status === 'preparing' || (ord.status as any) === 'PREPARING'
                                                         ? 'bg-[#EFF6FF] text-[#1D4ED8]'
                                                         : 'bg-[#FEF3C7] text-[#B45309]'
                                                     }`}>
-                                                      {ord.status}
+                                                      {ord.status === 'delivered' || (ord.status as any) === 'SERVED' ? 'Served' : ord.status}
                                                     </span>
                                                   </div>
                                                   <div className="text-[10px] text-[#64748B]">
@@ -890,27 +906,12 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
                                           <button
                                             type="button"
-                                            disabled={hasPendingVrOrders}
-                                            onClick={() => {
-                                              if (hasPendingVrOrders) {
-                                                addNotification(
-                                                  'SYSTEM',
-                                                  '⚠️ Action Required',
-                                                  'Cannot settle bill for VR1: Player has pending food order(s). Please Accept or Reject every order first.'
-                                                );
-                                                return;
-                                              }
-                                              onCheckout(vrActiveSession, 'VR1');
-                                            }}
-                                            className={`flex-1 py-2 px-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 shadow-sm ${
-                                              hasPendingVrOrders
-                                                ? 'bg-[#94A3B8] text-white opacity-70 cursor-not-allowed'
-                                                : 'bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] cursor-pointer'
-                                            }`}
-                                            title={hasPendingVrOrders ? 'Accept or Reject pending orders before checkout' : 'Settle Bill'}
+                                            onClick={() => onCheckout(vrActiveSession, 'VR1')}
+                                            className="flex-1 py-2 px-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 shadow-sm bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] cursor-pointer active:scale-98"
+                                            title="Settle Bill"
                                           >
                                             <Receipt className="w-3.5 h-3.5 text-white" />
-                                            <span>{hasPendingVrOrders ? 'Resolve Orders to Settle' : 'Settle Bill'}</span>
+                                            <span>Settle Bill</span>
                                           </button>
                                         </div>
 
@@ -1270,25 +1271,37 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
                               {/* 1.5 Active Session Card Embed: In-Seat Food Orders Accordion / Quick List */}
                               {(() => {
-                                const kitchenOrders = queryClient.getQueryData<Order[]>(['kitchen-orders']) || [];
-                                const sessionOrders = inSeatOrders.filter((o) => {
-                                  if (o.stationId.toUpperCase() !== effectiveStationName.toUpperCase()) return false;
-                                  // Exclude cancelled / rejected orders
-                                  const ordStatus = String(o.status || '').toLowerCase();
-                                  if (ordStatus === 'cancelled') return false;
-                                  const isCancelledInKitchen = kitchenOrders.some(
-                                    (k) => (k.id === o.orderId || (k as any).order_id === o.orderId) && k.status === 'CANCELLED'
-                                  );
-                                  if (isCancelledInKitchen) return false;
-                                  if (!o.mode) return true;
-                                  const ordMode = o.mode.toLowerCase();
-                                  const curMode = mode.id.toLowerCase();
-                                  if (ordMode === curMode) return true;
-                                  if (curMode === 'car_sim' && (ordMode.includes('car') || ordMode === 'car_sim')) return true;
-                                  if (curMode === 'multiplayer' && (ordMode.includes('multi') || ordMode === 'multiplayer')) return true;
-                                  if (curMode === 'solo' && ordMode === 'solo') return true;
-                                  return false;
-                                });
+                                const activeKitchenOrders = (kitchenOrders && kitchenOrders.length > 0)
+                                  ? kitchenOrders
+                                  : (queryClient.getQueryData<Order[]>(['kitchen-orders']) || []);
+                                const sessionOrders = inSeatOrders
+                                  .map((o) => {
+                                    if (o.stationId.toUpperCase() !== effectiveStationName.toUpperCase()) return null;
+                                    const ordStatus = String(o.status || '').toLowerCase();
+                                    if (ordStatus === 'cancelled' || ordStatus === 'rejected') return null;
+                                    if (o.mode) {
+                                      const ordMode = o.mode.toLowerCase();
+                                      const curMode = mode.id.toLowerCase();
+                                      let match = ordMode === curMode;
+                                      if (curMode === 'car_sim' && (ordMode.includes('car') || ordMode === 'car_sim')) match = true;
+                                      if (curMode === 'multiplayer' && (ordMode.includes('multi') || ordMode === 'multiplayer')) match = true;
+                                      if (curMode === 'solo' && ordMode === 'solo') match = true;
+                                      if (!match) return null;
+                                    }
+                                    const matchingKo = activeKitchenOrders.find(
+                                      (k) => String(k.id) === o.orderId || String((k as any).order_id) === o.orderId
+                                    );
+                                    if (matchingKo) {
+                                      const s = String(matchingKo.status).toUpperCase();
+                                      if (s === 'CANCELLED' || s === 'REJECTED') return null;
+                                      return {
+                                        ...o,
+                                        status: (s === 'SERVED' ? 'delivered' : s === 'PREPARING' ? 'preparing' : 'pending') as any,
+                                      };
+                                    }
+                                    return o;
+                                  })
+                                  .filter((o): o is NonNullable<typeof o> => o !== null);
 
                                 if (sessionOrders.length === 0) return null;
 
@@ -1300,7 +1313,7 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                         <span>In-Seat Orders ({sessionOrders.length})</span>
                                       </div>
                                       <span className="text-[10px] text-[#EA580C] bg-[#FFEDD5] px-1.5 py-0.5 rounded border border-[#FED7AA] font-bold">
-                                        {sessionOrders.filter((o) => o.status === 'pending').length} pending
+                                        {sessionOrders.filter((o) => o.status === 'pending' || (o.status as any) === 'QUEUED').length} pending
                                       </span>
                                     </div>
 
@@ -1323,13 +1336,13 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
                                               {/* Status Badge */}
                                               <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
-                                                ord.status === 'delivered'
+                                                ord.status === 'delivered' || (ord.status as any) === 'SERVED'
                                                   ? 'bg-[#DCFCE7] text-[#15803D]'
-                                                  : ord.status === 'preparing'
+                                                  : ord.status === 'preparing' || (ord.status as any) === 'PREPARING'
                                                   ? 'bg-[#EFF6FF] text-[#1D4ED8]'
                                                   : 'bg-[#FEF3C7] text-[#B45309]'
                                               }`}>
-                                                {ord.status}
+                                                {ord.status === 'delivered' || (ord.status as any) === 'SERVED' ? 'Served' : ord.status}
                                               </span>
                                             </div>
 
@@ -1402,16 +1415,28 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
                               {/* 3. Action Buttons: Order Food & Drinks, Generate Bill & Checkout, Transfer, +30m, +1h */}
                               {(() => {
-                                const kitchenOrders = queryClient.getQueryData<Order[]>(['kitchen-orders']) || [];
-                                const sessionOrders = inSeatOrders.filter((o) => {
-                                  if (o.stationId.toUpperCase() !== effectiveStationName.toUpperCase()) return false;
-                                  const ordStatus = String(o.status || '').toLowerCase();
-                                  if (ordStatus === 'cancelled' || ordStatus === 'rejected') return false;
-                                  const isCancelledInKitchen = kitchenOrders.some(
-                                    (k) => (k.id === o.orderId || (k as any).order_id === o.orderId) && (k.status === 'CANCELLED' || k.status === 'REJECTED')
-                                  );
-                                  return !isCancelledInKitchen;
-                                });
+                                const activeKitchenOrders = (kitchenOrders && kitchenOrders.length > 0)
+                                  ? kitchenOrders
+                                  : (queryClient.getQueryData<Order[]>(['kitchen-orders']) || []);
+                                const sessionOrders = inSeatOrders
+                                  .map((o) => {
+                                    if (o.stationId.toUpperCase() !== effectiveStationName.toUpperCase()) return null;
+                                    const ordStatus = String(o.status || '').toLowerCase();
+                                    if (ordStatus === 'cancelled' || ordStatus === 'rejected') return null;
+                                    const matchingKo = activeKitchenOrders.find(
+                                      (k) => String(k.id) === o.orderId || String((k as any).order_id) === o.orderId
+                                    );
+                                    if (matchingKo) {
+                                      const s = String(matchingKo.status).toUpperCase();
+                                      if (s === 'CANCELLED' || s === 'REJECTED') return null;
+                                      return {
+                                        ...o,
+                                        status: (s === 'SERVED' ? 'delivered' : s === 'PREPARING' ? 'preparing' : 'pending') as any,
+                                      };
+                                    }
+                                    return o;
+                                  })
+                                  .filter((o): o is NonNullable<typeof o> => o !== null);
                                 const hasPendingStationOrders = sessionOrders.some(
                                   (o) => o.status === 'pending' || (o.status as any) === 'QUEUED' || (o.status as any) === 'queued'
                                 );
@@ -1420,6 +1445,7 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                   <div className="space-y-1.5 pt-1">
                                     {/* Order Food & Drinks */}
                                     <button
+                                      type="button"
                                       onClick={() => onOrderFood(activeSession, effectiveStationName)}
                                       className="w-full py-2 px-2.5 rounded-xl bg-[#FFF7ED] hover:bg-[#FFEDD5] border border-[#FED7AA] text-[#EA580C] font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
                                     >
@@ -1436,27 +1462,13 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
                                     {/* Generate Bill & Checkout */}
                                     <button
-                                      disabled={hasPendingStationOrders}
-                                      onClick={() => {
-                                        if (hasPendingStationOrders) {
-                                          addNotification(
-                                            'SYSTEM',
-                                            '⚠️ Action Required',
-                                            `Cannot checkout ${effectiveStationName}: Player has pending food order(s). Please Accept or Reject every order first.`
-                                          );
-                                          return;
-                                        }
-                                        onCheckout(activeSession, effectiveStationName);
-                                      }}
-                                      className={`w-full py-2 px-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 shadow-sm ${
-                                        hasPendingStationOrders
-                                          ? 'bg-[#94A3B8] text-white opacity-70 cursor-not-allowed'
-                                          : 'bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] cursor-pointer'
-                                      }`}
-                                      title={hasPendingStationOrders ? 'Accept or Reject pending orders before checkout' : 'Generate Bill & Checkout'}
+                                      type="button"
+                                      onClick={() => onCheckout(activeSession, effectiveStationName)}
+                                      className="w-full py-2 px-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 shadow-sm bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] cursor-pointer active:scale-98"
+                                      title="Generate Bill & Checkout"
                                     >
                                       <Receipt className="w-3.5 h-3.5 text-white" />
-                                      <span>{hasPendingStationOrders ? 'Resolve Orders to Checkout' : 'Generate Bill & Checkout'}</span>
+                                      <span>Generate Bill & Checkout</span>
                                     </button>
 
                                 {/* Action Buttons Row: Transfer, +30m, +1h, Cancel */}
@@ -1764,76 +1776,122 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                   ? matrixData.cafe_sessions
                   : (matrixData?.cafe_session ? [matrixData.cafe_session] : []);
                 const allCafeInSeatOrders = getStationInSeatOrders('Walk-in CAFE');
-                const kitchenOrders = queryClient.getQueryData<Order[]>(['kitchen-orders']) || [];
+                const activeKitchenOrders = (kitchenOrders && kitchenOrders.length > 0)
+                  ? kitchenOrders
+                  : (queryClient.getQueryData<Order[]>(['kitchen-orders']) || []);
 
                 // Deduplicate and combine orders from loungeStore and DB kitchenOrders
                 const seenOrderIds = new Set<string>();
                 const seenFingerprints = new Set<string>();
                 const combinedCafeOrders: typeof allCafeInSeatOrders = [];
 
-                // 1. Add valid in-seat orders from loungeStore
+                // 1. Add valid in-seat orders from loungeStore, synchronized with DB kitchenOrders
                 allCafeInSeatOrders.forEach((o) => {
                   const s = String(o.status || '').toLowerCase();
                   if (s === 'cancelled' || s === 'rejected') return;
+                  const cNorm = (o.customerName || '').trim().toLowerCase();
+                  if (dismissedCafeCustomers.has(cNorm) || settledCafeCustomers.includes(cNorm)) return;
+
+                  const fp = `${cNorm}_${(o.items || [])
+                    .map((i) => `${i.name.toLowerCase().trim()}:${i.qty}`)
+                    .sort()
+                    .join('|')}`;
+
+                  // Find matching DB order by id or fingerprint
+                  const matchingKo = activeKitchenOrders.find(
+                    (k) =>
+                      String(k.id) === o.orderId ||
+                      String((k as any).order_id) === o.orderId ||
+                      (`${(k.customer_name || '').toLowerCase().trim()}_${(k.items || [])
+                        .map((i) => `${(i.menu_item_name || (i as any).name || '').toLowerCase().trim()}:${i.quantity || 1}`)
+                        .sort()
+                        .join('|')}` === fp)
+                  );
+
+                  let effectiveStatus = o.status;
+                  if (matchingKo) {
+                    const koStatus = String(matchingKo.status || '').toUpperCase();
+                    if (koStatus === 'CANCELLED' || koStatus === 'REJECTED') {
+                      return; // Exclude cancelled orders
+                    }
+                    effectiveStatus = (koStatus === 'SERVED'
+                      ? 'delivered'
+                      : koStatus === 'PREPARING'
+                      ? 'preparing'
+                      : 'pending') as any;
+                  }
+
                   if (!seenOrderIds.has(o.orderId)) {
                     seenOrderIds.add(o.orderId);
-                    const fp = `${(o.customerName || '').toLowerCase().trim()}_${(o.items || [])
-                      .map((i) => `${i.name.toLowerCase().trim()}:${i.qty}`)
-                      .sort()
-                      .join('|')}`;
+                    if (matchingKo) {
+                      seenOrderIds.add(String(matchingKo.id));
+                    }
                     seenFingerprints.add(fp);
-                    combinedCafeOrders.push(o);
+                    combinedCafeOrders.push({
+                      ...o,
+                      status: effectiveStatus,
+                      sessionId: (matchingKo as any)?.session_id ? String((matchingKo as any).session_id) : undefined,
+                    } as any);
                   }
                 });
 
                 // 2. Add active / fresh orders from DB kitchenOrders
                 const cafeSessionIdSet = new Set(cafeSessions.map((s) => String(s.session_id)));
-                kitchenOrders.forEach((ko) => {
+                activeKitchenOrders.forEach((ko) => {
                   const koStatus = String(ko.status || '').toUpperCase();
                   if (koStatus === 'CANCELLED' || koStatus === 'REJECTED') return;
 
-                  // ONLY match if it has an ACTIVE session, OR is a fresh pending walk-in order
-                  const hasActiveSession = Boolean(ko.session_id && cafeSessionIdSet.has(String(ko.session_id)));
+                  const koCustName = (ko.customer_name || '').trim().toLowerCase();
+                  if (dismissedCafeCustomers.has(koCustName) || settledCafeCustomers.includes(koCustName)) return;
+
+                  const isCompletedSession = (ko as any).session_status === 'COMPLETED' || (ko as any).session_status === 'CANCELLED';
+                  if (isCompletedSession) return;
+
                   const isStationCafe = Boolean(
                     ko.station_name &&
                     (ko.station_name.toUpperCase().includes('CAFE') || ko.station_name.toUpperCase().includes('WALK'))
                   );
-                  const isPendingOrPreparing = koStatus === 'QUEUED' || koStatus === 'PENDING' || koStatus === 'PREPARING';
-                  const isFreshWalkin = isStationCafe && isPendingOrPreparing && (!ko.session_id || cafeSessionIdSet.has(String(ko.session_id)));
 
-                  // Exclude historical served/closed orders from old or cancelled sessions
-                  if (!hasActiveSession && !isFreshWalkin) {
+                  if (!isStationCafe) return;
+
+                  // A DB kitchen order for Walk-in CAFE is only active if its session is currently active in cafeSessionIdSet
+                  const hasActiveSession = Boolean(ko.session_id && cafeSessionIdSet.has(String(ko.session_id)));
+                  if (!hasActiveSession) {
+                    // Session is already completed/settled or cancelled - do NOT keep displaying it
                     return;
                   }
 
                   const koId = String(ko.id);
-                  const fp = `${(ko.customer_name || '').toLowerCase().trim()}_${(ko.items || [])
+                  const fp = `${koCustName}_${(ko.items || [])
                     .map((i) => `${(i.menu_item_name || (i as any).name || '').toLowerCase().trim()}:${i.quantity || 1}`)
                     .sort()
                     .join('|')}`;
 
-                  if (!seenOrderIds.has(koId) && !seenFingerprints.has(fp)) {
-                    seenOrderIds.add(koId);
-                    seenFingerprints.add(fp);
-                    combinedCafeOrders.push({
-                      orderId: koId,
-                      stationId: 'Walk-in CAFE',
-                      customerName: ko.customer_name || 'Walk-in Cafe Guest',
-                      items: (ko.items || []).map((i) => ({
-                        id: String(i.id || i.menu_item_id || ''),
-                        name: i.menu_item_name || (i as any).menu_item?.name || (i as any).name || 'Food/Drink',
-                        qty: Number(i.quantity || 1),
-                        price: Number(i.unit_price || 0),
-                      })),
-                      totalAmount: Number(ko.total_amount || 0),
-                      status: (koStatus === 'SERVED'
-                        ? 'delivered'
-                        : koStatus === 'PREPARING'
-                        ? 'preparing'
-                        : 'pending') as any,
-                      createdAt: ko.created_at || new Date().toISOString(),
-                    });
+                  if (seenOrderIds.has(koId) || seenFingerprints.has(fp)) {
+                    return; // Already added and status-synchronized
                   }
+
+                  seenOrderIds.add(koId);
+                  seenFingerprints.add(fp);
+                  combinedCafeOrders.push({
+                    orderId: koId,
+                    stationId: 'Walk-in CAFE',
+                    customerName: ko.customer_name || 'Walk-in Cafe Guest',
+                    items: (ko.items || []).map((i) => ({
+                      id: String(i.id || i.menu_item_id || ''),
+                      name: i.menu_item_name || (i as any).menu_item?.name || (i as any).name || 'Food/Drink',
+                      qty: Number(i.quantity || 1),
+                      price: Number(i.unit_price || 0),
+                    })),
+                    totalAmount: Number(ko.total_amount || 0),
+                    status: (koStatus === 'SERVED'
+                      ? 'delivered'
+                      : koStatus === 'PREPARING'
+                      ? 'preparing'
+                      : 'pending') as any,
+                    createdAt: ko.created_at || new Date().toISOString(),
+                    sessionId: ko.session_id ? String(ko.session_id) : undefined,
+                  } as any);
                 });
 
                 // Customer grouping map
@@ -1854,6 +1912,8 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                   if (s === 'cancelled' || s === 'rejected') return;
 
                   const cName = o.customerName?.trim() || 'Walk-in Guest';
+                  if (dismissedCafeCustomers.has(cName.toLowerCase()) || settledCafeCustomers.includes(cName.toLowerCase())) return;
+
                   if (!customerMap.has(cName)) {
                     customerMap.set(cName, {
                       name: cName,
@@ -1874,6 +1934,9 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                 // 2. Merge backend cafe sessions
                 cafeSessions.forEach((s) => {
                   const cName = s.customer_name?.trim() || 'Walk-in Guest';
+                  const cNorm = cName.toLowerCase();
+                  if (dismissedCafeCustomers.has(cNorm) || settledCafeCustomers.includes(cNorm)) return;
+
                   const sBill = Number(s.running_total || s.orders_charge || 0);
                   if (!customerMap.has(cName)) {
                     customerMap.set(cName, {
@@ -1893,10 +1956,11 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                   }
                 });
 
-                // Only show active customers with real orders, active sessions, or a bill (excluding dismissed tabs)
+                // Only show active customers with real orders, active sessions, or a bill (excluding dismissed & settled tabs)
                 const customerEntries = Array.from(customerMap.values()).filter(
                   (c) =>
                     !dismissedCafeCustomers.has(c.name.trim().toLowerCase()) &&
+                    !settledCafeCustomers.includes(c.name.trim().toLowerCase()) &&
                     (c.orders.length > 0 || c.backendSession !== undefined || c.totalBill > 0)
                 );
                 const isCafeActive = customerEntries.length > 0;
@@ -1905,7 +1969,8 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                 const activeCustName = (
                   selectedCafeCustomer &&
                   customerMap.has(selectedCafeCustomer) &&
-                  !dismissedCafeCustomers.has(selectedCafeCustomer.trim().toLowerCase())
+                  !dismissedCafeCustomers.has(selectedCafeCustomer.trim().toLowerCase()) &&
+                  !settledCafeCustomers.includes(selectedCafeCustomer.trim().toLowerCase())
                     ? selectedCafeCustomer
                     : customerEntries[0]?.name
                 ) || null;
@@ -1913,8 +1978,9 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                 const activeCust = activeCustName ? customerMap.get(activeCustName) : null;
 
                 // Build session adapter for the selected customer
+                const matchedOrderSessionId = (activeCust?.orders || []).find((o: any) => o.sessionId)?.sessionId;
                 const activeSessionForSelected: MatrixSession = activeCust?.backendSession || {
-                  session_id: activeCust?.backendSession?.session_id || `cafe-walkin-${encodeURIComponent(activeCust?.name || 'guest')}`,
+                  session_id: activeCust?.backendSession?.session_id || matchedOrderSessionId || `cafe-walkin-${encodeURIComponent(activeCust?.name || 'guest')}`,
                   station_id: 'Walk-in CAFE',
                   mode: 'dine-in',
                   mode_name: activeCust?.mode || 'Dine-In',
@@ -2111,13 +2177,13 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                           </span>
                                         </div>
                                         <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
-                                          order.status === 'delivered'
+                                          order.status === 'delivered' || (order.status as any) === 'SERVED' || (order.status as any) === 'served'
                                             ? 'bg-[#DCFCE7] text-[#15803D]'
-                                            : order.status === 'preparing'
+                                            : order.status === 'preparing' || (order.status as any) === 'PREPARING'
                                             ? 'bg-[#EFF6FF] text-[#1D4ED8]'
                                             : 'bg-[#FEF3C7] text-[#B45309]'
                                         }`}>
-                                          {order.status}
+                                          {order.status === 'delivered' || (order.status as any) === 'SERVED' || (order.status as any) === 'served' ? 'Served' : order.status}
                                         </span>
                                       </div>
 
@@ -2179,16 +2245,7 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
                                 <button
                                   type="button"
-                                  disabled={hasPendingCafeOrders}
                                   onClick={() => {
-                                    if (hasPendingCafeOrders) {
-                                      addNotification(
-                                        'SYSTEM',
-                                        '⚠️ Action Required',
-                                        `Cannot settle invoice for ${activeCust?.name}: Please Accept or Reject pending order(s) in the Orders tab first.`
-                                      );
-                                      return;
-                                    }
                                     const items: OrderedReceiptItem[] = [];
                                     (activeCust?.orders || []).forEach((o) => {
                                       const s = String(o.status || '').toLowerCase();
@@ -2207,15 +2264,11 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                     });
                                     onCheckout(activeSessionForSelected, 'Walk-in CAFE', items);
                                   }}
-                                  className={`flex-1 py-2.5 px-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 shadow-sm ${
-                                    hasPendingCafeOrders
-                                      ? 'bg-[#94A3B8] text-white opacity-70 cursor-not-allowed'
-                                      : 'bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] cursor-pointer'
-                                  }`}
-                                  title={hasPendingCafeOrders ? 'Accept or Reject pending orders before settling invoice' : 'Settle Invoice'}
+                                  className="flex-1 py-2.5 px-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 shadow-sm bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] cursor-pointer active:scale-98"
+                                  title="Settle Invoice"
                                 >
                                   <Receipt className="w-3.5 h-3.5 text-white" />
-                                  <span>{hasPendingCafeOrders ? 'Resolve Orders to Settle' : 'Settle Invoice'}</span>
+                                  <span>Settle Invoice</span>
                                 </button>
                               </div>
                             </div>

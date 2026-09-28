@@ -64,6 +64,7 @@ export interface Order {
   created_at: string;
   items: OrderItem[];
   total_amount: string | number;
+  session_status?: string | null;
 }
 
 export interface CheckoutResult {

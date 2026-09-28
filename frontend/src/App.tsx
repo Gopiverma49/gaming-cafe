@@ -19,6 +19,7 @@ import { GamingCafeCanvas } from './components/GamingCafeCanvas';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LegalModal } from './components/LegalModal';
 import { CookieBanner } from './components/CookieBanner';
+import { NotFoundPage } from './components/NotFoundPage';
 import { useAuthStore } from './store/authStore';
 import { useCafeWebSocket } from './hooks/useCafeWebSocket';
 import { fetchKitchenOrders } from './api';
@@ -41,14 +42,21 @@ function MainDashboard() {
   const { currentPortal, adminUser, logout } = useAuthStore();
   const [activeTab, setActiveTab] = useState<ActiveTab>('matrix');
   const [legalModal, setLegalModal] = useState<'privacy' | 'terms' | null>(null);
+  const [isNotFound, setIsNotFound] = useState(false);
 
   useEffect(() => {
-    // Check initial pathname for legal pages
-    const path = window.location.pathname.toLowerCase();
-    if (path === '/privacy') {
-      setLegalModal('privacy');
-    } else if (path === '/terms') {
-      setLegalModal('terms');
+    // Check initial pathname for legal pages and 404 routing
+    const rawPath = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+    const validPaths = ['/', '/admin', '/customer', '/privacy', '/terms', '/login'];
+    if (!validPaths.includes(rawPath)) {
+      setIsNotFound(true);
+    } else {
+      setIsNotFound(false);
+      if (rawPath === '/privacy') {
+        setLegalModal('privacy');
+      } else if (rawPath === '/terms') {
+        setLegalModal('terms');
+      }
     }
     document.documentElement.classList.remove('dark');
 
@@ -76,6 +84,17 @@ function MainDashboard() {
     refetchInterval: POLL_INTERVALS.KITCHEN_BADGE,
     enabled: isAdminPortal,
   });
+
+  if (isNotFound) {
+    return (
+      <NotFoundPage
+        onReturnHome={() => {
+          window.history.pushState({}, '', '/');
+          setIsNotFound(false);
+        }}
+      />
+    );
+  }
 
   // Only gate with LoginPage if navigating to Admin portal and not logged in as Admin
   if (isAdminPortal && (!adminUser || adminUser.role !== 'admin')) {

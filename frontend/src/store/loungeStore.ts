@@ -60,6 +60,7 @@ export interface CustomerInSeatOrder {
   totalAmount: number;
   status: 'pending' | 'preparing' | 'delivered';
   createdAt: string;
+  sessionId?: string;
 }
 
 interface LoungeState {
@@ -70,6 +71,10 @@ interface LoungeState {
   removeInSeatOrder: (orderId: string) => void;
   getStationInSeatOrders: (stationId: string) => CustomerInSeatOrder[];
   clearStationInSeatOrders: (stationId: string, customerName?: string) => void;
+  settledCafeCustomers: string[];
+  settleCafeCustomer: (customerName: string) => void;
+  unsettleCafeCustomer: (customerName: string) => void;
+  clearSettledCafeCustomers: () => void;
 
   // Visual Ping Highlight Station Column
   flashingStationId: string | null;
@@ -141,6 +146,11 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
   inSeatOrders: [],
 
   addInSeatOrder: (order) => {
+    // 0. If this customer was previously settled, un-settle them so their new active tab displays
+    if (order.customerName) {
+      get().unsettleCafeCustomer(order.customerName);
+    }
+
     // 1. Add to inSeatOrders array
     set((state) => {
       const updated = [order, ...state.inSeatOrders.filter((o) => o.orderId !== order.orderId)];
@@ -158,11 +168,12 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
   updateInSeatOrderStatus: (orderId, newStatus) => {
     const s = String(newStatus).toLowerCase();
     const isTerminated = s === 'cancelled' || s === 'rejected';
+    const mappedStatus = s === 'served' ? 'delivered' : newStatus;
     set((state) => {
       const updated = isTerminated
         ? state.inSeatOrders.filter((o) => o.orderId !== orderId)
         : state.inSeatOrders.map((o) =>
-            o.orderId === orderId ? { ...o, status: newStatus as any } : o
+            o.orderId === orderId ? { ...o, status: mappedStatus as any } : o
           );
       broadcastLoungeSync('ORDERS_SYNC', updated);
       if (typeof window !== 'undefined') {
@@ -220,6 +231,30 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
       return { inSeatOrders: updated };
     });
   },
+
+  settledCafeCustomers: [],
+  settleCafeCustomer: (customerName) => {
+    if (!customerName) return;
+    const norm = customerName.trim().toLowerCase();
+    set((state) => ({
+      settledCafeCustomers: state.settledCafeCustomers.includes(norm)
+        ? state.settledCafeCustomers
+        : [...state.settledCafeCustomers, norm],
+      inSeatOrders: state.inSeatOrders.filter((o) => {
+        const isCafeOrder = o.stationId.toUpperCase().includes('CAFE') || (o.mode && ['dine-in', 'dine-out', 'takeaway'].includes(o.mode.toLowerCase()));
+        if (!isCafeOrder) return true;
+        return o.customerName?.trim().toLowerCase() !== norm;
+      }),
+    }));
+  },
+  unsettleCafeCustomer: (customerName) => {
+    if (!customerName) return;
+    const norm = customerName.trim().toLowerCase();
+    set((state) => ({
+      settledCafeCustomers: state.settledCafeCustomers.filter((n) => n !== norm),
+    }));
+  },
+  clearSettledCafeCustomers: () => set({ settledCafeCustomers: [] }),
 
   // Flashing Station Column Indicator on New Order
   flashingStationId: null,
@@ -356,7 +391,7 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
     const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
     const updated = sortBookingsUpcomingWise(
       currentBookings.map((b) => {
-        const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
+        const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm || String(b.bookingId || '').replace(/^BK-/, '').trim() === norm.replace(/^BK-/, '').trim() || String(b.id || '').replace(/^BK-/, '').trim() === norm.replace(/^BK-/, '').trim();
         if (!match) return b;
         const merged = { ...b, ...updates };
         if (updates.totalAmount !== undefined || updates.advancePaid !== undefined) {
@@ -379,7 +414,7 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
     const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
     const updated = sortBookingsUpcomingWise(
       currentBookings.map((b) => {
-        const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
+        const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm || String(b.bookingId || '').replace(/^BK-/, '').trim() === norm.replace(/^BK-/, '').trim() || String(b.id || '').replace(/^BK-/, '').trim() === norm.replace(/^BK-/, '').trim();
         return match ? { ...b, status: 'CANCELLED' as const } : b;
       })
     );
@@ -397,7 +432,7 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
     const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
     const updated = sortBookingsUpcomingWise(
       currentBookings.map((b) => {
-        const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
+        const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm || String(b.bookingId || '').replace(/^BK-/, '').trim() === norm.replace(/^BK-/, '').trim() || String(b.id || '').replace(/^BK-/, '').trim() === norm.replace(/^BK-/, '').trim();
         return match ? { ...b, status: 'ACTIVE' as const } : b;
       })
     );
@@ -415,7 +450,7 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
     const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
     const updated = sortBookingsUpcomingWise(
       currentBookings.map((b) => {
-        const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
+        const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm || String(b.bookingId || '').replace(/^BK-/, '').trim() === norm.replace(/^BK-/, '').trim() || String(b.id || '').replace(/^BK-/, '').trim() === norm.replace(/^BK-/, '').trim();
         return match ? { ...b, status: 'COMPLETED' as const } : b;
       })
     );

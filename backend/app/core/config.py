@@ -81,13 +81,28 @@ class Settings(BaseSettings):
 
     def validate_production_config(self) -> None:
         """
-        Fail-fast validation for production readiness.
-        Ensures secure database, cryptographic tokens, and network boundaries.
+        Fail-fast validation for production readiness and runtime safety.
+        Ensures secure database, cryptographic tokens, network boundaries, and valid environment values.
         """
+        errors = []
+        valid_envs = ("production", "development", "test")
+        if self.NODE_ENV.lower() not in valid_envs:
+            errors.append(f"NODE_ENV '{self.NODE_ENV}' is invalid. Permitted values: {', '.join(valid_envs)}")
+
+        if not (1 <= self.PORT <= 65535):
+            errors.append(f"PORT '{self.PORT}' is invalid. Must be an integer between 1 and 65535.")
+
         if not self.is_production:
+            if errors:
+                diagnostic = (
+                    "\n" + "=" * 76 + "\n"
+                    "🚨 [FAIL-FAST ERROR] Application boot rejected due to configuration violations:\n"
+                    + "\n".join(f"   [{idx + 1}] {err}" for idx, err in enumerate(errors))
+                    + "\n" + "=" * 76 + "\n"
+                )
+                raise RuntimeError(diagnostic)
             return
 
-        errors = []
         if "sqlite" in self.DATABASE_URL.lower():
             errors.append("DATABASE_URL: SQLite is not permitted in production. Configure a production PostgreSQL connection string.")
         

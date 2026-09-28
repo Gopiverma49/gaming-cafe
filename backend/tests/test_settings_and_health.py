@@ -115,7 +115,26 @@ def test_production_fail_fast_validation():
         s_jwt.validate_production_config()
     assert "JWT_SECRET: Default or weak secret detected" in str(exc_info.value)
 
-    # 4. Passes with valid production configuration
+    # 4. Rejects invalid NODE_ENV
+    s_invalid_env = Settings(
+        NODE_ENV="invalid_env",
+        DATABASE_URL="sqlite+aiosqlite:///./test.db",
+    )
+    with pytest.raises(RuntimeError) as exc_info:
+        s_invalid_env.validate_production_config()
+    assert "NODE_ENV 'invalid_env' is invalid" in str(exc_info.value)
+
+    # 5. Rejects invalid PORT
+    s_invalid_port = Settings(
+        NODE_ENV="development",
+        PORT=99999,
+        DATABASE_URL="sqlite+aiosqlite:///./test.db",
+    )
+    with pytest.raises(RuntimeError) as exc_info:
+        s_invalid_port.validate_production_config()
+    assert "PORT '99999' is invalid" in str(exc_info.value)
+
+    # 6. Passes with valid production configuration
     s_valid = Settings(
         NODE_ENV="production",
         DATABASE_URL="postgresql+asyncpg://user:pass@host:5432/db",
@@ -229,6 +248,43 @@ async def test_honeypot_bot_prevention(test_db):
         )
         assert spam_res.status_code == 400
         assert "Spam" in spam_res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_admin_rbac_protection(test_db):
+    from httpx import AsyncClient, ASGITransport
+    from app.main import app
+    from app.core.config import settings
+    from app.core.security import create_customer_token, create_admin_token
+
+    orig_env = settings.NODE_ENV
+    try:
+        settings.NODE_ENV = "production"
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # 1. Unauthenticated request rejected with 401
+            unauth_res = await client.get("/api/v1/admin/analytics/revenue")
+            assert unauth_res.status_code == 401
+            assert "Admin authentication required" in unauth_res.json()["detail"]
+
+            # 2. Customer token rejected with 403
+            cust_token = create_customer_token(desk_id="PS1", session_id="test-session")
+            forbidden_res = await client.get(
+                "/api/v1/admin/analytics/revenue",
+                headers={"Authorization": f"Bearer {cust_token}"},
+            )
+            assert forbidden_res.status_code == 403
+            assert "Administrative privileges required" in forbidden_res.json()["detail"]
+
+            # 3. Admin token succeeds with 200
+            admin_tok = create_admin_token(username=settings.ADMIN_USERNAME)
+            ok_res = await client.get(
+                "/api/v1/admin/analytics/revenue",
+                headers={"Authorization": f"Bearer {admin_tok}"},
+            )
+            assert ok_res.status_code == 200
+    finally:
+        settings.NODE_ENV = orig_env
 
 
 

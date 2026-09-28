@@ -4,12 +4,12 @@ from decimal import Decimal
 from typing import List, Optional
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status, Query, Body
+from fastapi import APIRouter, Depends, Header, HTTPException, status, Body
 from sqlalchemy import select, delete, or_, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_db, get_optional_auth_user
+from app.api.deps import get_db, get_optional_auth_user, require_admin_role
 from app.core.config import settings
 from app.core.security import create_admin_token
 from app.models.entities import Station, Session, Order, OrderItem, MenuItem, User
@@ -907,6 +907,7 @@ async def get_admin_menu(db: AsyncSession = Depends(get_db)):
 @router.post("/menu", response_model=MenuItemResponse, status_code=status.HTTP_201_CREATED)
 async def create_menu_item(
     payload: MenuItemCreate,
+    admin_user: User = Depends(require_admin_role),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -938,6 +939,7 @@ async def create_menu_item(
 async def update_menu_item(
     item_id: uuid.UUID,
     payload: MenuItemUpdate,
+    admin_user: User = Depends(require_admin_role),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -968,6 +970,7 @@ async def update_menu_item(
 @router.delete("/menu/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_menu_item(
     item_id: uuid.UUID,
+    admin_user: User = Depends(require_admin_role),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -986,6 +989,7 @@ async def delete_menu_item(
 @router.post("/inventory/restock", response_model=MenuItemResponse)
 async def restock_inventory_item(
     payload: InventoryRestockRequest,
+    admin_user: User = Depends(require_admin_role),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1241,7 +1245,10 @@ async def place_station_food_order(
 # ---------------------------------------------------------------------------
 
 @router.get("/customers", response_model=List[CustomerProfileResponse])
-async def get_customer_directory(db: AsyncSession = Depends(get_db)):
+async def get_customer_directory(
+    admin_user: User = Depends(require_admin_role),
+    db: AsyncSession = Depends(get_db),
+):
     """
     Live aggregated customer directory querying registered players and sessions.
     Computes total visits, last visit timestamp, and lifetime revenue in O(U + S) time.
@@ -1363,6 +1370,7 @@ async def get_customer_directory(db: AsyncSession = Depends(get_db)):
 @router.get("/analytics/revenue")
 async def get_revenue_analytics(
     period: str = "DAY",  # DAY, WEEK, MONTH
+    admin_user: User = Depends(require_admin_role),
     db: AsyncSession = Depends(get_db),
 ):
     """

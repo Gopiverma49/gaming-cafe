@@ -355,6 +355,7 @@ class OrderResponse(BaseModel):
     created_at: datetime
     items: List[OrderItemResponse]
     total_amount: Decimal
+    session_status: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -17,7 +17,9 @@ import {
   fetchStationMatrix,
   transferStation,
   checkoutSession,
+  fetchAdvanceBookingsApi,
 } from '../api';
+import { sortBookingsUpcomingWise } from '../utils/bookingConflict';
 import { useLoungeStore } from '../store/loungeStore';
 import { useNotificationStore } from '../store/notificationStore';
 import { useAuthStore } from '../store/authStore';
@@ -65,6 +67,23 @@ export const StationGrid: React.FC = () => {
     queryFn: fetchStationMatrix,
     refetchInterval: POLL_INTERVALS.STATIONS,
   });
+
+  // Advance Bookings Query to keep Station Matrix & collision detection always up to date across browser refreshes
+  const { data: serverBookings = [] } = useQuery<any[]>({
+    queryKey: ['advance-bookings'],
+    queryFn: fetchAdvanceBookingsApi,
+    refetchInterval: 3000,
+  });
+
+  useEffect(() => {
+    if (Array.isArray(serverBookings) && serverBookings.length > 0) {
+      const current = useLoungeStore.getState().bookings;
+      const map = new Map<string, any>();
+      current.forEach((b) => map.set(String(b.bookingId || b.id), b));
+      serverBookings.forEach((sb) => map.set(String(sb.bookingId || sb.id), sb));
+      useLoungeStore.setState({ bookings: sortBookingsUpcomingWise(Array.from(map.values())) });
+    }
+  }, [serverBookings]);
 
   // Global Action Error
   const [actionError, setActionError] = useState<string | null>(null);
@@ -155,14 +174,26 @@ export const StationGrid: React.FC = () => {
 
       if (!targetSessionId || targetSessionId.startsWith('cafe-walkin')) {
         if (isCafe) {
+          const targetCust = (checkoutStationTarget.customer_name || '').trim().toLowerCase();
           const matchedCafe = (matrixData?.cafe_sessions || []).find(
             (cs) => cs.session_id === targetSessionId ||
-            (checkoutStationTarget.customer_name && cs.customer_name?.toLowerCase() === checkoutStationTarget.customer_name.toLowerCase())
+            (targetCust && (cs.customer_name || '').trim().toLowerCase() === targetCust)
           );
           if (matchedCafe?.session_id) {
             targetSessionId = matchedCafe.session_id;
           } else if (matrixData?.cafe_session?.session_id) {
             targetSessionId = matrixData.cafe_session.session_id;
+          } else {
+            // Also check kitchen-orders cache for matching session_id
+            const koList = queryClient.getQueryData<Order[]>(['kitchen-orders']) || [];
+            const koMatch = koList.find(
+              (ko) => ko.session_id &&
+              targetCust &&
+              (ko.customer_name || '').trim().toLowerCase() === targetCust
+            );
+            if (koMatch?.session_id) {
+              targetSessionId = String(koMatch.session_id);
+            }
           }
         } else {
           // Attempt fresh token & station refetch before failing
@@ -217,7 +248,19 @@ export const StationGrid: React.FC = () => {
       useLoungeStore.getState().clearStationInSeatOrders(checkoutStationTarget.name);
       if (isCafe) {
         clearStationFoodOrders('Walk-in CAFE');
+        const custNorm = (checkoutStationTarget.customer_name || '').trim().toLowerCase();
         useLoungeStore.getState().clearStationInSeatOrders('Walk-in CAFE', checkoutStationTarget.customer_name || undefined);
+        if (custNorm) {
+          useLoungeStore.getState().settleCafeCustomer(checkoutStationTarget.customer_name || '');
+        }
+        // Purge immediately from kitchen-orders cache so Walk-in CAFE displays empty immediately
+        queryClient.setQueryData<Order[]>(['kitchen-orders'], (old) =>
+          (old || []).filter((ko) => {
+            if (targetSessionId && String(ko.session_id) === String(targetSessionId)) return false;
+            if (custNorm && (ko.customer_name || '').trim().toLowerCase() === custNorm) return false;
+            return true;
+          })
+        );
       }
       completeActiveBookingForStation(checkoutStationTarget.name);
       await Promise.all([

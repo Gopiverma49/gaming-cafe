@@ -45,6 +45,57 @@ async def test_advance_bookings_lifecycle(test_db):
 
 
 @pytest.mark.asyncio
+async def test_advance_booking_edit_time_and_persistence(test_db):
+    """
+    Verifies that when a booking's time is edited via PUT/PATCH or POST upsert,
+    the updated time is persisted in the database and subsequent GET requests
+    return the edited time without reverting.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Create initial booking
+        payload = {
+            "customerName": "Dadas Gamer",
+            "phoneNumber": "9876543210",
+            "stationId": "PS1",
+            "sessionMode": "Solo",
+            "bookingDate": "2026-10-05",
+            "startTime": "18:00",
+            "durationMinutes": 60,
+            "advancePaid": 100.0,
+            "totalAmount": 250.0,
+        }
+        res1 = await client.post("/api/v1/bookings", json=payload)
+        assert res1.status_code == 201
+        data1 = res1.json()
+        b_id = data1["bookingId"]
+        assert data1["startTime"] == "18:00"
+
+        # 2. Update booking time to 20:00 (8:00 PM) via PUT
+        update_payload = {
+            **payload,
+            "bookingId": b_id,
+            "startTime": "20:00",
+            "durationMinutes": 120,
+            "endTime": "22:00",
+        }
+        put_res = await client.put(f"/api/v1/bookings/{b_id}", json=update_payload)
+        assert put_res.status_code == 200
+        data2 = put_res.json()
+        assert data2["startTime"] == "20:00"
+        assert data2["durationMinutes"] == 120
+        assert data2["endTime"] == "22:00"
+
+        # 3. Fetch again to verify persistence
+        get_res = await client.get("/api/v1/bookings")
+        assert get_res.status_code == 200
+        saved = next(b for b in get_res.json() if b["bookingId"] == b_id)
+        assert saved["startTime"] == "20:00"
+        assert saved["durationMinutes"] == 120
+        assert saved["endTime"] == "22:00"
+
+
+@pytest.mark.asyncio
 async def test_advance_bookings_upcoming_sorting(test_db):
     """
     Guarantees that bookings are sorted upcoming-wise:

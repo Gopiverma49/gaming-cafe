@@ -26,6 +26,7 @@ import {
   parseBookingDateTime,
   sortBookingsUpcomingWise,
   normalizeDateStr,
+  to24hTime,
 } from '../utils/bookingConflict';
 import { validateAdvanceBooking } from '../lib/stationCollisionEngine';
 import {
@@ -34,6 +35,7 @@ import {
   createAdvanceBookingApi,
   cancelAdvanceBookingApi,
   fetchAdvanceBookingsApi,
+  updateAdvanceBookingApi,
 } from '../api';
 import { StationMatrixData } from '../types';
 
@@ -222,23 +224,25 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
   const [editStartTime, setEditStartTime] = useState('');
   const [editDuration, setEditDuration] = useState(60);
   const [editAdvance, setEditAdvance] = useState(0);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   const openEditModal = (b: AdvanceBooking) => {
     setEditingBooking(b);
-    setEditCustomerName(b.customerName);
-    setEditPhone(b.phoneNumber || '');
+    setEditCustomerName(b.customerName || '');
+    setEditPhone(b.phoneNumber || (b as any).customerPhone || '');
     setEditStationId(b.stationId);
     setEditMode((b.sessionMode as any) || 'Solo');
-    setEditDate(b.bookingDate);
-    setEditStartTime(b.startTime);
-    setEditDuration(b.durationMinutes);
-    setEditAdvance(b.advancePaid);
+    setEditDate(normalizeDateStr(b.bookingDate) || b.bookingDate);
+    setEditStartTime(to24hTime(b.startTime));
+    setEditDuration(b.durationMinutes || 60);
+    setEditAdvance(b.advancePaid || 0);
   };
 
-  const handleSaveEdit = (e: React.FormEvent) => {
+  const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingBooking) return;
+    if (!editingBooking || isSavingEdit) return;
 
+    const targetBookingId = String(editingBooking.bookingId || editingBooking.id);
     const newEnd = calculateEndTime(editStartTime, editDuration);
     const newTotal = getAdminConfiguredFare(editStationId, editMode, editDuration, matrixData);
 
@@ -249,7 +253,7 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
         bookingDate: editDate,
         startTime: editStartTime,
         durationMinutes: editDuration,
-        ignoreBookingId: editingBooking.bookingId,
+        ignoreBookingId: targetBookingId,
       },
       bookings,
       liveSessions
@@ -260,7 +264,10 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
       return;
     }
 
-    updateBooking(editingBooking.bookingId, {
+    const updatedData: AdvanceBooking = {
+      ...editingBooking,
+      bookingId: targetBookingId,
+      id: targetBookingId,
       customerName: editCustomerName.trim(),
       phoneNumber: editPhone.trim() || undefined,
       stationId: editStationId,
@@ -271,10 +278,49 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
       endTime: newEnd,
       advancePaid: Number(editAdvance) || 0,
       totalAmount: newTotal,
-    });
+      remainingBalance: Math.max(0, newTotal - (Number(editAdvance) || 0)),
+      status: editingBooking.status || 'CONFIRMED',
+    };
 
-    addNotification('SYSTEM', '✏️ Booking Updated', `Booking ${editingBooking.bookingId} modified successfully.`);
-    setEditingBooking(null);
+    setIsSavingEdit(true);
+    try {
+      // 1. Instantly update local store
+      updateBooking(targetBookingId, updatedData);
+
+      // 2. Optimistically update TanStack Query cache
+      queryClient.setQueryData<any[]>(['advance-bookings'], (old = []) => {
+        const idx = old.findIndex(
+          (b) => String(b.bookingId || b.id) === targetBookingId
+        );
+        if (idx >= 0) {
+          const next = [...old];
+          next[idx] = { ...next[idx], ...updatedData };
+          return next;
+        }
+        return [...old, updatedData];
+      });
+
+      // 3. Persist update directly into database via Backend API
+      await updateAdvanceBookingApi(targetBookingId, updatedData);
+
+      // 4. Force refetch of bookings and station matrix across app
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['advance-bookings'] }),
+        queryClient.invalidateQueries({ queryKey: ['station-matrix'] }),
+      ]);
+
+      addNotification(
+        'SYSTEM',
+        '✏️ Booking Updated',
+        `Booking ${targetBookingId} updated to ${formatTime12h(editStartTime)}.`
+      );
+      setEditingBooking(null);
+    } catch (err: any) {
+      console.error('Failed to update booking:', err);
+      addNotification('SYSTEM', '⚠️ Update Failed', err.message || 'Could not save booking changes to database.');
+    } finally {
+      setIsSavingEdit(false);
+    }
   };
 
   // Check-In / Start Live Session from Booking
@@ -1072,9 +1118,10 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-[#172554] text-white font-bold hover:bg-[#1E3A8A] cursor-pointer"
+                  disabled={isSavingEdit}
+                  className="px-4 py-2 rounded-xl bg-[#172554] text-white font-bold hover:bg-[#1E3A8A] cursor-pointer disabled:opacity-50"
                 >
-                  Save Changes
+                  {isSavingEdit ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </form>

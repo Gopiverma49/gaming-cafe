@@ -13,6 +13,8 @@
     "dev:frontend": "npm run dev --prefix frontend",
     "build": "npm run build --prefix frontend",
     "test:backend": "node run-backend.js --test",
+    "clean:test-data": "node run-backend.js --clean-test",
+    "clean:test-data:force": "node run-backend.js --clean-test --force",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down"
   },

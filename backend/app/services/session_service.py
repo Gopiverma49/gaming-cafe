@@ -4,7 +4,7 @@ import logging
 import uuid
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Optional, Dict, Any, List, Set, Callable
+from typing import Optional, Dict, Any, List, Set, Callable, Tuple
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, func
@@ -141,7 +141,9 @@ def with_transaction_retry(
     return decorator
 
 
-def parse_booking_range_service(booking_date: str, start_time: str, duration_minutes: int):
+def parse_booking_range(
+    booking_date: str, start_time: str, duration_minutes: int
+) -> Tuple[Optional[datetime], Optional[datetime]]:
     """
     Parses a booking's date and start time into naive (start_dt, end_dt) datetimes,
     handling YYYY-MM-DD and DD-MM-YYYY formats as well as 12h/24h timestamps.
@@ -181,6 +183,9 @@ def parse_booking_range_service(booking_date: str, start_time: str, duration_min
         return start_dt, end_dt
     except Exception:
         return None, None
+
+
+parse_booking_range_service = parse_booking_range
 
 
 async def _validate_no_advance_booking_conflict(
