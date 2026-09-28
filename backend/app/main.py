@@ -278,6 +278,38 @@ async def ensure_canonical_domain_hierarchy():
         logger.info("Canonical domain hierarchy & device registry successfully synchronized.")
 
 
+async def ensure_initial_admin():
+    """
+    Guarantees that a root system administrator exists at boot.
+    Runs once during startup lifespan before any HTTP traffic is accepted.
+    Handles multi-instance race conditions and synchronizes password hash if
+    ADMIN_PASSWORD in environment was rotated.
+    """
+    from app.core.security import get_password_hash, verify_password
+    async with async_session_factory() as db:
+        try:
+            stmt = select(User).where(User.role == "ADMIN")
+            admin_user = (await db.execute(stmt)).scalar_one_or_none()
+            if not admin_user:
+                logger.info("Cold-start: Initializing root administrator account...")
+                admin_user = User(
+                    name="System Administrator",
+                    phone=settings.ADMIN_PHONE,
+                    password_hash=get_password_hash(settings.ADMIN_PASSWORD),
+                    role="ADMIN",
+                )
+                db.add(admin_user)
+                await db.commit()
+                logger.info("Root administrator account provisioned successfully.")
+            else:
+                # If ADMIN_PASSWORD in environment was changed, synchronize the DB password hash
+                if not verify_password(settings.ADMIN_PASSWORD, admin_user.password_hash):
+                    logger.info("Synchronizing administrator password hash with updated environment credentials...")
+                    admin_user.password_hash = get_password_hash(settings.ADMIN_PASSWORD)
+                    await db.commit()
+        except Exception as exc:
+            await db.rollback()
+            logger.warning(f"Admin auto-provisioning handled concurrency/exists state: {exc}")
 
 
 @asynccontextmanager
@@ -292,6 +324,8 @@ async def lifespan(app: FastAPI):
     await run_schema_migrations()
     # Enforce canonical stations and device registry
     await ensure_canonical_domain_hierarchy()
+    # Idempotently seed root administrator on cold start
+    await ensure_initial_admin()
     yield
     logger.info("Shutting down Gaming Cafe Operations System...")
     await engine.dispose()

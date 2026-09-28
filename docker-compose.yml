@@ -43,6 +43,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-enterprise_gaming_cafe_super_secret_jwt_key_2026}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      ADMIN_PHONE: ${ADMIN_PHONE:-0000000000}
       UPI_MERCHANT_VPA: ${UPI_MERCHANT_VPA:-gamingcafe@upi}
       UPI_MERCHANT_NAME: ${UPI_MERCHANT_NAME:-ApexCyberLounge}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-${CORS_ORIGINS:-*}}

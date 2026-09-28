@@ -1,3 +1,4 @@
+import secrets
 import uuid
 from typing import Optional
 
@@ -42,6 +43,16 @@ async def register_customer(
 
     clean_phone = payload.phone.strip()
     clean_name = payload.name.strip()
+
+    # Disallow registration under reserved administrator credentials
+    if (
+        secrets.compare_digest(clean_name.lower(), settings.ADMIN_USERNAME.lower())
+        or secrets.compare_digest(clean_phone, settings.ADMIN_PHONE)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reserved administrative username or phone number.",
+        )
 
     # Check for existing user by phone
     stmt = select(User).where(User.phone == clean_phone)
@@ -92,21 +103,54 @@ async def login_user(
     identifier = payload.identifier.strip()
     password = payload.password
 
-    # 1. Admin login check
-    if identifier == settings.ADMIN_USERNAME and password == settings.ADMIN_PASSWORD:
-        # Ensure an admin user record exists in DB
+    # 1. Timing-safe Admin login check
+    is_admin_identifier = (
+        secrets.compare_digest(identifier.lower(), settings.ADMIN_USERNAME.lower())
+        or secrets.compare_digest(identifier, settings.ADMIN_PHONE)
+    )
+
+    if is_admin_identifier:
+        # Query admin user from DB
         stmt = select(User).where(User.role == "ADMIN")
         admin_user = (await db.execute(stmt)).scalar_one_or_none()
+
         if not admin_user:
-            admin_user = User(
-                name="System Administrator",
-                phone="0000000000",
-                password_hash=get_password_hash(settings.ADMIN_PASSWORD),
-                role="ADMIN",
-            )
-            db.add(admin_user)
-            await db.commit()
-            await db.refresh(admin_user)
+            # Cold-start or test database fallback:
+            # Require password matching configured ADMIN_PASSWORD via timing-safe check
+            if not secrets.compare_digest(password, settings.ADMIN_PASSWORD):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid administrator credentials.",
+                )
+            try:
+                admin_user = User(
+                    name="System Administrator",
+                    phone=settings.ADMIN_PHONE,
+                    password_hash=get_password_hash(settings.ADMIN_PASSWORD),
+                    role="ADMIN",
+                )
+                db.add(admin_user)
+                await db.commit()
+                await db.refresh(admin_user)
+            except Exception:
+                await db.rollback()
+                stmt = select(User).where(User.role == "ADMIN")
+                admin_user = (await db.execute(stmt)).scalar_one_or_none()
+        else:
+            # Authenticate against stored hash
+            is_valid_pw = verify_password(password, admin_user.password_hash)
+            # If stored hash fails but password matches rotated ADMIN_PASSWORD in environment, auto-sync hash
+            if not is_valid_pw and secrets.compare_digest(password, settings.ADMIN_PASSWORD):
+                admin_user.password_hash = get_password_hash(settings.ADMIN_PASSWORD)
+                await db.commit()
+                await db.refresh(admin_user)
+                is_valid_pw = True
+
+            if not is_valid_pw:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid administrator credentials.",
+                )
 
         token = create_user_token(
             user_id=str(admin_user.id),

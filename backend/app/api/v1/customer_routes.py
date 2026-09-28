@@ -345,17 +345,37 @@ async def place_in_seat_order(
         )
         cafe_session = (await db.execute(sess_stmt)).scalars().first()
 
-        # 2. If no active session exists on this station, create one cleanly using start_category_session
-        # so that the session gets the exact defined rates/tiers for the chosen mode (Solo: 180, Multiplayer: 220, Car: 250)
-        # and gets dynamically allocated to the chosen matrix cell (Mode row + Station column).
+        # 2. If no active gaming session exists on this station, create a zero-charge seat-order session
+        # with allocated_minutes=0 and tier_price=0.00 so it appears in the chosen matrix cell
+        # for billing/checkout WITHOUT auto-starting a paid game session or running game timers.
         if not cafe_session:
-            cafe_session = await start_category_session(
-                db=db,
+            st_stmt = select(Station).where(func.upper(Station.name) == st_name)
+            target_st = (await db.execute(st_stmt)).scalar_one_or_none()
+            if not target_st:
+                target_st = Station(
+                    name=st_name,
+                    tier="CONSOLE",
+                    hourly_rate=Decimal("0.00"),
+                    pricing_tiers=[],
+                    status=StationStatus.AVAILABLE.value,
+                )
+                db.add(target_st)
+                await db.flush()
+
+            cafe_session = Session(
+                station_id=target_st.id,
+                station_name=target_st.name or st_name,
+                device_name=st_name,
+                console_room=st_name,
                 category_id=target_mode,
-                device_id=st_name,
-                duration_minutes=60,
                 customer_name=payload.customerName,
+                status=SessionStatus.ACTIVE.value,
+                started_at=datetime.now(timezone.utc),
+                allocated_minutes=0,
+                tier_price=Decimal("0.00"),
             )
+            db.add(cafe_session)
+            await db.flush()
 
     # 4. Attach new Order to the active session
     new_order = Order(

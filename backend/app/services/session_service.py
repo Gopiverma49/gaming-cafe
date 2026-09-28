@@ -7,7 +7,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional, Dict, Any, List, Set, Callable, Tuple
 
 from fastapi import HTTPException, status
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import DBAPIError
@@ -73,7 +73,9 @@ def _compute_time_charge(
     * Over allocation: tier_price + prorated overtime at ``hourly_rate``.
     * No tier_price: use the billing-engine minute-accurate formula.
     """
-    if tier_price is not None:
+    if allocated_minutes == 0 and (tier_price is None or tier_price == Decimal("0.00")):
+        return Decimal("0.00")
+    if tier_price is not None and tier_price > Decimal("0.00"):
         if elapsed_minutes > allocated_minutes:
             overtime_min = elapsed_minutes - allocated_minutes
             overtime = (
@@ -81,6 +83,9 @@ def _compute_time_charge(
             ).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
             return (tier_price + overtime).quantize(CURRENCY_QUANTIZATION, rounding=ROUND_HALF_UP)
         return tier_price
+
+    if hourly_rate == Decimal("0.00"):
+        return Decimal("0.00")
 
     return calculate_station_charge(started_at, reference_time, hourly_rate)
 
@@ -563,7 +568,8 @@ async def settle_checkout(
             detail=f"Session is already closed (status: {cafe_session.status})",
         )
 
-    # 2. Block checkout if any food orders are active in QUEUED or PREPARING (auto-serve for Walk-in CAFE)
+    # 2. Block checkout if any food orders are active in QUEUED or PREPARING (auto-serve for Walk-in CAFE and food-only sessions)
+    is_food_only = bool(cafe_session.allocated_minutes == 0 and (cafe_session.tier_price == Decimal("0.00") or cafe_session.tier_price is None))
     pending_orders = [
         o for o in cafe_session.orders
         if o.status in (OrderStatus.QUEUED.value, OrderStatus.PREPARING.value)
@@ -573,6 +579,7 @@ async def settle_checkout(
             (cafe_session.category_id and any(c in cafe_session.category_id.lower() for c in ("dine-in", "dine-out", "cafe")))
             or (cafe_session.device_name and "cafe" in cafe_session.device_name.lower())
             or (cafe_session.station_name and "cafe" in cafe_session.station_name.lower())
+            or is_food_only
         )
         if is_cafe:
             for po in pending_orders:
@@ -596,15 +603,18 @@ async def settle_checkout(
     ended_utc = ensure_utc(ended_at)
     total_sec = max(0, int((ended_utc - started_utc).total_seconds()))
     elapsed_min_checkout = total_sec // 60
-    allocated_checkout = cafe_session.allocated_minutes or 60
-    station_charge = _compute_time_charge(
-        tier_price=cafe_session.tier_price,
-        elapsed_minutes=elapsed_min_checkout,
-        allocated_minutes=allocated_checkout,
-        hourly_rate=station.hourly_rate,
-        started_at=started_utc,
-        reference_time=ended_utc,
-    )
+    if is_food_only:
+        station_charge = Decimal("0.00")
+    else:
+        allocated_checkout = cafe_session.allocated_minutes if cafe_session.allocated_minutes is not None else 60
+        station_charge = _compute_time_charge(
+            tier_price=cafe_session.tier_price,
+            elapsed_minutes=elapsed_min_checkout,
+            allocated_minutes=allocated_checkout,
+            hourly_rate=station.hourly_rate,
+            started_at=started_utc,
+            reference_time=ended_utc,
+        )
 
     orders_charge = Decimal("0.00")
     for order in cafe_session.orders:
@@ -965,7 +975,9 @@ async def extend_session(
             detail=f"Cannot extend session with status {cafe_session.status}",
         )
 
-    prev_alloc = cafe_session.allocated_minutes or 60
+    prev_alloc = cafe_session.allocated_minutes if cafe_session.allocated_minutes is not None else 0
+    if prev_alloc == 0:
+        cafe_session.started_at = datetime.now(timezone.utc)
     new_alloc = prev_alloc + minutes
     cafe_session.allocated_minutes = new_alloc
 
@@ -979,8 +991,12 @@ async def extend_session(
     )
     if cafe_session.tier_price is not None:
         cafe_session.tier_price = cafe_session.tier_price + add_price
+    else:
+        cafe_session.tier_price = add_price
     if cafe_session.total_amount is not None:
         cafe_session.total_amount = cafe_session.total_amount + add_price
+    else:
+        cafe_session.total_amount = add_price
 
     buffer_ws_event(
         db,
@@ -1136,11 +1152,12 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
             started_at = ensure_utc(active_s.started_at)
             elapsed_sec = (now - started_at).total_seconds()
             elapsed_min = max(0, int(elapsed_sec // 60))
-            alloc_min = active_s.allocated_minutes or 60
-            rem_min = max(0, alloc_min - elapsed_min)
+            is_food_only = bool(active_s.allocated_minutes == 0 and (active_s.tier_price == Decimal("0.00") or active_s.tier_price is None))
+            alloc_min = active_s.allocated_minutes if active_s.allocated_minutes is not None else 60
+            rem_min = max(0, alloc_min - elapsed_min) if alloc_min > 0 else 0
 
             st_rate = active_s.station.hourly_rate if active_s.station else Decimal(str(settings.DEFAULT_HOURLY_RATE))
-            time_charge = _compute_time_charge(
+            time_charge = Decimal("0.00") if is_food_only else _compute_time_charge(
                 tier_price=active_s.tier_price,
                 elapsed_minutes=elapsed_min,
                 allocated_minutes=alloc_min,
@@ -1149,7 +1166,7 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
                 reference_time=now,
             )
 
-            orders_charge = sum_order_charges(active_s.orders, statuses=["SERVED"])
+            orders_charge = sum_order_charges(active_s.orders, statuses=["QUEUED", "PREPARING", "SERVED"])
 
             active_orders_count = sum(
                 1 for o in active_s.orders
@@ -1194,8 +1211,9 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
                 "orders_charge": orders_charge,
                 "running_total": running_total,
                 "active_orders_count": active_orders_count,
-                "hourly_rate": st_rate,
+                "hourly_rate": Decimal("0.00") if is_food_only else st_rate,
                 "pricing_tiers": pricing_tiers,
+                "is_food_only": is_food_only,
             }
         else:
             # Check for upcoming confirmed advance bookings on this station
@@ -1243,11 +1261,12 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
         vr_started_at = ensure_utc(vr_active_s.started_at)
         vr_elapsed_sec = (now - vr_started_at).total_seconds()
         vr_elapsed_min = max(0, int(vr_elapsed_sec // 60))
-        vr_alloc_min = vr_active_s.allocated_minutes or 60
-        vr_rem_min = max(0, vr_alloc_min - vr_elapsed_min)
+        is_vr_food_only = bool(vr_active_s.allocated_minutes == 0 and (vr_active_s.tier_price == Decimal("0.00") or vr_active_s.tier_price is None))
+        vr_alloc_min = vr_active_s.allocated_minutes if vr_active_s.allocated_minutes is not None else 60
+        vr_rem_min = max(0, vr_alloc_min - vr_elapsed_min) if vr_alloc_min > 0 else 0
 
         vr_rate = vr_active_s.station.hourly_rate if vr_active_s.station else Decimal(str(settings.DEFAULT_HOURLY_RATE))
-        vr_time_charge = _compute_time_charge(
+        vr_time_charge = Decimal("0.00") if is_vr_food_only else _compute_time_charge(
             tier_price=vr_active_s.tier_price,
             elapsed_minutes=vr_elapsed_min,
             allocated_minutes=vr_alloc_min,
@@ -1256,7 +1275,7 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
             reference_time=now,
         )
 
-        vr_orders_charge = sum_order_charges(vr_active_s.orders, statuses=["SERVED"])
+        vr_orders_charge = sum_order_charges(vr_active_s.orders, statuses=["QUEUED", "PREPARING", "SERVED"])
 
         vr_active_orders_count = sum(
             1 for o in vr_active_s.orders
@@ -1284,8 +1303,9 @@ async def get_fleet_matrix(db: AsyncSession) -> Dict[str, Any]:
             "orders_charge": vr_orders_charge,
             "running_total": vr_running_total,
             "active_orders_count": vr_active_orders_count,
-            "hourly_rate": vr_rate,
+            "hourly_rate": Decimal("0.00") if is_vr_food_only else vr_rate,
             "pricing_tiers": vr_pricing_tiers,
+            "is_food_only": is_vr_food_only,
         }
 
     # 6. Extract active Walk-in CAFE sessions independently (supporting multiple concurrent customers)
@@ -1361,11 +1381,16 @@ async def start_category_session(
     if norm_cat in CATEGORY_CONFIGS:
         cat_cfg = CATEGORY_CONFIGS[norm_cat]
 
-        # Query currently occupied devices across all active sessions
+        # Query currently occupied devices across all active gaming sessions
+        # (Exclude food-only seat sessions where game time has not yet started)
         active_dev_res = await db.execute(
             select(Session.device_name).where(
                 Session.status == SessionStatus.ACTIVE.value,
                 Session.device_name.is_not(None),
+                or_(
+                    Session.allocated_minutes > 0,
+                    and_(Session.tier_price.is_not(None), Session.tier_price > Decimal("0.00")),
+                ),
             )
         )
         occupied_devs = {str(d).upper() for d in active_dev_res.scalars().all() if d}
@@ -1404,7 +1429,7 @@ async def start_category_session(
                     )
                 target_device_name = matched
 
-        # Verify device occupancy atomically: check for any active session on target_device_name
+        # Verify device occupancy atomically: check for any active gaming session on target_device_name
         if target_device_name.upper() in occupied_devs:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -1427,10 +1452,19 @@ async def start_category_session(
                 func.upper(Session.device_name) == target_device_name.upper(),
                 Session.status == SessionStatus.ACTIVE.value,
             )
+            .options(
+                selectinload(Session.station),
+                selectinload(Session.orders).selectinload(Order.items),
+            )
             .with_for_update()
         )
         active_conflict = (await db.execute(active_stmt)).scalars().first()
-        if active_conflict:
+        is_food_only = bool(
+            active_conflict
+            and active_conflict.allocated_minutes == 0
+            and (active_conflict.tier_price == Decimal("0.00") or active_conflict.tier_price is None)
+        )
+        if active_conflict and not is_food_only:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Device '{target_device_name}' currently in use.",
@@ -1485,10 +1519,19 @@ async def start_category_session(
                 Session.station_id == station.id,
                 Session.status == SessionStatus.ACTIVE.value,
             )
+            .options(
+                selectinload(Session.station),
+                selectinload(Session.orders).selectinload(Order.items),
+            )
             .with_for_update()
         )
         active_conflict = (await db.execute(active_stmt)).scalars().first()
-        if active_conflict or station.status == StationStatus.OCCUPIED.value:
+        is_food_only = bool(
+            active_conflict
+            and active_conflict.allocated_minutes == 0
+            and (active_conflict.tier_price == Decimal("0.00") or active_conflict.tier_price is None)
+        )
+        if (active_conflict and not is_food_only) or (station.status == StationStatus.OCCUPIED.value and not is_food_only):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Station '{station.name}' currently in use.",
@@ -1527,23 +1570,44 @@ async def start_category_session(
         if existing_u:
             valid_user_uuid = existing_u.id
 
-    new_session = Session(
-        station_id=station.id,
-        station_name=station.name,
-        device_name=target_device_name,
-        console_room=target_device_name,
-        user_id=valid_user_uuid,
-        customer_name=customer_name or "Gamer",
-        customer_phone=customer_phone,
-        started_at=datetime.now(timezone.utc),
-        status=SessionStatus.ACTIVE.value,
-        total_amount=resolved_tier_price,
-        allocated_minutes=duration_minutes,
-        tier_price=resolved_tier_price,
-        category_id=norm_cat,
-    )
-    db.add(new_session)
-    await db.flush()
+    if active_conflict and is_food_only:
+        # Customer arrived at their seat where food was ordered!
+        # Upgrade zero-charge food-only session to active gaming session
+        active_conflict.station_id = station.id
+        active_conflict.station_name = station.name
+        active_conflict.station = station
+        active_conflict.device_name = target_device_name
+        active_conflict.console_room = target_device_name
+        if valid_user_uuid:
+            active_conflict.user_id = valid_user_uuid
+        if customer_name and customer_name.strip() and customer_name.strip().lower() != "walk-in gamer":
+            active_conflict.customer_name = customer_name.strip()
+        if customer_phone and customer_phone.strip():
+            active_conflict.customer_phone = customer_phone.strip()
+        active_conflict.started_at = datetime.now(timezone.utc)
+        active_conflict.allocated_minutes = duration_minutes
+        active_conflict.tier_price = resolved_tier_price
+        active_conflict.total_amount = resolved_tier_price
+        active_conflict.category_id = norm_cat
+        new_session = active_conflict
+    else:
+        new_session = Session(
+            station_id=station.id,
+            station_name=station.name,
+            device_name=target_device_name,
+            console_room=target_device_name,
+            user_id=valid_user_uuid,
+            customer_name=customer_name or "Gamer",
+            customer_phone=customer_phone,
+            started_at=datetime.now(timezone.utc),
+            status=SessionStatus.ACTIVE.value,
+            total_amount=resolved_tier_price,
+            allocated_minutes=duration_minutes,
+            tier_price=resolved_tier_price,
+            category_id=norm_cat,
+        )
+        db.add(new_session)
+        await db.flush()
 
     # Transition PhysicalDevice to OCCUPIED if present
     pdev = await db.get(PhysicalDevice, target_device_name)

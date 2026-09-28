@@ -251,14 +251,16 @@ async def test_customer_in_seat_order_flow(orders_test_db):
         assert data["stationId"] == "PS2"
         assert data["customerName"] == "Kavya Sharma"
 
-        # Verify matrix allocation: PS2 is active under solo, and time_charge is ₹180 (not fallback 125)
+        # Verify matrix allocation: PS2 is active under solo, but time_charge is strictly 0.0 (no game session started)
         matrix_res = await client.get("/api/v1/fleet/matrix")
         assert matrix_res.status_code == 200
         m_data = matrix_res.json()
         ps2_col = next(s for s in m_data["stations"] if s["name"] == "PS2")
         assert ps2_col["active_session"] is not None
         assert ps2_col["active_session"]["mode"] == "solo"
-        assert float(ps2_col["active_session"]["time_charge"]) == 180.0
+        assert float(ps2_col["active_session"]["time_charge"]) == 0.0
+        assert float(ps2_col["active_session"]["orders_charge"]) == 390.0
+        assert ps2_col["active_session"]["is_food_only"] is True
 
         # 2. Car simulator order: even if client sends PS1, it pins strictly to PS3
         car_res = await client.post(
@@ -276,13 +278,15 @@ async def test_customer_in_seat_order_flow(orders_test_db):
         car_data = car_res.json()
         assert car_data["stationId"] == "PS3"
 
-        # Verify PS3 session is Car Simulator with rate ₹250 (not fallback 125)
+        # Verify PS3 session is Car Simulator with time_charge 0.0 (food only, no auto game session)
         matrix_res2 = await client.get("/api/v1/fleet/matrix")
         m_data2 = matrix_res2.json()
         ps3_col = next(s for s in m_data2["stations"] if s["name"] == "PS3")
         assert ps3_col["active_session"] is not None
         assert ps3_col["active_session"]["mode"] == "car_sim"
-        assert float(ps3_col["active_session"]["time_charge"]) == 250.0
+        assert float(ps3_col["active_session"]["time_charge"]) == 0.0
+        assert float(ps3_col["active_session"]["orders_charge"]) == 120.0
+        assert ps3_col["active_session"]["is_food_only"] is True
 
         # 3. Invalid station (must be PS1, PS2, or PS3)
         bad_station_res = await client.post(
@@ -633,6 +637,62 @@ async def test_delete_cafe_tab_deletes_orders_and_sessions(orders_test_db):
         # 6. Verify session is no longer active in fleet matrix
         m_res_after = await client.get("/api/v1/admin/fleet/matrix", headers=headers)
         assert not any(s["customer_name"] == cust_name for s in m_res_after.json().get("cafe_sessions", []))
+
+
+@pytest.mark.asyncio
+async def test_in_seat_food_order_customer_arrives_and_admin_starts_session(orders_test_db):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Customer places in-seat food order to PS2 while waiting
+        food_res = await client.post(
+            "/api/v1/customer/in-seat-order",
+            json={
+                "order_id": "ORD_START_TEST_001",
+                "station_id": "PS2",
+                "mode": "solo",
+                "customer_name": "Late Arriving Gamer",
+                "items": [{"id": "item-snack", "name": "Loaded Nachos", "qty": 1, "price": 180.0}],
+                "total_amount": 180.0,
+            },
+        )
+        assert food_res.status_code == 200
+
+        # Matrix should show food-only session with time charge 0
+        matrix_before = await client.get("/api/v1/fleet/matrix")
+        assert matrix_before.status_code == 200
+        ps2_col = next(s for s in matrix_before.json()["stations"] if s["name"] == "PS2")
+        assert ps2_col["active_session"] is not None
+        assert ps2_col["active_session"]["is_food_only"] is True
+        assert float(ps2_col["active_session"]["time_charge"]) == 0.0
+        assert float(ps2_col["active_session"]["orders_charge"]) == 180.0
+
+        # 2. Customer arrives! Admin clicks Start button for 60m Solo on PS2
+        start_res = await client.post(
+            "/api/v1/admin/sessions/start",
+            json={
+                "station_id": "PS2",
+                "category_id": "solo",
+                "mode": "Solo",
+                "duration_minutes": 60,
+                "customer_name": "Late Arriving Gamer",
+            },
+        )
+        assert start_res.status_code == 201
+        start_data = start_res.json()
+        assert start_data["allocated_minutes"] == 60
+
+        # 3. Matrix should now show full active gaming session with both game time and food charges
+        matrix_after = await client.get("/api/v1/fleet/matrix")
+        assert matrix_after.status_code == 200
+        ps2_col_after = next(s for s in matrix_after.json()["stations"] if s["name"] == "PS2")
+        sess_after = ps2_col_after["active_session"]
+        assert sess_after is not None
+        assert sess_after["is_food_only"] is False
+        assert sess_after["allocated_minutes"] == 60
+        assert float(sess_after["time_charge"]) > 0.0
+        assert float(sess_after["orders_charge"]) == 180.0
+        assert float(sess_after["running_total"]) == float(sess_after["time_charge"]) + 180.0
+
 
 
 

@@ -3,6 +3,7 @@ import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
+from app.core.config import settings
 from app.core.database import Base
 from app.api.deps import get_db
 from app.main import app
@@ -87,6 +88,51 @@ async def test_admin_login(test_db):
         data = res.json()
         assert data["user"]["role"] == "ADMIN"
         assert "access_token" in data
+
+        # Admin login with wrong password rejected with 401
+        bad_pw_res = await client.post(
+            "/api/v1/auth/login",
+            json={"identifier": "admin", "password": "wrong_admin_pass"},
+        )
+        assert bad_pw_res.status_code == 401
+        assert "Invalid administrator credentials" in bad_pw_res.json()["detail"]
+
+        # Admin login via configured ADMIN_PHONE
+        phone_res = await client.post(
+            "/api/v1/auth/login",
+            json={"identifier": settings.ADMIN_PHONE, "password": "admin123"},
+        )
+        assert phone_res.status_code == 200
+        assert phone_res.json()["user"]["role"] == "ADMIN"
+
+
+@pytest.mark.asyncio
+async def test_reserved_admin_credentials_registration_rejection(test_db):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Attempt to register using reserved admin name
+        res_name = await client.post(
+            "/api/v1/auth/register",
+            json={"name": "admin", "phone": "9998887776", "password": "playerpass123"},
+        )
+        assert res_name.status_code == 400
+        assert "Reserved administrative username" in res_name.json()["detail"]
+
+        # 2. Attempt to register using reserved admin phone
+        res_phone = await client.post(
+            "/api/v1/auth/register",
+            json={"name": "Sneaky Player", "phone": settings.ADMIN_PHONE, "password": "playerpass123"},
+        )
+        assert res_phone.status_code == 400
+        assert "Reserved administrative username" in res_phone.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_initial_admin_startup_sync(test_db):
+    from app.main import ensure_initial_admin
+    # Ensure startup bootstrap hook executes without errors and is idempotent
+    await ensure_initial_admin()
+    await ensure_initial_admin()
 
 
 @pytest.mark.asyncio

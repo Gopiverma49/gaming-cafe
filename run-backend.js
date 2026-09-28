@@ -44,6 +44,7 @@ async function main() {
 
   const isTest = process.argv.includes('--test');
   const isCleanTest = process.argv.includes('--clean-test');
+  const isSeedAdmin = process.argv.includes('--seed-admin');
   const isForce = process.argv.includes('--force');
   const isVerbose = process.argv.includes('--verbose');
   const host = validatedEnv.HOST || '0.0.0.0';
@@ -61,6 +62,8 @@ async function main() {
     args = ['-m', 'pytest', 'tests/', '-v'];
   } else if (isCleanTest) {
     args = ['scripts/clean_test_data.py', ...(isForce ? ['--force'] : ['--dry-run'])];
+  } else if (isSeedAdmin) {
+    args = ['scripts/create_admin.py', '--from-env'];
   }
 
   // Parse .env files (root and backend) if environment variables are not pre-set

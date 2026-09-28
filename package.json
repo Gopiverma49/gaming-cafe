@@ -15,6 +15,7 @@
     "test:backend": "node run-backend.js --test",
     "clean:test-data": "node run-backend.js --clean-test",
     "clean:test-data:force": "node run-backend.js --clean-test --force",
+    "seed:admin": "node run-backend.js --seed-admin",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down"
   },

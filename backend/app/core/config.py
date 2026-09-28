@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # Admin Credentials (Configurable via environment variables)
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "admin123"
+    ADMIN_PHONE: str = "0000000000"
 
     # UPI Billing & NPCI Standard Payloads
     UPI_MERCHANT_VPA: str = "gamingcafe@upi"

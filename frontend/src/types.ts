@@ -263,6 +263,7 @@ export interface MatrixSession {
   active_orders_count: number;
   hourly_rate: number;
   pricing_tiers: PricingTier[];
+  is_food_only?: boolean;
 }
 
 export interface MatrixStation {

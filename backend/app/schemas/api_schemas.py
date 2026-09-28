@@ -252,6 +252,7 @@ class MatrixSessionDetail(BaseModel):
     active_orders_count: int = 0
     hourly_rate: Decimal
     pricing_tiers: List[PricingTier] = Field(default_factory=list)
+    is_food_only: bool = False
 
 
 class MatrixStationColumn(BaseModel):

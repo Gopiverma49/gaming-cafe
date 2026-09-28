@@ -778,8 +778,112 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                     </div>
                                   </div>
 
-                                  {/* 2. Live Countdown Timer & Progress */}
+                                  {/* 2. Live Countdown Timer & Progress (or Food Only Banner) */}
                                   {(() => {
+                                    const isVrFoodOnly = Boolean(
+                                      vrActiveSession.is_food_only ||
+                                      (vrActiveSession.allocated_minutes === 0 && Number(vrActiveSession.time_charge || 0) === 0)
+                                    );
+
+                                    if (isVrFoodOnly) {
+                                      const vrNextBookingInfo = getNextBookingForStation('VR1', bookings, new Date(currentTime));
+                                      const vrDurationValidation = validateWalkInDuration('VR1', selectedDuration, bookings, new Date(currentTime));
+
+                                      return (
+                                        <div className="p-3.5 rounded-xl bg-[#FFF7ED] border border-[#FED7AA] space-y-2.5 text-center">
+                                          <div className="flex items-center justify-between text-xs">
+                                            <div className="flex items-center gap-1.5 text-[#EA580C] font-bold">
+                                              <UtensilsCrossed className="w-3.5 h-3.5 text-[#EA580C]" />
+                                              <span className="text-[11px]">Food Ordered to VR Rig</span>
+                                            </div>
+                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#FEF3C7] text-[#B45309] border border-[#FDE68A]">
+                                              Zero Game Charge
+                                            </span>
+                                          </div>
+                                          <p className="text-[11px] text-[#64748B] text-left">
+                                            Snacks/drinks ordered to seat. Game session not started yet.
+                                          </p>
+
+                                          {/* Customer Arrived? Start Session Box */}
+                                          <div className="pt-1 space-y-2 text-left">
+                                            <div className="flex items-center justify-between text-[10px] font-bold text-[#EA580C] uppercase">
+                                              <div className="flex items-center gap-1">
+                                                <Play className="w-3 h-3 fill-current" />
+                                                <span>Customer Arrived? Start Session</span>
+                                              </div>
+                                              {vrNextBookingInfo && (
+                                                <span className="font-mono-code lowercase text-[#EA580C]">
+                                                  max {Math.max(0, vrNextBookingInfo.diffMinutes)}m free
+                                                </span>
+                                              )}
+                                            </div>
+
+                                            <div className="grid grid-cols-3 gap-1.5">
+                                              {vrPricingTiers.map((tier) => {
+                                                const isSelected = selectedDuration === tier.duration_min;
+                                                const tierCheck = validateWalkInDuration('VR1', tier.duration_min, bookings, new Date(currentTime));
+                                                const isCapped = !tierCheck.allowed;
+
+                                                return (
+                                                  <button
+                                                    key={tier.duration_min}
+                                                    type="button"
+                                                    disabled={isCapped}
+                                                    onClick={() =>
+                                                      setSelectedDurations((prev) => ({
+                                                        ...prev,
+                                                        [vrCellKey]: tier.duration_min,
+                                                      }))
+                                                    }
+                                                    className={`py-1.5 px-1 rounded-xl text-center transition-all font-display border relative ${
+                                                      isCapped
+                                                        ? 'bg-[#FEF2F2] border-[#FCA5A5] text-[#991B1B] cursor-not-allowed opacity-60'
+                                                        : isSelected
+                                                        ? 'bg-[#EA580C] border-[#EA580C] text-[#FFFFFF] shadow-sm cursor-pointer'
+                                                        : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1] cursor-pointer'
+                                                    }`}
+                                                    title={isCapped ? tierCheck.reason : undefined}
+                                                  >
+                                                    <div className={`text-[10px] font-bold tracking-tight ${isSelected ? 'text-white' : isCapped ? 'text-[#991B1B]' : 'text-[#0F172A]'}`}>
+                                                      {tier.label || `${tier.duration_min}m`}
+                                                    </div>
+                                                    <div className={`text-[9px] font-bold ${isSelected ? 'text-white/90' : isCapped ? 'text-[#DC2626]' : 'text-[#172554]'}`}>
+                                                      ₹{Number(tier.price).toFixed(0)}
+                                                    </div>
+                                                  </button>
+                                                );
+                                              })}
+                                            </div>
+
+                                            {!vrDurationValidation.isValid && (
+                                              <div style={{ color: '#dc2626', fontWeight: 600, fontSize: '11px' }}>
+                                                {vrDurationValidation.reason}
+                                              </div>
+                                            )}
+
+                                            <button
+                                              type="button"
+                                              disabled={isInitiating || !vrDurationValidation.isValid}
+                                              onClick={() =>
+                                                startSessionMutation.mutate({
+                                                  stationId: 'VR1',
+                                                  modeId: 'vr_sim',
+                                                  durationMinutes: selectedDuration,
+                                                  modeName: 'VR Simulator',
+                                                  customerName: vrActiveSession.customer_name || customerNames[vrCellKey] || 'Walk-in Gamer',
+                                                  customerPhone: vrActiveSession.customer_phone || customerPhones[vrCellKey] || undefined,
+                                                })
+                                              }
+                                              className="w-full py-2.5 px-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-md bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] cursor-pointer active:scale-98 disabled:opacity-50"
+                                            >
+                                              <Play className="w-3.5 h-3.5 fill-current" />
+                                              <span>{isInitiating ? 'STARTING...' : 'START VR RIG'}</span>
+                                            </button>
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+
                                     const countdown = formatLiveCountdown(
                                       vrActiveSession.started_at,
                                       vrActiveSession.allocated_minutes
@@ -814,6 +918,10 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
                                   {/* 3. In-Seat Orders & Financials & Actions */}
                                   {(() => {
+                                    const isVrFoodOnly = Boolean(
+                                      vrActiveSession.is_food_only ||
+                                      (vrActiveSession.allocated_minutes === 0 && Number(vrActiveSession.time_charge || 0) === 0)
+                                    );
                                     const vrKitchenOrders = (kitchenOrders && kitchenOrders.length > 0)
                                       ? kitchenOrders
                                       : (queryClient.getQueryData<Order[]>(['kitchen-orders']) || []);
@@ -915,26 +1023,38 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                           </button>
                                         </div>
 
-                                    {/* Quick extend buttons */}
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="text-[10px] text-[#64748B] font-bold uppercase shrink-0">Extend:</span>
+                                    {/* Action row: Extend or Cancel Seat */}
+                                    {isVrFoodOnly ? (
                                       <button
-                                        disabled={extendingSessionId === vrActiveSession.session_id}
-                                        onClick={() => handleExtend(vrActiveSession, 30)}
-                                        className="flex-1 py-1 px-2 rounded-xl bg-[#FFFFFF] hover:bg-[#F8FAFC] border border-[#E2E8F0] text-[#0F172A] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                                        disabled={cancellingSessionId === vrActiveSession.session_id}
+                                        onClick={() => handleCancelSeatSession(vrActiveSession, 'VR1')}
+                                        className="w-full py-1.5 px-2 rounded-xl bg-[#FEF2F2] hover:bg-[#FEE2E2] border border-[#FECACA] text-[#DC2626] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                                        title="Cancel seat and food order"
                                       >
-                                        <PlusCircle className="w-3 h-3 text-[#15803D]" />
-                                        <span>+30m</span>
+                                        <XCircle className="w-3 h-3 text-[#DC2626]" />
+                                        <span>Cancel VR Seat</span>
                                       </button>
-                                      <button
-                                        disabled={extendingSessionId === vrActiveSession.session_id}
-                                        onClick={() => handleExtend(vrActiveSession, 60)}
-                                        className="flex-1 py-1 px-2 rounded-xl bg-[#FFFFFF] hover:bg-[#F8FAFC] border border-[#E2E8F0] text-[#0F172A] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                                      >
-                                        <PlusCircle className="w-3 h-3 text-[#15803D]" />
-                                        <span>+1h</span>
-                                      </button>
-                                    </div>
+                                    ) : (
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-[10px] text-[#64748B] font-bold uppercase shrink-0">Extend:</span>
+                                        <button
+                                          disabled={extendingSessionId === vrActiveSession.session_id}
+                                          onClick={() => handleExtend(vrActiveSession, 30)}
+                                          className="flex-1 py-1 px-2 rounded-xl bg-[#FFFFFF] hover:bg-[#F8FAFC] border border-[#E2E8F0] text-[#0F172A] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                                        >
+                                          <PlusCircle className="w-3 h-3 text-[#15803D]" />
+                                          <span>+30m</span>
+                                        </button>
+                                        <button
+                                          disabled={extendingSessionId === vrActiveSession.session_id}
+                                          onClick={() => handleExtend(vrActiveSession, 60)}
+                                          className="flex-1 py-1 px-2 rounded-xl bg-[#FFFFFF] hover:bg-[#F8FAFC] border border-[#E2E8F0] text-[#0F172A] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                                        >
+                                          <PlusCircle className="w-3 h-3 text-[#15803D]" />
+                                          <span>+1h</span>
+                                        </button>
+                                      </div>
+                                    )}
                                   </div>
                                 );
                               })()}
@@ -1201,73 +1321,195 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                           }`}
                         >
                           {/* ========================================================================= */}
-                          {/* STATE A: ACTIVE HERE */}
+                          {/* STATE A: ACTIVE HERE / IN-SEAT FOOD ORDER */}
                           {/* ========================================================================= */}
-                          {isStateA && activeSession && (
-                            <div className="p-3.5 rounded-2xl bg-[#FFFFFF] border border-[#BBF7D0] shadow-sm space-y-3 relative overflow-hidden">
-                              {/* Glowing top line */}
-                              <div className="absolute top-0 left-0 right-0 h-1 bg-[#15803D]" />
+                          {isStateA && activeSession && (() => {
+                            const isFoodOnly = Boolean(
+                              activeSession.is_food_only ||
+                              (activeSession.allocated_minutes === 0 && Number(activeSession.time_charge || 0) === 0)
+                            );
 
-                              {/* Customer Header & Active Pill */}
-                              <div className="flex items-center justify-between gap-1.5 pt-1">
-                                <div className="truncate">
-                                  <span className="text-xs font-black text-[#0F172A] font-display truncate block">
-                                    {activeSession.customer_name}
-                                  </span>
-                                  {activeSession.customer_phone && (
-                                    <span className="text-[10px] font-mono-code text-[#64748B] font-medium flex items-center gap-1">
-                                      <span>📞</span>
-                                      <span>{activeSession.customer_phone}</span>
+                            return (
+                              <div className={`p-3.5 rounded-2xl bg-[#FFFFFF] border ${isFoodOnly ? 'border-[#FED7AA]' : 'border-[#BBF7D0]'} shadow-sm space-y-3 relative overflow-hidden`}>
+                                {/* Glowing top line */}
+                                <div className={`absolute top-0 left-0 right-0 h-1 ${isFoodOnly ? 'bg-[#EA580C]' : 'bg-[#15803D]'}`} />
+
+                                {/* Customer Header & Active Pill */}
+                                <div className="flex items-center justify-between gap-1.5 pt-1">
+                                  <div className="truncate">
+                                    <span className="text-xs font-black text-[#0F172A] font-display truncate block">
+                                      {activeSession.customer_name}
+                                    </span>
+                                    {activeSession.customer_phone && (
+                                      <span className="text-[10px] font-mono-code text-[#64748B] font-medium flex items-center gap-1">
+                                        <span>📞</span>
+                                        <span>{activeSession.customer_phone}</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                  {isFoodOnly ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-[#FFF7ED] text-[#EA580C] border border-[#FED7AA]">
+                                      <UtensilsCrossed className="w-2.5 h-2.5 text-[#EA580C]" />
+                                      <span>In-Seat Food Order</span>
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
+                                      <Radio className="w-2.5 h-2.5 animate-pulse text-[#15803D]" />
+                                      <span>{isVrRow ? 'VR Active' : 'Active Here'}</span>
                                     </span>
                                   )}
                                 </div>
-                                <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
-                                  <Radio className="w-2.5 h-2.5 animate-pulse text-[#15803D]" />
-                                  <span>{isVrRow ? 'VR Active' : 'Active Here'}</span>
-                                </span>
-                              </div>
 
-                              {/* 1. Countdown Timer (Time left, elapsed) */}
-                              {(() => {
-                                const countdown = formatLiveCountdown(
-                                  activeSession.started_at,
-                                  activeSession.allocated_minutes
-                                );
-                                return (
-                                  <div className="p-2.5 rounded-xl bg-[#FFF7ED] border border-[#E2E8F0] space-y-1.5">
-                                    <div className="flex items-center justify-between text-xs">
-                                      <div className="flex items-center gap-1.5 text-[#64748B]">
-                                        <Timer className="w-3.5 h-3.5 text-[#15803D]" />
-                                        <span className="text-[11px] font-medium">Time Left:</span>
+                                {/* 1. Countdown Timer (Time left, elapsed) OR Food Ordered to Seat Banner */}
+                                {isFoodOnly ? (
+                                  <div className="space-y-2.5">
+                                    <div className="p-2.5 rounded-xl bg-[#FFF7ED] border border-[#FED7AA] space-y-1">
+                                      <div className="flex items-center justify-between text-xs">
+                                        <div className="flex items-center gap-1.5 text-[#EA580C] font-bold">
+                                          <UtensilsCrossed className="w-3.5 h-3.5 text-[#EA580C]" />
+                                          <span className="text-[11px]">Food Ordered to Seat</span>
+                                        </div>
+                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#FEF3C7] text-[#B45309] border border-[#FDE68A]">
+                                          Zero Game Charge
+                                        </span>
                                       </div>
-                                      <span
-                                        className={`font-black text-sm font-mono-code ${
-                                          countdown.isOvertime ? 'text-[#B91C1C] animate-pulse' : 'text-[#15803D]'
-                                        }`}
-                                      >
-                                        {countdown.remainingStr}
-                                      </span>
+                                      <p className="text-[10px] text-[#64748B]">
+                                        Snacks/drinks ordered to seat. Game session not started.
+                                      </p>
                                     </div>
 
-                                    {/* Progress Bar */}
-                                    <div className="w-full bg-[#E2E8F0] rounded-full h-1.5 overflow-hidden">
-                                      <div
-                                        className={`h-full transition-all duration-1000 ${
-                                          countdown.isOvertime
-                                            ? 'bg-[#B91C1C]'
-                                            : 'bg-[#15803D]'
-                                        }`}
-                                        style={{ width: `${countdown.progressPercent}%` }}
-                                      />
-                                    </div>
+                                    {/* Customer Arrived? Duration Selector & Start Button */}
+                                    {(() => {
+                                      const nextBookingInfo = getNextBookingForStation(effectiveStationName, bookings, new Date(currentTime));
+                                      const durationValidation = validateWalkInDuration(effectiveStationName, selectedDuration, bookings, new Date(currentTime));
 
-                                    <div className="flex items-center justify-between text-[10px] text-[#64748B]">
-                                      <span>Elapsed: {countdown.elapsedStr}</span>
-                                      <span>Booked: {activeSession.allocated_minutes}m</span>
-                                    </div>
+                                      return (
+                                        <div className="p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-2">
+                                          <div className="flex items-center justify-between text-[10px] uppercase font-bold text-[#0F172A]">
+                                            <div className="flex items-center gap-1">
+                                              <Play className="w-3 h-3 text-[#EA580C] fill-current" />
+                                              <span>Customer Arrived? Start Session</span>
+                                            </div>
+                                            {nextBookingInfo && (
+                                              <span className="text-[#EA580C] font-mono-code lowercase">
+                                                max {Math.max(0, nextBookingInfo.diffMinutes)}m free
+                                              </span>
+                                            )}
+                                          </div>
+
+                                          {/* Pricing Tiers */}
+                                          <div className="grid grid-cols-3 gap-1.5">
+                                            {pricingTiers.map((tier) => {
+                                              const isSelected = selectedDuration === tier.duration_min;
+                                              const tierCheck = validateWalkInDuration(effectiveStationName, tier.duration_min, bookings, new Date(currentTime));
+                                              const isCapped = !tierCheck.allowed;
+
+                                              return (
+                                                <button
+                                                  key={tier.duration_min}
+                                                  type="button"
+                                                  disabled={isCapped}
+                                                  onClick={() =>
+                                                    setSelectedDurations((prev) => ({
+                                                      ...prev,
+                                                      [cellKey]: tier.duration_min,
+                                                    }))
+                                                  }
+                                                  className={`py-1.5 px-1 rounded-xl text-center transition-all font-display border relative ${
+                                                    isCapped
+                                                      ? 'bg-[#FEF2F2] border-[#FCA5A5] text-[#991B1B] cursor-not-allowed opacity-60'
+                                                      : isSelected
+                                                      ? 'bg-[#EA580C] border-[#EA580C] text-[#FFFFFF] shadow-sm cursor-pointer'
+                                                      : 'bg-[#FFFFFF] border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A] hover:border-[#CBD5E1] cursor-pointer'
+                                                  }`}
+                                                  title={isCapped ? tierCheck.reason : undefined}
+                                                >
+                                                  <div className={`text-[10px] font-bold tracking-tight ${isSelected ? 'text-white' : isCapped ? 'text-[#991B1B]' : 'text-[#0F172A]'}`}>
+                                                    {tier.label || `${tier.duration_min}m`}
+                                                  </div>
+                                                  <div className={`text-[9px] font-bold ${isSelected ? 'text-white/90' : isCapped ? 'text-[#DC2626]' : 'text-[#172554]'}`}>
+                                                    ₹{Number(tier.price).toFixed(0)}
+                                                  </div>
+                                                  {isCapped && (
+                                                    <span className="text-[7px] uppercase tracking-wider font-bold block text-[#DC2626]">
+                                                      Exceeds
+                                                    </span>
+                                                  )}
+                                                </button>
+                                              );
+                                            })}
+                                          </div>
+
+                                          {!durationValidation.isValid && (
+                                            <div style={{ color: '#dc2626', fontWeight: 600, fontSize: '11px' }}>
+                                              {durationValidation.reason}
+                                            </div>
+                                          )}
+
+                                          <button
+                                            type="button"
+                                            disabled={isInitiating || !durationValidation.isValid}
+                                            onClick={() =>
+                                              startSessionMutation.mutate({
+                                                stationId: effectiveStationName,
+                                                modeId: mode.id,
+                                                durationMinutes: selectedDuration,
+                                                modeName: mode.name,
+                                                customerName: activeSession.customer_name || customerNames[cellKey] || 'Walk-in Gamer',
+                                                customerPhone: activeSession.customer_phone || customerPhones[cellKey] || undefined,
+                                              })
+                                            }
+                                            className="w-full py-2.5 px-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-md bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] cursor-pointer active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed"
+                                          >
+                                            <Play className="w-3.5 h-3.5 fill-current" />
+                                            <span>{isInitiating ? 'STARTING...' : `START ${mode.name.toUpperCase()}`}</span>
+                                          </button>
+                                        </div>
+                                      );
+                                    })()}
                                   </div>
-                                );
-                              })()}
+                                ) : (
+                                  (() => {
+                                    const countdown = formatLiveCountdown(
+                                      activeSession.started_at,
+                                      activeSession.allocated_minutes
+                                    );
+                                    return (
+                                      <div className="p-2.5 rounded-xl bg-[#FFF7ED] border border-[#E2E8F0] space-y-1.5">
+                                        <div className="flex items-center justify-between text-xs">
+                                          <div className="flex items-center gap-1.5 text-[#64748B]">
+                                            <Timer className="w-3.5 h-3.5 text-[#15803D]" />
+                                            <span className="text-[11px] font-medium">Time Left:</span>
+                                          </div>
+                                          <span
+                                            className={`font-black text-sm font-mono-code ${
+                                              countdown.isOvertime ? 'text-[#B91C1C] animate-pulse' : 'text-[#15803D]'
+                                            }`}
+                                          >
+                                            {countdown.remainingStr}
+                                          </span>
+                                        </div>
+
+                                        {/* Progress Bar */}
+                                        <div className="w-full bg-[#E2E8F0] rounded-full h-1.5 overflow-hidden">
+                                          <div
+                                            className={`h-full transition-all duration-1000 ${
+                                              countdown.isOvertime
+                                                ? 'bg-[#B91C1C]'
+                                                : 'bg-[#15803D]'
+                                            }`}
+                                            style={{ width: `${countdown.progressPercent}%` }}
+                                          />
+                                        </div>
+
+                                        <div className="flex items-center justify-between text-[10px] text-[#64748B]">
+                                          <span>Elapsed: {countdown.elapsedStr}</span>
+                                          <span>Booked: {activeSession.allocated_minutes}m</span>
+                                        </div>
+                                      </div>
+                                    );
+                                  })()
+                                )}
 
                               {/* 1.5 Active Session Card Embed: In-Seat Food Orders Accordion / Quick List */}
                               {(() => {
@@ -1392,26 +1634,33 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                               })()}
 
                               {/* 2. Billing Metrics: Play Charges, Snack Charges, Total Billable Amount */}
-                              <div className="p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1 text-[11px]">
-                                <div className="flex justify-between text-[#64748B]">
-                                  <span>Play Charges:</span>
-                                  <span className="text-[#0F172A] font-bold font-mono-code">
-                                    ₹{Number(activeSession.time_charge || 0).toFixed(2)}
-                                  </span>
-                                </div>
-                                <div className="flex justify-between text-[#64748B]">
-                                  <span>Snack Charges:</span>
-                                  <span className="text-[#0F172A] font-bold font-mono-code">
-                                    ₹{Number(activeSession.orders_charge || 0).toFixed(2)}
-                                  </span>
-                                </div>
-                                <div className="flex justify-between font-bold text-[#0F172A] pt-1 border-t border-[#E2E8F0]">
-                                  <span className="text-[#172554]">Total Billable:</span>
-                                  <span className="text-[#172554] font-black text-xs font-mono-code">
-                                    ₹{Number(activeSession.running_total || 0).toFixed(2)}
-                                  </span>
-                                </div>
-                              </div>
+                              {(() => {
+                                const liveSnackTotal = Number(activeSession.orders_charge || 0);
+                                const liveTotalBillable = Number(activeSession.running_total || (Number(activeSession.time_charge || 0) + liveSnackTotal));
+
+                                return (
+                                  <div className="p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1 text-[11px]">
+                                    <div className="flex justify-between text-[#64748B]">
+                                      <span>Play Charges:</span>
+                                      <span className="text-[#0F172A] font-bold font-mono-code">
+                                        ₹{Number(activeSession.time_charge || 0).toFixed(2)}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between text-[#64748B]">
+                                      <span>Snack Charges:</span>
+                                      <span className="text-[#0F172A] font-bold font-mono-code">
+                                        ₹{liveSnackTotal.toFixed(2)}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between font-bold text-[#0F172A] pt-1 border-t border-[#E2E8F0]">
+                                      <span className="text-[#172554]">Total Billable:</span>
+                                      <span className="text-[#172554] font-black text-xs font-mono-code">
+                                        ₹{liveTotalBillable.toFixed(2)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
 
                               {/* 3. Action Buttons: Order Food & Drinks, Generate Bill & Checkout, Transfer, +30m, +1h */}
                               {(() => {
@@ -1472,7 +1721,7 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                     </button>
 
                                 {/* Action Buttons Row: Transfer, +30m, +1h, Cancel */}
-                                <div className="grid grid-cols-4 gap-1 pt-0.5">
+                                <div className={`grid ${isFoodOnly ? 'grid-cols-2' : 'grid-cols-4'} gap-1 pt-0.5`}>
                                   <button
                                     onClick={() => onTransfer(activeSession, effectiveStationName)}
                                     className="py-1.5 px-2 rounded-xl bg-[#EFF6FF] hover:bg-[#DBEAFE] border border-[#BFDBFE] text-[#172554] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer"
@@ -1482,41 +1731,46 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                     <span>Transfer</span>
                                   </button>
 
-                                  <button
-                                    disabled={extendingSessionId === activeSession.session_id}
-                                    onClick={() => handleExtend(activeSession, 30)}
-                                    className="py-1.5 px-2 rounded-xl bg-[#FFFFFF] hover:bg-[#F8FAFC] border border-[#E2E8F0] text-[#0F172A] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                                    title="Add 30 minutes to this session"
-                                  >
-                                    <PlusCircle className="w-3 h-3 text-[#15803D]" />
-                                    <span>+30m</span>
-                                  </button>
+                                  {!isFoodOnly && (
+                                    <>
+                                      <button
+                                        disabled={extendingSessionId === activeSession.session_id}
+                                        onClick={() => handleExtend(activeSession, 30)}
+                                        className="py-1.5 px-2 rounded-xl bg-[#FFFFFF] hover:bg-[#F8FAFC] border border-[#E2E8F0] text-[#0F172A] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                                        title="Add 30 minutes to this session"
+                                      >
+                                        <PlusCircle className="w-3 h-3 text-[#15803D]" />
+                                        <span>+30m</span>
+                                      </button>
 
-                                  <button
-                                    disabled={extendingSessionId === activeSession.session_id}
-                                    onClick={() => handleExtend(activeSession, 60)}
-                                    className="py-1.5 px-2 rounded-xl bg-[#FFFFFF] hover:bg-[#F8FAFC] border border-[#E2E8F0] text-[#0F172A] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                                    title="Add 1 hour to this session"
-                                  >
-                                    <PlusCircle className="w-3 h-3 text-[#15803D]" />
-                                    <span>+1h</span>
-                                  </button>
+                                      <button
+                                        disabled={extendingSessionId === activeSession.session_id}
+                                        onClick={() => handleExtend(activeSession, 60)}
+                                        className="py-1.5 px-2 rounded-xl bg-[#FFFFFF] hover:bg-[#F8FAFC] border border-[#E2E8F0] text-[#0F172A] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                                        title="Add 1 hour to this session"
+                                      >
+                                        <PlusCircle className="w-3 h-3 text-[#15803D]" />
+                                        <span>+1h</span>
+                                      </button>
+                                    </>
+                                  )}
 
                                   <button
                                     disabled={cancellingSessionId === activeSession.session_id}
                                     onClick={() => handleCancelSeatSession(activeSession, effectiveStationName)}
                                     className="py-1.5 px-1 rounded-xl bg-[#FEF2F2] hover:bg-[#FEE2E2] border border-[#FECACA] text-[#DC2626] font-bold text-[10px] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                                    title="Cancel active booking seat session"
+                                    title={isFoodOnly ? "Cancel seat order session" : "Cancel active booking seat session"}
                                   >
                                     <XCircle className="w-3 h-3 text-[#DC2626]" />
-                                    <span>Cancel</span>
+                                    <span>{isFoodOnly ? 'Cancel Seat' : 'Cancel'}</span>
                                   </button>
                                 </div>
                               </div>
                             );
                           })()}
                         </div>
-                      )}
+                      );
+                    })()}
 
                           {/* ========================================================================= */}
                           {/* STATE B: AVAILABLE (WITH DYNAMIC CONFLICT PREVENTION) */}
