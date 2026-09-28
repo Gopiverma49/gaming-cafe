@@ -217,7 +217,7 @@ export const LoginPage: React.FC = () => {
                       type="text"
                       value={loginIdentifier}
                       onChange={(e) => setLoginIdentifier(e.target.value)}
-                      placeholder="e.g. 9876543210 or Alex Mercer"
+                      placeholder="Enter mobile number or username"
                       className="w-full pl-10 pr-4 py-2.5 bg-[#FFFFFF] border border-[#E2E8F0] rounded-xl text-xs sm:text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#EA580C] transition-colors"
                       required
                     />
@@ -325,7 +325,7 @@ export const LoginPage: React.FC = () => {
                     onChange={(e) => setRegFullName(e.target.value.slice(0, 15))}
                     minLength={4}
                     maxLength={15}
-                    placeholder="e.g. Alex (4–15 characters)"
+                    placeholder="Enter username (4–15 characters)"
                     className="w-full px-3.5 py-2.5 bg-[#FFFFFF] border border-[#E2E8F0] rounded-xl text-xs sm:text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#EA580C] transition-colors"
                     required
                   />
@@ -349,7 +349,7 @@ export const LoginPage: React.FC = () => {
                       onChange={(e) => setRegPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
                       pattern="[0-9]{10}"
                       maxLength={10}
-                      placeholder="10-digit mobile number (e.g. 9876543210)"
+                      placeholder="10-digit mobile number"
                       className="w-full pl-10 pr-4 py-2.5 bg-[#FFFFFF] border border-[#E2E8F0] rounded-xl text-xs sm:text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#EA580C] transition-colors font-mono"
                       required
                     />

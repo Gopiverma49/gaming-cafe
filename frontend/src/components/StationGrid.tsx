@@ -667,7 +667,7 @@ export const StationGrid: React.FC = () => {
           setBookingTier(null);
         }}
         isAdmin={true}
-        defaultCustomerName="Walk-in Gamer"
+        defaultCustomerName=""
       />
 
       {/* 2. Unified Food Order Modal (Exact Same for Admin Walk-in) */}

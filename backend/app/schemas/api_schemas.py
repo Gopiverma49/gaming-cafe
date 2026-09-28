@@ -105,7 +105,7 @@ class InSeatOrderPayload(BaseModel):
 
 # Session Schemas
 class CheckInRequest(BaseModel):
-    station_id: uuid.UUID
+    station_id: Union[uuid.UUID, str]
     device_id: Optional[str] = None  # 'PS1', 'PS2', 'PS3', 'VR1'
     allocated_minutes: Optional[int] = Field(
         default=settings.DEFAULT_SESSION_DURATION_MINUTES,

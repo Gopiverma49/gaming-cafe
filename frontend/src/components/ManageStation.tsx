@@ -403,7 +403,7 @@ export const ManageStation: React.FC = () => {
                 <input
                   type="text"
                   required
-                  placeholder="e.g. CAR simulator, PS5 Station 4..."
+                  placeholder="Enter station name..."
                   value={createName}
                   onChange={(e) => setCreateName(e.target.value)}
                   className="w-full bg-[#FFF7ED] border border-[#E2E8F0] rounded-xl px-3.5 py-2.5 text-sm text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C]"

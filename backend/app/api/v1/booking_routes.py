@@ -5,12 +5,13 @@ from decimal import Decimal
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, case, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.core.rate_limiter import RateLimiter
-from app.models.entities import AdvanceBookingRecord
+from app.models.entities import AdvanceBookingRecord, Session
+from app.models.enums import SessionStatus
 from app.services.ws_notifier import buffer_ws_event
 
 logger = logging.getLogger("booking_routes")
@@ -111,10 +112,16 @@ async def list_advance_bookings(
     Returns all advance bookings with real-time status.
     Keeps newest / latest check-ins and bookings at the top.
     """
+    status_prio = case(
+        (AdvanceBookingRecord.status == "ACTIVE", 1),
+        (AdvanceBookingRecord.status == "CONFIRMED", 2),
+        else_=3,
+    )
     stmt = select(AdvanceBookingRecord).order_by(
-        AdvanceBookingRecord.created_at.desc(),
-        AdvanceBookingRecord.booking_date.desc(),
-        AdvanceBookingRecord.start_time.desc()
+        status_prio.asc(),
+        AdvanceBookingRecord.booking_date.asc(),
+        AdvanceBookingRecord.start_time.asc(),
+        AdvanceBookingRecord.created_at.asc()
     )
     if station_id:
         stmt = stmt.where(AdvanceBookingRecord.station_id == station_id)
@@ -131,13 +138,19 @@ async def list_advance_bookings(
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(RateLimiter(max_requests=20, window_seconds=60, scope="booking_create"))],
 )
+@router.post(
+    "/create",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RateLimiter(max_requests=20, window_seconds=60, scope="booking_create"))],
+)
 async def create_advance_booking(
     payload: BookingPayload,
     db: AsyncSession = Depends(get_db),
 ):
     """
     Creates an advance booking, persists to DB, and broadcasts BOOKING_CREATED across WebSocket.
-    Enforces atomic conflict rejection: blocks double-booking of same station for overlapping intervals.
+    Enforces atomic conflict rejection: blocks double-booking of same station for overlapping intervals
+    against both live sessions and existing advance bookings.
     """
     if payload.website:
         raise HTTPException(
@@ -156,28 +169,60 @@ async def create_advance_booking(
         else:
             end_t = payload.startTime
 
-    # Backend Collision Enforcement: check against other CONFIRMED bookings on the same station
+    # Backend Collision Enforcement: check against live sessions and existing CONFIRMED bookings on the same station
     target_station = payload.stationId.strip().upper()
     cand_start, cand_end = parse_booking_range(payload.bookingDate, payload.startTime, dur)
+    now_local = datetime.now()
 
     if cand_start and cand_end:
-        # Check against existing confirmed bookings for this station
-        existing_stmt = select(AdvanceBookingRecord).where(
-            AdvanceBookingRecord.station_id == target_station,
-            AdvanceBookingRecord.status == "CONFIRMED",
-            AdvanceBookingRecord.id != raw_id,
+        # 1. Validate against Live Sessions currently running on target station
+        live_stmt = (
+            select(Session)
+            .where(
+                Session.status == SessionStatus.ACTIVE.value,
+                or_(
+                    func.upper(Session.device_name) == target_station,
+                    func.upper(Session.console_room) == target_station,
+                    func.upper(Session.station_name) == target_station,
+                ),
+            )
+            .with_for_update()
+        )
+        live_sessions = (await db.execute(live_stmt)).scalars().all()
+        for ls in live_sessions:
+            ls_start = ls.started_at.replace(tzinfo=None) if (ls.started_at and getattr(ls.started_at, "tzinfo", None)) else (ls.started_at or now_local)
+            ls_allocated = ls.allocated_minutes or 60
+            ls_end = ls_start + timedelta(minutes=ls_allocated)
+
+            # If live session ends after proposed booking start, and intervals overlap:
+            if ls_end > cand_start and max(cand_start, ls_start) < min(cand_end, ls_end):
+                end_str = ls_end.strftime("%I:%M %p").lstrip("0")
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Collision detected: Station {target_station} is occupied until {end_str}",
+                )
+
+        # 2. Check against existing confirmed bookings for this station
+        existing_stmt = (
+            select(AdvanceBookingRecord)
+            .where(
+                func.upper(AdvanceBookingRecord.station_id) == target_station,
+                AdvanceBookingRecord.status == "CONFIRMED",
+                AdvanceBookingRecord.id != raw_id,
+            )
+            .with_for_update()
         )
         existing_records = (await db.execute(existing_stmt)).scalars().all()
         for eb in existing_records:
             eb_start, eb_end = parse_booking_range(eb.booking_date, eb.start_time, eb.duration_minutes)
             if eb_start and eb_end:
-                # Collision condition: cand_start < eb_end and cand_end > eb_start
-                if cand_start < eb_end and cand_end > eb_start:
+                # Collision condition: max(cand_start, eb_start) < min(cand_end, eb_end)
+                if max(cand_start, eb_start) < min(cand_end, eb_end):
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
                         detail=(
-                            f"Collision detected! Station {target_station} is already booked from "
-                            f"{eb.start_time} to {eb.end_time} for {eb.customer_name} on {eb.booking_date}."
+                            f"Collision detected: Overlaps with an existing reservation "
+                            f"({eb.start_time} - {eb.end_time}) on {eb.booking_date} for {eb.customer_name}."
                         ),
                     )
 

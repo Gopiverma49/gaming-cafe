@@ -554,7 +554,7 @@ export const CustomerPortal: React.FC = () => {
                       required
                       value={customerName}
                       onChange={(e) => setCustomerName(e.target.value)}
-                      placeholder={orderType === 'CAFE' ? 'e.g. Table 4 / Rahul' : 'e.g. Alex / ShadowGamer'}
+                      placeholder={orderType === 'CAFE' ? 'Enter Table or Customer Name...' : 'Enter Customer Name...'}
                       className="w-full p-2.5 rounded-xl bg-[#FFF7ED] border border-[#E2E8F0] text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] text-xs transition-colors"
                     />
                   </div>

@@ -19,6 +19,7 @@ import { MenuItem, Order, OrderStatus } from '../types';
 import {
   fetchKitchenOrders,
   updateKitchenOrderStatus,
+  deleteKitchenOrder,
   fetchAdminMenuItems,
   createMenuItemApi,
   updateMenuItemApi,
@@ -117,14 +118,25 @@ export const KitchenKanban: React.FC = () => {
 
   // Status progression mutation for KDS live orders
   const progressMutation = useMutation({
-    mutationFn: ({ orderId, nextStatus }: { orderId: string; nextStatus: OrderStatus }) =>
-      updateKitchenOrderStatus(orderId, nextStatus),
+    mutationFn: async ({ orderId, nextStatus }: { orderId: string; nextStatus: OrderStatus }) => {
+      if (nextStatus === 'CANCELLED' || nextStatus === 'REJECTED') {
+        try {
+          return await deleteKitchenOrder(orderId);
+        } catch {
+          return await updateKitchenOrderStatus(orderId, 'CANCELLED');
+        }
+      }
+      return await updateKitchenOrderStatus(orderId, nextStatus);
+    },
     onMutate: async ({ orderId, nextStatus }) => {
       await queryClient.cancelQueries({ queryKey: ['kitchen-orders'] });
       const previousOrders = queryClient.getQueryData<Order[]>(['kitchen-orders']);
 
       queryClient.setQueryData<Order[]>(['kitchen-orders'], (old) => {
         if (!old) return [];
+        if (nextStatus === 'CANCELLED' || nextStatus === 'REJECTED') {
+          return old.filter((order) => order.id !== orderId);
+        }
         return old.map((order) =>
           order.id === orderId ? { ...order, status: nextStatus } : order
         );
@@ -140,7 +152,7 @@ export const KitchenKanban: React.FC = () => {
     onSettled: (_data, _error, variables) => {
       if (variables) {
         const lounge = useLoungeStore.getState();
-        if (variables.nextStatus === 'CANCELLED') {
+        if (variables.nextStatus === 'CANCELLED' || variables.nextStatus === 'REJECTED') {
           lounge.removeInSeatOrder(variables.orderId);
         } else {
           lounge.updateInSeatOrderStatus(variables.orderId, variables.nextStatus);
@@ -149,6 +161,7 @@ export const KitchenKanban: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
       queryClient.invalidateQueries({ queryKey: ['station-matrix'] });
       queryClient.invalidateQueries({ queryKey: ['stations-live'] });
+      queryClient.invalidateQueries({ queryKey: ['customer-sessions'] });
     },
   });
 
@@ -556,21 +569,34 @@ export const KitchenKanban: React.FC = () => {
                           </div>
 
                           {/* Status Progression Button */}
-                          <div className="flex items-center justify-between pt-1">
+                          <div className="flex items-center justify-between pt-1 gap-2">
                             <div className="text-[11px] font-mono-code text-[#64748B]">
                               Total: <span className="text-[#172554] font-bold">₹{Number(order?.total_amount || 0).toFixed(2)}</span>
                             </div>
 
-                            {lane.status !== 'SERVED' && (
-                              <button
-                                onClick={() => handleProgress(order)}
-                                disabled={progressMutation.isPending}
-                                className="px-3 py-1.5 rounded-lg bg-[#172554] hover:bg-[#1E3A8A] text-white text-xs font-bold font-mono-code flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
-                              >
-                                <span>{lane.status === 'QUEUED' ? 'Start Cooking' : 'Mark Served'}</span>
-                                <ArrowRight className="w-3.5 h-3.5" />
-                              </button>
-                            )}
+                            <div className="flex items-center gap-1.5">
+                              {lane.status !== 'SERVED' && (
+                                <button
+                                  type="button"
+                                  title="Reject / Cancel Order"
+                                  onClick={() => progressMutation.mutate({ orderId: order.id, nextStatus: 'CANCELLED' })}
+                                  disabled={progressMutation.isPending}
+                                  className="px-2.5 py-1.5 rounded-lg border border-[#EF4444] text-[#DC2626] hover:bg-[#FEE2E2] text-xs font-bold font-mono-code transition-all cursor-pointer active:scale-95"
+                                >
+                                  Reject
+                                </button>
+                              )}
+                              {lane.status !== 'SERVED' && (
+                                <button
+                                  onClick={() => handleProgress(order)}
+                                  disabled={progressMutation.isPending}
+                                  className="px-3 py-1.5 rounded-lg bg-[#172554] hover:bg-[#1E3A8A] text-white text-xs font-bold font-mono-code flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
+                                >
+                                  <span>{lane.status === 'QUEUED' ? 'Start Cooking' : 'Mark Served'}</span>
+                                  <ArrowRight className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       ))
@@ -644,7 +670,7 @@ export const KitchenKanban: React.FC = () => {
                     required
                     value={newItemPrice}
                     onChange={(e) => setNewItemPrice(e.target.value)}
-                    placeholder="150"
+                    placeholder="0.00"
                     className="w-full px-3.5 py-2.5 bg-[#FFF7ED] border border-[#E2E8F0] rounded-xl text-sm font-mono-code font-bold text-[#172554] focus:outline-none focus:border-[#EA580C]"
                   />
                 </div>

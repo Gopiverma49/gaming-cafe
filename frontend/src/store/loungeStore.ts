@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { playOrderChime } from '../utils/soundAlerts';
+import { sortBookingsUpcomingWise } from '../utils/bookingConflict';
 
 export { playOrderChime };
 
@@ -289,7 +290,7 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
             const realBookings = parsed.filter(
               (b) => b.bookingId !== 'BK-1001' && b.bookingId !== 'BK-1002' && b.id !== 'BK-1001' && b.id !== 'BK-1002'
             );
-            return realBookings;
+            return sortBookingsUpcomingWise(realBookings);
           }
         }
       } catch {
@@ -334,10 +335,10 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
       remainingBalance: remBal,
       stationName: bookingData.stationName || bookingData.stationId,
       status: (bookingData.status as any) || 'CONFIRMED',
-      createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      createdAt: new Date().toISOString(),
     };
     const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
-    const updated = [newBooking, ...currentBookings];
+    const updated = sortBookingsUpcomingWise([newBooking, ...currentBookings]);
     set({ bookings: updated });
     if (typeof window !== 'undefined' && window.localStorage) {
       try {
@@ -353,15 +354,17 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
   updateBooking: (bookingId, updates) => {
     const norm = String(bookingId || '').trim();
     const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
-    const updated = currentBookings.map((b) => {
-      const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
-      if (!match) return b;
-      const merged = { ...b, ...updates };
-      if (updates.totalAmount !== undefined || updates.advancePaid !== undefined) {
-        merged.remainingBalance = Math.max(0, merged.totalAmount - merged.advancePaid);
-      }
-      return merged;
-    });
+    const updated = sortBookingsUpcomingWise(
+      currentBookings.map((b) => {
+        const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
+        if (!match) return b;
+        const merged = { ...b, ...updates };
+        if (updates.totalAmount !== undefined || updates.advancePaid !== undefined) {
+          merged.remainingBalance = Math.max(0, merged.totalAmount - merged.advancePaid);
+        }
+        return merged;
+      })
+    );
     set({ bookings: updated });
     if (typeof window !== 'undefined' && window.localStorage) {
       try {
@@ -374,10 +377,12 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
   cancelBooking: (bookingId) => {
     const norm = String(bookingId || '').trim();
     const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
-    const updated = currentBookings.map((b) => {
-      const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
-      return match ? { ...b, status: 'CANCELLED' as const } : b;
-    });
+    const updated = sortBookingsUpcomingWise(
+      currentBookings.map((b) => {
+        const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
+        return match ? { ...b, status: 'CANCELLED' as const } : b;
+      })
+    );
     set({ bookings: updated });
     if (typeof window !== 'undefined' && window.localStorage) {
       try {
@@ -390,10 +395,12 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
   activateBooking: (bookingId) => {
     const norm = String(bookingId || '').trim();
     const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
-    const updated = currentBookings.map((b) => {
-      const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
-      return match ? { ...b, status: 'ACTIVE' as const } : b;
-    });
+    const updated = sortBookingsUpcomingWise(
+      currentBookings.map((b) => {
+        const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
+        return match ? { ...b, status: 'ACTIVE' as const } : b;
+      })
+    );
     set({ bookings: updated });
     if (typeof window !== 'undefined' && window.localStorage) {
       try {
@@ -406,10 +413,12 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
   completeBooking: (bookingId) => {
     const norm = String(bookingId || '').trim();
     const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
-    const updated = currentBookings.map((b) => {
-      const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
-      return match ? { ...b, status: 'COMPLETED' as const } : b;
-    });
+    const updated = sortBookingsUpcomingWise(
+      currentBookings.map((b) => {
+        const match = String(b.bookingId || '').trim() === norm || String(b.id || '').trim() === norm;
+        return match ? { ...b, status: 'COMPLETED' as const } : b;
+      })
+    );
     set({ bookings: updated });
     if (typeof window !== 'undefined' && window.localStorage) {
       try {
@@ -422,13 +431,15 @@ export const useLoungeStore = create<LoungeState>((set, get) => ({
   completeActiveBookingForStation: (stationId) => {
     const norm = (stationId || '').trim().toUpperCase();
     const currentBookings = Array.isArray(get().bookings) ? get().bookings : [];
-    const updated = currentBookings.map((b) => {
-      const bSt = (b.stationId || '').trim().toUpperCase();
-      if (bSt === norm && (b.status === 'ACTIVE' || b.status === 'CONFIRMED')) {
-        return { ...b, status: 'COMPLETED' as const };
-      }
-      return b;
-    });
+    const updated = sortBookingsUpcomingWise(
+      currentBookings.map((b) => {
+        const bSt = (b.stationId || '').trim().toUpperCase();
+        if (bSt === norm && (b.status === 'ACTIVE' || b.status === 'CONFIRMED')) {
+          return { ...b, status: 'COMPLETED' as const };
+        }
+        return b;
+      })
+    );
     set({ bookings: updated });
     if (typeof window !== 'undefined' && window.localStorage) {
       try {

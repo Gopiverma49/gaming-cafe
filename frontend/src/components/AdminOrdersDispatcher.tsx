@@ -18,6 +18,7 @@ import { Order, OrderStatus, MenuItem, KitchenOrder, StationLive } from '../type
 import {
   fetchKitchenOrders,
   updateKitchenOrderStatus,
+  deleteKitchenOrder,
   fetchAdminMenuItems,
   fetchLiveStations,
 } from '../api';
@@ -128,11 +129,34 @@ export const AdminOrdersDispatcher: React.FC = () => {
 
   // Status progression mutation
   const statusMutation = useMutation({
-    mutationFn: ({ orderId, status }: { orderId: string; status: OrderStatus }) =>
-      updateKitchenOrderStatus(orderId, status),
+    mutationFn: async ({ orderId, status }: { orderId: string; status: OrderStatus }) => {
+      if (status === 'CANCELLED' || status === 'REJECTED') {
+        try {
+          return await deleteKitchenOrder(orderId);
+        } catch {
+          return await updateKitchenOrderStatus(orderId, 'CANCELLED');
+        }
+      }
+      return await updateKitchenOrderStatus(orderId, status);
+    },
+    onMutate: async ({ orderId, status }) => {
+      await queryClient.cancelQueries({ queryKey: ['kitchen-orders'] });
+      const prevOrders = queryClient.getQueryData<Order[]>(['kitchen-orders']) || [];
+      if (status === 'CANCELLED' || status === 'REJECTED') {
+        queryClient.setQueryData<Order[]>(['kitchen-orders'], (old) =>
+          (old || []).filter((o) => o.id !== orderId)
+        );
+      }
+      return { prevOrders };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.prevOrders) {
+        queryClient.setQueryData(['kitchen-orders'], context.prevOrders);
+      }
+    },
     onSuccess: (_data, variables) => {
       const lounge = useLoungeStore.getState();
-      if (variables.status === 'CANCELLED') {
+      if (variables.status === 'CANCELLED' || variables.status === 'REJECTED') {
         lounge.removeInSeatOrder(variables.orderId);
       } else {
         lounge.updateInSeatOrderStatus(variables.orderId, variables.status);

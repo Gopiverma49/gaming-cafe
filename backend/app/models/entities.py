@@ -199,7 +199,7 @@ class Order(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('QUEUED', 'PREPARING', 'SERVED', 'CANCELLED')",
+            "status IN ('QUEUED', 'PREPARING', 'SERVED', 'CANCELLED', 'REJECTED')",
             name="ck_order_status",
         ),
         Index("ix_orders_session_status", "session_id", "status"),

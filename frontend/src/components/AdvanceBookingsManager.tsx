@@ -24,7 +24,10 @@ import {
   toISODateString,
   validateNewBooking,
   parseBookingDateTime,
+  sortBookingsUpcomingWise,
+  normalizeDateStr,
 } from '../utils/bookingConflict';
+import { validateAdvanceBooking } from '../lib/stationCollisionEngine';
 import {
   startCategorySessionApi,
   fetchStationMatrix,
@@ -65,7 +68,7 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
       const map = new Map<string, any>();
       current.forEach((b) => map.set(String(b.bookingId || b.id), b));
       serverBookings.forEach((sb) => map.set(String(sb.bookingId || sb.id), sb));
-      useLoungeStore.setState({ bookings: Array.from(map.values()) });
+      useLoungeStore.setState({ bookings: sortBookingsUpcomingWise(Array.from(map.values())) });
     }
   }, [serverBookings]);
 
@@ -140,19 +143,25 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
   const remainingBalance = Math.max(0, calculatedTotalAmount - (advancePaid || 0));
 
   // Dynamic Collision Prevention Check in Real-Time
-  const collisionCheck = useMemo(() => {
-    if (!startTime || !bookingDate) return { hasConflict: false };
-    return validateNewBooking(
-      {
-        stationId,
-        bookingDate,
-        startTime,
-        durationMinutes,
-      },
-      bookings,
-      liveSessions
+  const collisionValidation = useMemo(() => {
+    if (!startDateTime) {
+      return { isValid: false, reason: 'Please select Date & Start Time' };
+    }
+    return validateAdvanceBooking(
+      stationId,
+      startDateTime,
+      durationMinutes,
+      liveSessions.map((s) => ({
+        station_name: s.stationId,
+        device_name: s.stationId,
+        status: 'ACTIVE',
+        started_at: s.startedAt,
+        allocated_minutes: s.allocatedMinutes,
+      })),
+      bookings || [],
+      { bookingDate }
     );
-  }, [stationId, bookingDate, startTime, durationMinutes, bookings, liveSessions]);
+  }, [stationId, startDateTime, durationMinutes, liveSessions, bookings, bookingDate]);
 
   // Handle Quick Booking Submit
   const handleConfirmBooking = (e: React.FormEvent) => {
@@ -162,20 +171,8 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
       return;
     }
 
-    // Direct synchronous collision validation
-    const freshCheck = validateNewBooking(
-      {
-        stationId,
-        bookingDate,
-        startTime,
-        durationMinutes,
-      },
-      bookings,
-      liveSessions
-    );
-
-    if (freshCheck.hasConflict) {
-      addNotification('SYSTEM', '🚫 Collision Detected', freshCheck.reason || 'This slot overlaps with an existing booking or live session.');
+    if (!collisionValidation.isValid) {
+      addNotification('SYSTEM', '🚫 Collision Detected', collisionValidation.reason || 'This slot overlaps with an existing booking or live session.');
       return; // HARD STOP: Never create booking when there is a collision
     }
 
@@ -330,17 +327,99 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
     }
   };
 
-  // Filtered Bookings List (Latest check-ins and bookings at top)
+  // Filtered Bookings List (Arranged upcoming-wise: earliest play time at top)
   const sortedBookings = useMemo(() => {
-    return [...bookings].sort((a, b) => {
-      const dateA = parseBookingDateTime(a.bookingDate, a.startTime).getTime();
-      const dateB = parseBookingDateTime(b.bookingDate, b.startTime).getTime();
-      if (dateB !== dateA) return dateB - dateA;
-      const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return createdB - createdA;
-    });
+    return sortBookingsUpcomingWise(bookings);
   }, [bookings]);
+
+  // Identify earliest upcoming confirmed booking to highlight as Next to Play
+  const nextUpcomingBooking = useMemo(() => {
+    return (
+      sortedBookings.find(
+        (b) => (b.status || 'CONFIRMED').toUpperCase() === 'CONFIRMED'
+      ) || null
+    );
+  }, [sortedBookings]);
+
+  const getTimeBadge = (b: AdvanceBooking) => {
+    const status = (b.status || 'CONFIRMED').toUpperCase();
+    if (status === 'ACTIVE') {
+      return (
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#15803D] bg-[#DCFCE7] px-2 py-0.5 rounded-full border border-[#86EFAC] animate-pulse">
+          ● Playing Now
+        </span>
+      );
+    }
+    if (status === 'COMPLETED') {
+      return (
+        <span className="text-[10px] font-semibold text-[#64748B] bg-[#F1F5F9] px-2 py-0.5 rounded-full">
+          Finished
+        </span>
+      );
+    }
+    if (status === 'CANCELLED') {
+      return (
+        <span className="text-[10px] font-semibold text-[#94A3B8] bg-[#F8FAFC] px-2 py-0.5 rounded-full">
+          Cancelled
+        </span>
+      );
+    }
+
+    const now = new Date();
+    const start = parseBookingDateTime(b.bookingDate, b.startTime);
+    const diffMs = start.getTime() - now.getTime();
+    const diffMins = Math.round(diffMs / 60000);
+
+    if (diffMins < -30) {
+      return (
+        <span className="text-[10px] font-bold text-[#DC2626] bg-[#FEF2F2] px-2 py-0.5 rounded-full border border-[#FECACA]">
+          Past Slot
+        </span>
+      );
+    } else if (diffMins <= 0) {
+      return (
+        <span className="text-[10px] font-bold text-[#EA580C] bg-[#FFF7ED] px-2 py-0.5 rounded-full border border-[#FDBA74] animate-pulse">
+          ⚡ Ready to Play
+        </span>
+      );
+    } else if (diffMins <= 60) {
+      return (
+        <span className="text-[10px] font-bold text-[#EA580C] bg-[#FFF7ED] px-2 py-0.5 rounded-full border border-[#FDBA74]">
+          ⏳ Starts in {diffMins}m
+        </span>
+      );
+    } else if (diffMins <= 180) {
+      const h = Math.floor(diffMins / 60);
+      const m = diffMins % 60;
+      return (
+        <span className="text-[10px] font-semibold text-[#0284C7] bg-[#F0F9FF] px-2 py-0.5 rounded-full border border-[#BAE6FD]">
+          Starts in {h}h {m > 0 ? `${m}m` : ''}
+        </span>
+      );
+    }
+
+    const normDate = normalizeDateStr(b.bookingDate);
+    if (normDate === todayStr) {
+      return (
+        <span className="text-[10px] font-semibold text-[#0369A1] bg-[#F0F9FF] px-2 py-0.5 rounded-full border border-[#E0F2FE]">
+          Today
+        </span>
+      );
+    }
+    const tomorrow = new Date(now.getTime() + 86400000);
+    if (normDate === toISODateString(tomorrow)) {
+      return (
+        <span className="text-[10px] font-semibold text-[#475569] bg-[#F8FAFC] px-2 py-0.5 rounded-full border border-[#E2E8F0]">
+          Tomorrow
+        </span>
+      );
+    }
+    return (
+      <span className="text-[10px] font-semibold text-[#64748B] bg-[#F8FAFC] px-2 py-0.5 rounded-full border border-[#E2E8F0]">
+        Upcoming
+      </span>
+    );
+  };
 
   const filteredBookings = useMemo(() => {
     return sortedBookings.filter((b) => {
@@ -376,15 +455,17 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
           </h3>
 
           {/* Real-time Acceptance Notification Badge */}
-          {!collisionCheck.hasConflict ? (
+          {collisionValidation.isValid ? (
             <div className="flex items-center gap-1.5 text-xs text-[#15803D] font-bold bg-[#F0FDF4] px-3 py-1 rounded-xl border border-[#86EFAC] shadow-2xs animate-in fade-in duration-150">
               <CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A]" />
-              <span>Slot Accepted &amp; Available ({stationId}: {formatTime12h(startTime)} - {formatTime12h(calculatedEndTime)})</span>
+              <span>{collisionValidation.reason}</span>
             </div>
           ) : (
             <div className="flex items-center gap-1.5 text-xs text-[#B91C1C] font-bold bg-[#FEF2F2] px-3 py-1 rounded-xl border border-[#FECACA] shadow-2xs animate-in fade-in duration-150">
               <AlertTriangle className="w-3.5 h-3.5 text-[#DC2626] shrink-0" />
-              <span>🚫 Slot Occupied ({stationId} Collision)</span>
+              <span style={{ color: '#dc2626', fontWeight: 'bold' }}>
+                {collisionValidation.reason}
+              </span>
             </div>
           )}
         </div>
@@ -539,7 +620,7 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
               </div>
               <button
                 type="submit"
-                disabled={collisionCheck.hasConflict || !customerName.trim()}
+                disabled={!collisionValidation.isValid || !customerName.trim()}
                 className="w-full py-2 px-2 rounded-xl font-bold font-display text-xs tracking-wider transition-all flex items-center justify-center gap-1 shadow-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed bg-[#16A34A] hover:bg-[#15803D] text-white"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />
@@ -548,15 +629,29 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
             </div>
           </div>
 
-          {/* Collision Warning Banner if conflict exists */}
-          {collisionCheck.hasConflict && (
-            <div className="p-3 rounded-xl bg-[#FEF2F2] border border-[#FECACA] text-[#B91C1C] text-xs flex items-center gap-2 animate-in fade-in">
-              <AlertTriangle className="w-4 h-4 text-[#B91C1C] shrink-0" />
-              <div className="flex-1 font-semibold">
-                {collisionCheck.reason || 'This station is already booked or running during this time.'}
+          {/* Visual Feedback: Reactive Status Bar */}
+          {!collisionValidation.isValid ? (
+            <div className="p-3 rounded-xl bg-[#FEF2F2] border border-[#FECACA] flex items-center justify-between gap-2 animate-in fade-in">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-[#dc2626] shrink-0" />
+                <span style={{ color: '#dc2626', fontWeight: 700, fontSize: '13px' }}>
+                  {collisionValidation.reason}
+                </span>
               </div>
-              <span className="text-[10px] uppercase font-mono-code font-bold bg-white px-2 py-0.5 rounded border border-[#FECACA]">
-                Booking Blocked
+              <span className="text-[10px] uppercase font-mono-code font-bold bg-white px-2 py-0.5 rounded border border-[#FECACA] text-[#dc2626] shrink-0">
+                Collision Detected
+              </span>
+            </div>
+          ) : (
+            <div className="p-2.5 rounded-xl bg-[#F0FDF4] border border-[#BBF7D0] flex items-center justify-between gap-2 animate-in fade-in">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-[#16A34A] shrink-0" />
+                <span style={{ color: '#15803D', fontWeight: 600, fontSize: '13px' }}>
+                  {collisionValidation.reason}
+                </span>
+              </div>
+              <span className="text-[10px] uppercase font-mono-code font-bold bg-white px-2 py-0.5 rounded border border-[#BBF7D0] text-[#15803D] shrink-0">
+                Slot Available
               </span>
             </div>
           )}
@@ -567,14 +662,17 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
       {/* 2. ADVANCE BOOKING SCHEDULE TABLE */}
       {/* ========================================================================= */}
       <div className="bg-[#FFFFFF] p-5 rounded-2xl border border-[#E2E8F0] shadow-xs space-y-4">
-        {/* Table Filter: Station and Search Bar (Status and Period dropdowns removed per request) */}
+        {/* Table Filter: Station and Search Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-[#F1F5F9]">
-          <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2.5">
             <h4 className="text-sm font-bold text-[#172554] font-display flex items-center gap-1.5">
               <CalendarClock className="w-4 h-4 text-[#EA580C]" />
-              <span>Bookings Schedule</span>
+              <span>Upcoming Schedule</span>
               <span className="text-xs font-mono-code text-[#64748B]">({filteredBookings.length})</span>
             </h4>
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#15803D] bg-[#F0FDF4] px-2.5 py-0.5 rounded-full border border-[#86EFAC]">
+              <span>⏱️ Earliest Play Time First</span>
+            </span>
 
             {/* Station Dropdown Filter */}
             <select
@@ -604,6 +702,38 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
           </div>
         </div>
 
+        {/* Next to Play Fast Banner */}
+        {nextUpcomingBooking && (
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-linear-to-r from-[#FFF7ED] via-[#FFFBEB] to-[#FEF3C7] border border-[#FED7AA] shadow-2xs">
+            <div className="flex items-center gap-2.5 flex-wrap text-xs">
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-[#EA580C] text-white font-bold text-[10px] uppercase tracking-wide shadow-2xs">
+                ⭐ Next to Play
+              </span>
+              <span className="font-bold text-[#0F172A]">{nextUpcomingBooking.customerName}</span>
+              <span className="text-[#94A3B8]">•</span>
+              <span className="font-mono-code font-bold text-[#1E40AF] bg-white px-2 py-0.5 rounded-md border border-[#BFDBFE]">
+                {nextUpcomingBooking.stationId}
+              </span>
+              <span className="text-[#94A3B8]">•</span>
+              <span className="font-mono-code font-bold text-[#172554]">
+                {formatTime12h(nextUpcomingBooking.startTime)} - {formatTime12h(nextUpcomingBooking.endTime)}
+              </span>
+              <span className="text-[11px] font-semibold text-[#B45309]">
+                ({normalizeDateStr(nextUpcomingBooking.bookingDate) === todayStr ? 'Today' : nextUpcomingBooking.bookingDate})
+              </span>
+            </div>
+            <button
+              type="button"
+              disabled={startingBookingId === (nextUpcomingBooking.bookingId || nextUpcomingBooking.id)}
+              onClick={() => handleCheckInAndStart(nextUpcomingBooking)}
+              className="px-3 py-1 rounded-lg bg-[#16A34A] hover:bg-[#15803D] text-white font-bold text-[11px] inline-flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-50"
+            >
+              <Play className="w-3 h-3 fill-current" />
+              <span>{startingBookingId === (nextUpcomingBooking.bookingId || nextUpcomingBooking.id) ? 'Starting...' : 'Check-In Next Player'}</span>
+            </button>
+          </div>
+        )}
+
         {/* Schedule Table */}
         <div className="overflow-x-auto rounded-xl border border-[#E2E8F0]">
           <table className="w-full text-left border-collapse text-xs">
@@ -632,16 +762,21 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
                 </tr>
               ) : (
                 filteredBookings.map((b) => {
-                  const isToday = b.bookingDate === todayStr;
-                  const isConfirmed = b.status === 'CONFIRMED';
-                  const isActive = b.status === 'ACTIVE';
-                  const isStarting = startingBookingId === b.bookingId;
+                  const isToday = normalizeDateStr(b.bookingDate) === todayStr;
+                  const isConfirmed = (b.status || 'CONFIRMED').toUpperCase() === 'CONFIRMED';
+                  const isActive = (b.status || '').toUpperCase() === 'ACTIVE';
+                  const isStarting = startingBookingId === (b.bookingId || b.id);
+                  const isNextToPlay = isConfirmed && (b.bookingId || b.id) === (nextUpcomingBooking?.bookingId || nextUpcomingBooking?.id);
 
                   return (
                     <tr
-                      key={b.bookingId}
+                      key={b.bookingId || b.id}
                       className={`hover:bg-[#F8FAFC] transition-colors font-medium text-[#0F172A] ${
-                        isActive ? 'bg-[#F0FDF4]/30' : ''
+                        isActive
+                          ? 'bg-[#F0FDF4]/30 border-l-4 border-l-[#16A34A]'
+                          : isNextToPlay
+                          ? 'bg-[#FFF7ED]/35 border-l-4 border-l-[#EA580C]'
+                          : ''
                       }`}
                     >
                       {/* Station */}
@@ -666,8 +801,15 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
 
                       {/* Customer */}
                       <td className="py-3 px-4">
-                        <div>
-                          <div className="font-bold text-[#0F172A]">{b.customerName}</div>
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-[#0F172A]">{b.customerName}</span>
+                            {isNextToPlay && (
+                              <span className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wider text-[#EA580C] bg-[#FFF7ED] border border-[#FDBA74] px-1.5 py-0.2 rounded-md shadow-2xs">
+                                ⭐ Next to Play
+                              </span>
+                            )}
+                          </div>
                           {b.phoneNumber && (
                             <div className="text-[11px] text-[#64748B] font-mono-code flex items-center gap-1">
                               <span>📞</span>
@@ -679,17 +821,20 @@ export const AdvanceBookingsManager: React.FC<AdvanceBookingsManagerProps> = ({
 
                       {/* Time Window */}
                       <td className="py-3 px-4">
-                        <div className="font-mono-code">
-                          <div className="font-bold text-[#172554] flex items-center gap-1.5">
+                        <div className="space-y-1">
+                          <div className="font-mono-code font-bold text-[#172554] flex items-center gap-1.5">
                             <span>{formatTime12h(b.startTime)} - {formatTime12h(b.endTime)}</span>
                             <span className="text-[10px] text-[#64748B] font-normal font-sans">({b.durationMinutes}m)</span>
                           </div>
-                          <div className="text-[11px] text-[#64748B] font-sans">
-                            {isToday ? (
-                              <span className="text-[#EA580C] font-semibold">Today</span>
-                            ) : (
-                              new Date(b.bookingDate).toLocaleDateString([], { month: 'short', day: 'numeric', weekday: 'short' })
-                            )}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[11px] text-[#64748B]">
+                              {isToday ? (
+                                <span className="text-[#EA580C] font-semibold">Today</span>
+                              ) : (
+                                new Date(b.bookingDate).toLocaleDateString([], { month: 'short', day: 'numeric', weekday: 'short' })
+                              )}
+                            </span>
+                            {getTimeBadge(b)}
                           </div>
                         </div>
                       </td>

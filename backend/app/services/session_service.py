@@ -194,9 +194,13 @@ async def _validate_no_advance_booking_conflict(
     Guarantees that a walk-in / on-demand session starting now on target_device
     does not collide with an upcoming confirmed advance booking reservation.
     """
-    b_stmt = select(AdvanceBookingRecord).where(
-        AdvanceBookingRecord.station_id == target_device.upper(),
-        AdvanceBookingRecord.status == "CONFIRMED",
+    b_stmt = (
+        select(AdvanceBookingRecord)
+        .where(
+            func.upper(AdvanceBookingRecord.station_id) == target_device.upper(),
+            AdvanceBookingRecord.status == "CONFIRMED",
+        )
+        .with_for_update()
     )
     b_records = (await db.execute(b_stmt)).scalars().all()
     if not b_records:
@@ -216,14 +220,13 @@ async def _validate_no_advance_booking_conflict(
         if not eb_start or not eb_end:
             continue
 
-        # Check collision: session starts before booking ends AND session ends after booking starts
-        if now_local < eb_end and session_end > eb_start:
+        # Overlap: max(now_local, eb_start) < min(session_end, eb_end)
+        if max(now_local, eb_start) < min(session_end, eb_end):
             max_window = max(0, int((eb_start - now_local).total_seconds() / 60))
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
-                    f"Cannot start {allocated_minutes}m session on {target_device}. "
-                    f"Station is reserved for advance booking at {eb.start_time} for {eb.customer_name} "
+                    f"Cannot check-in: Overlaps with an advance booking scheduled at {eb.start_time} for {eb.customer_name} "
                     f"(Maximum available window: {max_window} mins)."
                 ),
             )

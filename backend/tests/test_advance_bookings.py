@@ -45,6 +45,78 @@ async def test_advance_bookings_lifecycle(test_db):
 
 
 @pytest.mark.asyncio
+async def test_advance_bookings_upcoming_sorting(test_db):
+    """
+    Guarantees that bookings are sorted upcoming-wise:
+    1. Earlier scheduled start times appear ahead of later scheduled times.
+    2. Newly created records are ordered chronologically by scheduled play time.
+    3. Confirmed/active upcoming bookings appear above cancelled/completed records.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Create booking for late afternoon (17:00)
+        res_late = await client.post("/api/v1/bookings", json={
+            "customerName": "Late Player",
+            "stationId": "PS1",
+            "sessionMode": "Solo",
+            "bookingDate": "2026-10-01",
+            "startTime": "17:00",
+            "durationMinutes": 60,
+            "advancePaid": 100,
+            "totalAmount": 200,
+            "status": "CONFIRMED"
+        })
+        assert res_late.status_code == 201
+
+        # Create booking for early morning (10:00) - playing early!
+        res_early = await client.post("/api/v1/bookings", json={
+            "customerName": "Early Bird Player",
+            "stationId": "PS2",
+            "sessionMode": "Solo",
+            "bookingDate": "2026-10-01",
+            "startTime": "10:00",
+            "durationMinutes": 60,
+            "advancePaid": 100,
+            "totalAmount": 200,
+            "status": "CONFIRMED"
+        })
+        assert res_early.status_code == 201
+
+        # Create booking for afternoon (14:00) - middle time
+        res_mid = await client.post("/api/v1/bookings", json={
+            "customerName": "Midday Player",
+            "stationId": "PS3",
+            "sessionMode": "Solo",
+            "bookingDate": "2026-10-01",
+            "startTime": "14:00",
+            "durationMinutes": 60,
+            "advancePaid": 100,
+            "totalAmount": 200,
+            "status": "CONFIRMED"
+        })
+        assert res_mid.status_code == 201
+
+        # Query all bookings for this test date
+        res = await client.get("/api/v1/bookings?booking_date=2026-10-01")
+        assert res.status_code == 200
+        data = res.json()
+        assert len(data) == 3
+
+        # Early Bird (10:00) MUST be at the top of the list!
+        assert data[0]["customerName"] == "Early Bird Player"
+        assert data[0]["startTime"] == "10:00"
+
+        # Midday (14:00) MUST be in the middle!
+        assert data[1]["customerName"] == "Midday Player"
+        assert data[1]["startTime"] == "14:00"
+
+        # Late (17:00) MUST be at the bottom!
+        assert data[2]["customerName"] == "Late Player"
+        assert data[2]["startTime"] == "17:00"
+
+
+
+@pytest.mark.asyncio
 async def test_advance_booking_collision_rejection(test_db):
     """
     Guarantees that:

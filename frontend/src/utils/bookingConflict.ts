@@ -3,7 +3,7 @@
  * for Vanya Gaming Lounge Advance Bookings & Walk-in Sessions.
  */
 
-import { AdvanceBooking } from '../store/loungeStore';
+import type { AdvanceBooking } from '../store/loungeStore';
 
 export interface TimeInterval {
   start: Date;
@@ -416,5 +416,78 @@ export function validateNewBooking(
   }
 
   return { hasConflict: false };
+}
+
+/**
+ * Sorts advance bookings in upcoming chronological order:
+ * 1. Active (currently in session) and Confirmed (upcoming scheduled) appear first.
+ *    Customers who will play early appear at the very top of the list (earliest play time first).
+ * 2. Completed / Cancelled bookings appear at the bottom.
+ * 3. Ties in play time are broken deterministically by station ID or creation time.
+ */
+export function sortBookingsUpcomingWise<T extends {
+  bookingDate: string;
+  startTime: string;
+  status?: string;
+  createdAt?: string;
+  stationId?: string;
+  id?: string;
+  bookingId?: string;
+}>(bookings: T[]): T[] {
+  if (!Array.isArray(bookings) || bookings.length <= 1) {
+    return Array.isArray(bookings) ? [...bookings] : [];
+  }
+
+  return [...bookings].sort((a, b) => {
+    const statusA = (a.status || 'CONFIRMED').toUpperCase().trim();
+    const statusB = (b.status || 'CONFIRMED').toUpperCase().trim();
+
+    // Priority Groups:
+    // 1 = Active / In-progress (currently playing)
+    // 2 = Confirmed (upcoming scheduled to play)
+    // 3 = Completed
+    // 4 = Cancelled / Expired
+    const getGroup = (st: string) => {
+      if (st === 'ACTIVE') return 1;
+      if (st === 'CONFIRMED') return 2;
+      if (st === 'COMPLETED') return 3;
+      return 4;
+    };
+
+    const groupA = getGroup(statusA);
+    const groupB = getGroup(statusB);
+
+    if (groupA !== groupB) {
+      return groupA - groupB;
+    }
+
+    // Within the same group:
+    const timeA = parseBookingDateTime(a.bookingDate, a.startTime).getTime();
+    const timeB = parseBookingDateTime(b.bookingDate, b.startTime).getTime();
+
+    // For upcoming active/confirmed:
+    // Earliest start time comes first (at the top of the list)
+    if (groupA <= 2) {
+      if (timeA !== timeB) {
+        return timeA - timeB;
+      }
+    } else {
+      // For completed/cancelled: most recent first
+      if (timeA !== timeB) {
+        return timeB - timeA;
+      }
+    }
+
+    // Tie-breaker: Station ID, then creation timestamp
+    const stA = (a.stationId || '').toUpperCase();
+    const stB = (b.stationId || '').toUpperCase();
+    if (stA !== stB) {
+      return stA.localeCompare(stB);
+    }
+
+    const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return (isNaN(createdA) ? 0 : createdA) - (isNaN(createdB) ? 0 : createdB);
+  });
 }
 

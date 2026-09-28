@@ -529,6 +529,113 @@ async def test_admin_walkin_cafe_standalone_order_by_station_uuid_and_settlement
         assert float(bill["orders_charge"]) == float(item["price"]) * 2
 
 
+@pytest.mark.asyncio
+async def test_delete_kitchen_order_and_inventory_restoration(orders_test_db):
+    """
+    Verify deleting/rejecting an order removes it permanently from kitchen orders
+    and restores inventory stock in real-time.
+    """
+    from app.core.security import create_admin_token
+    transport = ASGITransport(app=app)
+    headers = {"Authorization": f"Bearer {create_admin_token()}"}
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+
+        # 1. Fetch menu item to get initial stock
+        menu_res = await client.get("/api/v1/admin/menu", headers=headers)
+        assert menu_res.status_code == 200
+        item = menu_res.json()[0]
+        initial_stock = item["stock"]
+
+        # 2. Place food order for Walk-in CAFE
+        order_res = await client.post(
+            "/api/v1/admin/orders/station-order",
+            headers=headers,
+            json={
+                "station_id": "Walk-in CAFE",
+                "customer_name": "Reject Test Customer",
+                "items": [{"menu_item_id": item["id"], "quantity": 2}],
+            },
+        )
+        assert order_res.status_code == 201
+        order_id = order_res.json()["id"]
+
+        # 3. Verify stock deducted by 2 upon placement
+        menu_res_deducted = await client.get("/api/v1/admin/menu", headers=headers)
+        curr_item = next(m for m in menu_res_deducted.json() if m["id"] == item["id"])
+        assert curr_item["stock"] == initial_stock - 2
+
+        # 4. Delete / Reject order via DELETE /admin/kitchen/orders/{order_id}
+        del_res = await client.delete(
+            f"/api/v1/admin/kitchen/orders/{order_id}",
+            headers=headers,
+        )
+        assert del_res.status_code == 200
+
+        # 5. Verify stock restored to initial stock
+        menu_res_restored = await client.get("/api/v1/admin/menu", headers=headers)
+        restored_item = next(m for m in menu_res_restored.json() if m["id"] == item["id"])
+        assert restored_item["stock"] == initial_stock
+
+        # 7. Verify order is gone from GET /admin/kitchen/orders
+        kitchen_res = await client.get("/api/v1/admin/kitchen/orders", headers=headers)
+        assert kitchen_res.status_code == 200
+        assert not any(o["id"] == order_id for o in kitchen_res.json())
+
+
+@pytest.mark.asyncio
+async def test_delete_cafe_tab_deletes_orders_and_sessions(orders_test_db):
+    """
+    Verify deleting a Walk-in CAFE tab removes all orders and cancels sessions in real-time.
+    """
+    from app.core.security import create_admin_token
+    transport = ASGITransport(app=app)
+    headers = {"Authorization": f"Bearer {create_admin_token()}"}
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+
+        # 1. Menu item
+        menu_res = await client.get("/api/v1/admin/menu", headers=headers)
+        item = menu_res.json()[0]
+
+        # 2. Place Walk-in CAFE order for Tab Customer
+        cust_name = "Tab Delete Test Gamer"
+        order_res = await client.post(
+            "/api/v1/admin/orders/station-order",
+            headers=headers,
+            json={
+                "station_id": "Walk-in CAFE",
+                "customer_name": cust_name,
+                "items": [{"menu_item_id": item["id"], "quantity": 1}],
+            },
+        )
+        assert order_res.status_code == 201
+        order_id = order_res.json()["id"]
+
+        # 3. Verify it shows up in kitchen orders and fleet matrix
+        k_res = await client.get("/api/v1/admin/kitchen/orders", headers=headers)
+        assert any(o["id"] == order_id for o in k_res.json())
+
+        m_res = await client.get("/api/v1/admin/fleet/matrix", headers=headers)
+        assert any(s["customer_name"] == cust_name for s in m_res.json().get("cafe_sessions", []))
+
+        # 4. Delete the tab via POST /api/v1/admin/cafe/tab/delete
+        del_tab_res = await client.post(
+            "/api/v1/admin/cafe/tab/delete",
+            headers=headers,
+            json={"customer_name": cust_name},
+        )
+        assert del_tab_res.status_code == 200
+        assert del_tab_res.json()["deleted_orders_count"] >= 1
+
+        # 5. Verify order is gone from GET /admin/kitchen/orders
+        k_res_after = await client.get("/api/v1/admin/kitchen/orders", headers=headers)
+        assert not any(o["id"] == order_id for o in k_res_after.json())
+
+        # 6. Verify session is no longer active in fleet matrix
+        m_res_after = await client.get("/api/v1/admin/fleet/matrix", headers=headers)
+        assert not any(s["customer_name"] == cust_name for s in m_res_after.json().get("cafe_sessions", []))
+
+
+
 
 
 

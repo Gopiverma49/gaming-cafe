@@ -251,7 +251,7 @@ export const StationFoodOrderModal: React.FC<StationFoodOrderModalProps> = ({
                   type="text"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder={isCafe ? "Enter customer / guest name (e.g. Rahul, John)..." : "Customer / Guest name..."}
+                  placeholder={isCafe ? "Enter customer / guest name..." : "Customer / Guest name..."}
                   className="w-full pl-9 pr-3 py-2 bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl text-xs font-semibold text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C] focus:bg-white transition-all"
                 />
               </div>

@@ -27,7 +27,6 @@ import {
   XCircle,
   Coffee,
   Plus,
-  Check,
   X,
 } from 'lucide-react';
 import {
@@ -38,19 +37,23 @@ import {
 } from '../types';
 import {
   fetchStationMatrix,
+  fetchKitchenOrders,
   startCategorySessionApi,
   extendSessionApi,
   cancelCustomerSessionApi,
   updateKitchenOrderStatus,
+  deleteKitchenOrder,
+  deleteCafeCustomerTabApi,
 } from '../api';
 import { useNotificationStore } from '../store/notificationStore';
 import { useLoungeStore } from '../store/loungeStore';
 import { POLL_INTERVALS, DEFAULT_HOURLY_RATE } from '../constants';
 import {
-  getNextBookingForStation,
+  calculateNextAvailableSlot,
   validateWalkInDuration,
   formatTime12h,
-} from '../utils/bookingConflict';
+} from '../lib/stationCollisionEngine';
+import { getNextBookingForStation } from '../utils/bookingConflict';
 import { OrderedReceiptItem } from './SettleInvoiceModal';
 
 interface ConsoleMatrixDashboardProps {
@@ -86,40 +89,6 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
     setExpandedOrdersMap((prev) => ({ ...prev, [orderId]: !prev[orderId] }));
   };
 
-  const handleAcceptOrder = async (orderId: string, customerName?: string) => {
-    updateInSeatOrderStatus(orderId, 'preparing');
-    try {
-      await updateKitchenOrderStatus(orderId, 'PREPARING');
-    } catch {}
-    queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
-    queryClient.invalidateQueries({ queryKey: ['station-matrix'] });
-    queryClient.invalidateQueries({ queryKey: ['stations-live'] });
-    addNotification('FOOD_ORDER', 'Order Accepted', `Order for ${customerName || 'customer'} is now preparing.`);
-  };
-
-  const handleRejectOrder = async (orderId: string, customerName?: string) => {
-    updateInSeatOrderStatus(orderId, 'rejected');
-    try {
-      await updateKitchenOrderStatus(orderId, 'CANCELLED');
-    } catch {}
-    queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
-    queryClient.invalidateQueries({ queryKey: ['station-matrix'] });
-    queryClient.invalidateQueries({ queryKey: ['stations-live'] });
-    queryClient.invalidateQueries({ queryKey: ['admin-menu'] });
-    addNotification('SYSTEM', 'Order Rejected', `Order for ${customerName || 'customer'} rejected and excluded from bill.`);
-  };
-
-  const handleDeliverOrder = async (orderId: string) => {
-    updateInSeatOrderStatus(orderId, 'delivered');
-    try {
-      await updateKitchenOrderStatus(orderId, 'SERVED');
-    } catch {}
-    queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
-    queryClient.invalidateQueries({ queryKey: ['station-matrix'] });
-    queryClient.invalidateQueries({ queryKey: ['stations-live'] });
-    addNotification('FOOD_ORDER', 'Order Delivered', `Order marked as served / delivered.`);
-  };
-
   // Selected duration per cell: map key `${modeId}-${stationId}` -> duration_minutes
   const [selectedDurations, setSelectedDurations] = useState<Record<string, number>>({});
   // Optional customer name per cell: map key `${modeId}-${stationId}` -> name
@@ -134,6 +103,101 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
   const [focusedCellKey, setFocusedCellKey] = useState<string | null>(null);
   // Selected customer for Walk-in CAFE multi-customer tabs
   const [selectedCafeCustomer, setSelectedCafeCustomer] = useState<string | null>(null);
+  // Dismissed customer names tracking for instantaneous deletion
+  const [dismissedCafeCustomers, setDismissedCafeCustomers] = useState<Set<string>>(new Set());
+
+  // Kitchen orders query for live synchronization and order cancellation
+  const { data: kitchenOrders = [] } = useQuery<Order[]>({
+    queryKey: ['kitchen-orders'],
+    queryFn: fetchKitchenOrders,
+    refetchInterval: POLL_INTERVALS.KITCHEN_BADGE,
+  });
+
+  const handleDeleteCafeCustomer = async (c: {
+    name: string;
+    orders: any[];
+    backendSession?: MatrixSession;
+  }) => {
+    const normName = c.name.trim().toLowerCase();
+
+    // 1. Instantly hide locally (0ms)
+    setDismissedCafeCustomers((prev) => new Set(prev).add(normName));
+    if (selectedCafeCustomer?.trim().toLowerCase() === normName) {
+      setSelectedCafeCustomer(null);
+    }
+
+    // 2. Clear from Zustand inSeatOrders
+    clearStationInSeatOrders('Walk-in CAFE', c.name);
+
+    // 3. Immediately purge from React Query kitchen-orders cache
+    queryClient.setQueryData<Order[]>(['kitchen-orders'], (old) =>
+      (old || []).filter(
+        (ko) => ko.customer_name?.trim().toLowerCase() !== normName
+      )
+    );
+
+    // 4. Primary: Permanently delete/cancel the customer tab in the DB
+    try {
+      await deleteCafeCustomerTabApi(c.name, c.backendSession?.session_id);
+    } catch (err) {
+      console.warn('[DeleteCustomer] deleteCafeCustomerTabApi error:', err);
+    }
+
+    // 5. Secondary fallback: Cancel / delete individual orders and session in DB
+    const cancelOrderPromises = (c.orders || []).map(async (ord) => {
+      if (ord.orderId) {
+        updateInSeatOrderStatus(ord.orderId, 'cancelled');
+        try {
+          await deleteKitchenOrder(ord.orderId);
+        } catch {
+          try {
+            await updateKitchenOrderStatus(ord.orderId, 'CANCELLED');
+          } catch {}
+        }
+      }
+    });
+
+    const activeKitchenOrders = (kitchenOrders || []).filter(
+      (ko) =>
+        ko.customer_name?.trim().toLowerCase() === normName &&
+        String(ko.status).toUpperCase() !== 'CANCELLED' &&
+        String(ko.status).toUpperCase() !== 'REJECTED'
+    );
+    const cancelKitchenPromises = activeKitchenOrders.map(async (ko) => {
+      try {
+        await deleteKitchenOrder(String(ko.id));
+      } catch {
+        try {
+          await updateKitchenOrderStatus(String(ko.id), 'CANCELLED');
+        } catch {}
+      }
+    });
+
+    const cancelSessionPromise = (async () => {
+      if (c.backendSession?.session_id) {
+        try {
+          await cancelCustomerSessionApi(c.backendSession.session_id);
+        } catch {}
+      }
+    })();
+
+    await Promise.allSettled([...cancelOrderPromises, ...cancelKitchenPromises, cancelSessionPromise]);
+
+    // 6. Invalidate React Queries to ensure 100% DB freshness
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] }),
+      queryClient.invalidateQueries({ queryKey: ['station-matrix'] }),
+      queryClient.invalidateQueries({ queryKey: ['stations-live'] }),
+      queryClient.invalidateQueries({ queryKey: ['customer-sessions'] }),
+      queryClient.invalidateQueries({ queryKey: ['admin-menu'] }),
+    ]);
+
+    addNotification(
+      'SYSTEM',
+      'Guest Tab Deleted',
+      `Customer "${c.name}" was deleted from database.`
+    );
+  };
 
   // Live seconds ticker for countdown timers
   const [currentTime, setCurrentTime] = useState(Date.now());
@@ -489,6 +553,13 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
 
                   const isFlashing = flashingStationId === station.name.toUpperCase();
 
+                  const slotInfo = calculateNextAvailableSlot(
+                    station.name,
+                    activeSession ? [activeSession] : [],
+                    bookings,
+                    new Date(currentTime)
+                  );
+
                   const stationPendingCount = (inSeatOrders || []).filter(
                     (o) => o?.stationId?.toUpperCase() === station.name.toUpperCase() && o?.status === 'pending'
                   ).length;
@@ -536,18 +607,31 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                           </div>
                         </div>
 
-                        {/* Common Station Availability Header Pill */}
-                        {!hasActive || !activeSession || !availInfo ? (
+                        {/* Real-Time Next Available Slot Indicator (Card Header) */}
+                        {slotInfo.status === 'IDLE_FREE' ? (
                           <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#F1F5F9] border border-[#E2E8F0]">
                             <div className="flex items-center gap-2">
                               <span className="w-2 h-2 rounded-full bg-[#15803D] shrink-0" />
                               <span className="font-bold text-xs text-[#15803D]">
-                                Available Now
+                                {slotInfo.displayText}
                               </span>
                             </div>
                             <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#15803D]">
                               <CheckCircle2 className="w-3 h-3 text-[#15803D]" />
                               <span>Ready</span>
+                            </span>
+                          </div>
+                        ) : slotInfo.status === 'IDLE_UPCOMING_BOOKING' ? (
+                          <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#FFFBEB] border border-[#FDE68A]">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="w-2 h-2 rounded-full bg-[#D97706] shrink-0" />
+                              <span className="font-bold text-xs text-[#B45309] truncate">
+                                {slotInfo.displayText}
+                              </span>
+                            </div>
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#B45309] shrink-0">
+                              <CalendarClock className="w-3 h-3 text-[#D97706]" />
+                              <span>Reserved</span>
                             </span>
                           </div>
                         ) : (
@@ -556,20 +640,22 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                               <div className="flex items-center gap-1.5 min-w-0">
                                 <Clock className="w-3.5 h-3.5 text-[#EA580C] shrink-0" />
                                 <span className="font-bold text-xs text-[#172554] truncate">
-                                  Available at {availInfo.timeStr}
+                                  {slotInfo.displayText}
                                 </span>
                               </div>
-                              <span
-                                className={`text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0 border ${
-                                  availInfo.isOvertime
-                                    ? 'bg-[#FEE2E2] text-[#B91C1C] border-[#FECACA]'
-                                    : 'bg-[#FFEDD5] text-[#C2410C] border-[#FED7AA]'
-                                }`}
-                              >
-                                {availInfo.remainingBadge}
-                              </span>
+                              {availInfo && (
+                                <span
+                                  className={`text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0 border ${
+                                    availInfo.isOvertime
+                                      ? 'bg-[#FEE2E2] text-[#B91C1C] border-[#FECACA]'
+                                      : 'bg-[#FFEDD5] text-[#C2410C] border-[#FED7AA]'
+                                  }`}
+                                >
+                                  {availInfo.remainingBadge}
+                                </span>
+                              )}
                             </div>
-                            {activeSession.customer_name && (
+                            {activeSession && activeSession.customer_name && (
                               <div className="text-[10px] text-[#64748B] truncate flex items-center gap-1.5">
                                 <span className="text-[#64748B]">Player:</span>
                                 <span className="text-[#0F172A] font-semibold truncate">{activeSession.customer_name}</span>
@@ -759,38 +845,15 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                                 <div key={ord.orderId} className="p-1.5 rounded-lg bg-white border border-[#E2E8F0] space-y-1 text-[11px]">
                                                   <div className="flex items-center justify-between">
                                                     <span className="font-semibold text-[#0F172A]">{ord.customerName}</span>
-                                                    {ord.status === 'pending' || (ord.status as any) === 'queued' || (ord.status as any) === 'QUEUED' ? (
-                                                      <div className="flex items-center gap-1">
-                                                        <button
-                                                          type="button"
-                                                          onClick={() => handleAcceptOrder(ord.orderId, ord.customerName)}
-                                                          className="px-1.5 py-0.5 rounded bg-[#DCFCE7] hover:bg-[#BBF7D0] text-[#15803D] font-bold text-[9px] flex items-center gap-0.5 border border-[#86EFAC] cursor-pointer"
-                                                        >
-                                                          <Check className="w-2.5 h-2.5" />
-                                                          <span>Accept</span>
-                                                        </button>
-                                                        <button
-                                                          type="button"
-                                                          onClick={() => handleRejectOrder(ord.orderId, ord.customerName)}
-                                                          className="px-1.5 py-0.5 rounded bg-[#FEE2E2] hover:bg-[#FECACA] text-[#DC2626] font-bold text-[9px] flex items-center gap-0.5 border border-[#FCA5A5] cursor-pointer"
-                                                        >
-                                                          <X className="w-2.5 h-2.5" />
-                                                          <span>Reject</span>
-                                                        </button>
-                                                      </div>
-                                                    ) : ord.status === 'preparing' ? (
-                                                      <button
-                                                        type="button"
-                                                        onClick={() => handleDeliverOrder(ord.orderId)}
-                                                        className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#EFF6FF] text-[#1D4ED8] hover:bg-[#DBEAFE] border border-[#BFDBFE] cursor-pointer"
-                                                      >
-                                                        Mark Delivered
-                                                      </button>
-                                                    ) : (
-                                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
-                                                        ✓ Delivered
-                                                      </span>
-                                                    )}
+                                                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
+                                                      ord.status === 'delivered'
+                                                        ? 'bg-[#DCFCE7] text-[#15803D]'
+                                                        : ord.status === 'preparing'
+                                                        ? 'bg-[#EFF6FF] text-[#1D4ED8]'
+                                                        : 'bg-[#FEF3C7] text-[#B45309]'
+                                                    }`}>
+                                                      {ord.status}
+                                                    </span>
                                                   </div>
                                                   <div className="text-[10px] text-[#64748B]">
                                                     {ord.items.map((i) => `${i.qty}x ${i.name}`).join(', ')}
@@ -936,7 +999,7 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                           </label>
                                           <input
                                             type="text"
-                                            placeholder="Walk-in Gamer"
+                                            placeholder="Customer Name"
                                             value={customerNames[vrCellKey] || ''}
                                             onChange={(e) =>
                                               setCustomerNames((prev) => ({
@@ -1016,8 +1079,18 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                           </div>
                                         </div>
 
+                                        {/* Inline Warning directly above action button */}
+                                        {!vrDurationValidation.isValid && (
+                                          <div
+                                            style={{ color: '#dc2626', fontWeight: 600, fontSize: '13px' }}
+                                            className="leading-snug"
+                                          >
+                                            {vrDurationValidation.reason}
+                                          </div>
+                                        )}
+
                                         <button
-                                          disabled={isInitiating || !vrDurationValidation.allowed}
+                                          disabled={isInitiating || !vrDurationValidation.isValid}
                                           onClick={() =>
                                             startSessionMutation.mutate({
                                               stationId: 'VR1',
@@ -1029,14 +1102,14 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                             })
                                           }
                                           className={`sm:w-44 py-3 px-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-98 disabled:opacity-50 shrink-0 ${
-                                            !vrDurationValidation.allowed
+                                            !vrDurationValidation.isValid
                                               ? 'bg-[#94A3B8] text-white cursor-not-allowed'
                                               : 'bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] cursor-pointer'
                                           }`}
                                         >
                                           {isInitiating ? (
                                             <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                          ) : !vrDurationValidation.allowed ? (
+                                          ) : !vrDurationValidation.isValid ? (
                                             <span>🚫 Reserved @ {formatTime12h(vrNextBooking?.booking.startTime || '')}</span>
                                           ) : (
                                             <>
@@ -1046,14 +1119,6 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                           )}
                                         </button>
                                       </div>
-
-                                      {/* Collision Warning Banner */}
-                                      {!vrDurationValidation.allowed && (
-                                        <div className="p-2.5 rounded-xl bg-[#FEF2F2] border border-[#FECACA] text-[#B91C1C] text-[11px] font-semibold flex items-start gap-2 animate-in fade-in">
-                                          <AlertTriangle className="w-4 h-4 text-[#B91C1C] shrink-0 mt-0.5" />
-                                          <span>{vrDurationValidation.reason}</span>
-                                        </div>
-                                      )}
                                     </div>
                                   );
                                 })()}
@@ -1256,42 +1321,16 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                                 <span className="text-[#0F172A] truncate font-display">{ord.customerName}</span>
                                               </span>
 
-                                             {/* Status Action Buttons: Accept / Reject for pending, or Mark Delivered for preparing */}
-                                             {ord.status === 'pending' || (ord.status as any) === 'queued' || (ord.status as any) === 'QUEUED' ? (
-                                               <div className="flex items-center gap-1">
-                                                 <button
-                                                   type="button"
-                                                   onClick={() => handleAcceptOrder(ord.orderId, ord.customerName)}
-                                                   className="px-2 py-0.5 rounded-md bg-[#DCFCE7] hover:bg-[#BBF7D0] text-[#15803D] font-bold text-[9px] flex items-center gap-0.5 border border-[#86EFAC] transition-all cursor-pointer shadow-xs"
-                                                   title="Accept Order"
-                                                 >
-                                                   <Check className="w-2.5 h-2.5 text-[#15803D]" />
-                                                   <span>Accept</span>
-                                                 </button>
-                                                 <button
-                                                   type="button"
-                                                   onClick={() => handleRejectOrder(ord.orderId, ord.customerName)}
-                                                   className="px-2 py-0.5 rounded-md bg-[#FEE2E2] hover:bg-[#FECACA] text-[#DC2626] font-bold text-[9px] flex items-center gap-0.5 border border-[#FCA5A5] transition-all cursor-pointer shadow-xs"
-                                                   title="Reject Order (will not be billed)"
-                                                 >
-                                                   <X className="w-2.5 h-2.5 text-[#DC2626]" />
-                                                   <span>Reject</span>
-                                                 </button>
-                                               </div>
-                                             ) : ord.status === 'preparing' ? (
-                                               <button
-                                                 type="button"
-                                                 onClick={() => handleDeliverOrder(ord.orderId)}
-                                                 title="Mark order as delivered"
-                                                 className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#EFF6FF] text-[#1D4ED8] hover:bg-[#DBEAFE] border border-[#BFDBFE] cursor-pointer"
-                                               >
-                                                 Mark Delivered
-                                               </button>
-                                             ) : (
-                                               <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
-                                                 ✓ Delivered
-                                               </span>
-                                             )}
+                                              {/* Status Badge */}
+                                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
+                                                ord.status === 'delivered'
+                                                  ? 'bg-[#DCFCE7] text-[#15803D]'
+                                                  : ord.status === 'preparing'
+                                                  ? 'bg-[#EFF6FF] text-[#1D4ED8]'
+                                                  : 'bg-[#FEF3C7] text-[#B45309]'
+                                              }`}>
+                                                {ord.status}
+                                              </span>
                                             </div>
 
                                             {/* Item Summary line */}
@@ -1532,7 +1571,7 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                     </label>
                                     <input
                                       type="text"
-                                      placeholder="Walk-in Gamer"
+                                      placeholder="Customer Name"
                                       value={customerNames[cellKey] || ''}
                                       onChange={(e) =>
                                         setCustomerNames((prev) => ({
@@ -1617,17 +1656,19 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                   </div>
                                 </div>
 
-                                {/* Collision Warning Banner */}
-                                {!durationValidation.allowed && (
-                                  <div className="p-2.5 rounded-xl bg-[#FEF2F2] border border-[#FECACA] text-[#B91C1C] text-[11px] font-semibold flex items-start gap-2 animate-in fade-in">
-                                    <AlertTriangle className="w-4 h-4 text-[#B91C1C] shrink-0 mt-0.5" />
-                                    <span>{durationValidation.reason}</span>
+                                {/* Inline Warning directly above action button */}
+                                {!durationValidation.isValid && (
+                                  <div
+                                    style={{ color: '#dc2626', fontWeight: 600, fontSize: '13px' }}
+                                    className="leading-snug"
+                                  >
+                                    {durationValidation.reason}
                                   </div>
                                 )}
 
                                 {/* "Start [Mode]" Action Button (Disabled if Collision) */}
                                 <button
-                                  disabled={isInitiating || !durationValidation.allowed}
+                                  disabled={isInitiating || !durationValidation.isValid}
                                   onClick={() =>
                                     startSessionMutation.mutate({
                                       stationId: effectiveStationName,
@@ -1639,14 +1680,14 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                     })
                                   }
                                   className={`w-full py-2.5 px-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-98 disabled:opacity-50 ${
-                                    !durationValidation.allowed
+                                    !durationValidation.isValid
                                       ? 'bg-[#94A3B8] text-white cursor-not-allowed'
                                       : 'bg-[#172554] hover:bg-[#1E3A8A] text-[#FFFFFF] cursor-pointer'
                                   }`}
                                 >
                                   {isInitiating ? (
                                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                  ) : !durationValidation.allowed ? (
+                                  ) : !durationValidation.isValid ? (
                                     <span>🚫 Reserved @ {formatTime12h(nextBookingInfo?.booking.startTime || '')}</span>
                                   ) : (
                                     <>
@@ -1758,9 +1799,9 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                     (ko.station_name.toUpperCase().includes('CAFE') || ko.station_name.toUpperCase().includes('WALK'))
                   );
                   const isPendingOrPreparing = koStatus === 'QUEUED' || koStatus === 'PENDING' || koStatus === 'PREPARING';
-                  const isFreshWalkin = isStationCafe && isPendingOrPreparing;
+                  const isFreshWalkin = isStationCafe && isPendingOrPreparing && (!ko.session_id || cafeSessionIdSet.has(String(ko.session_id)));
 
-                  // Exclude historical served/closed orders from old sessions
+                  // Exclude historical served/closed orders from old or cancelled sessions
                   if (!hasActiveSession && !isFreshWalkin) {
                     return;
                   }
@@ -1852,15 +1893,19 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                   }
                 });
 
-                // Only show active customers with real orders, active sessions, or a bill
+                // Only show active customers with real orders, active sessions, or a bill (excluding dismissed tabs)
                 const customerEntries = Array.from(customerMap.values()).filter(
-                  (c) => c.orders.length > 0 || c.backendSession !== undefined || c.totalBill > 0
+                  (c) =>
+                    !dismissedCafeCustomers.has(c.name.trim().toLowerCase()) &&
+                    (c.orders.length > 0 || c.backendSession !== undefined || c.totalBill > 0)
                 );
                 const isCafeActive = customerEntries.length > 0;
 
                 // Active customer selection
                 const activeCustName = (
-                  selectedCafeCustomer && customerMap.has(selectedCafeCustomer)
+                  selectedCafeCustomer &&
+                  customerMap.has(selectedCafeCustomer) &&
+                  !dismissedCafeCustomers.has(selectedCafeCustomer.trim().toLowerCase())
                     ? selectedCafeCustomer
                     : customerEntries[0]?.name
                 ) || null;
@@ -1982,26 +2027,18 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                     </button>
                                     <button
                                       type="button"
-                                      title={`Dismiss tab for ${c.name}`}
-                                      onClick={(e) => {
+                                      title={`Delete tab for ${c.name}`}
+                                      onClick={async (e) => {
                                         e.stopPropagation();
-                                        clearStationInSeatOrders('Walk-in CAFE', c.name);
-                                        if (c.backendSession) {
-                                          cancelCustomerSessionApi(c.backendSession.session_id).catch(() => {});
-                                        }
-                                        if (selectedCafeCustomer === c.name) {
-                                          setSelectedCafeCustomer(null);
-                                        }
-                                        queryClient.invalidateQueries({ queryKey: ['station-matrix'] });
-                                        queryClient.invalidateQueries({ queryKey: ['kitchen-orders'] });
+                                        await handleDeleteCafeCustomer(c);
                                       }}
                                       className={`p-1.5 rounded-r-xl transition-colors cursor-pointer ${
                                         isSelected
-                                          ? 'text-white/70 hover:text-white hover:bg-black/10'
+                                          ? 'text-white/70 hover:text-white hover:bg-black/20'
                                           : 'text-[#9A3412]/60 hover:text-[#DC2626] hover:bg-[#FED7AA]'
                                       }`}
                                     >
-                                      <X className="w-3 h-3" />
+                                      <X className="w-3.5 h-3.5" />
                                     </button>
                                   </div>
                                 );
@@ -2094,41 +2131,8 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                       </div>
 
                                       <div className="flex items-center justify-between pt-1 border-t border-[#FED7AA]/30 text-[10px]">
-                                        {order.status === 'pending' || (order.status as any) === 'queued' || (order.status as any) === 'QUEUED' ? (
-                                          <div className="flex items-center gap-1.5">
-                                            <button
-                                              type="button"
-                                              onClick={() => handleAcceptOrder(order.orderId, order.customerName)}
-                                              className="px-2 py-0.5 rounded bg-[#DCFCE7] hover:bg-[#BBF7D0] text-[#15803D] font-bold text-[9px] flex items-center gap-1 border border-[#86EFAC] transition-all cursor-pointer shadow-xs"
-                                              title="Accept Order (moves to preparing)"
-                                            >
-                                              <Check className="w-2.5 h-2.5 text-[#15803D]" />
-                                              <span>Accept</span>
-                                            </button>
-                                            <button
-                                              type="button"
-                                              onClick={() => handleRejectOrder(order.orderId, order.customerName)}
-                                              className="px-2 py-0.5 rounded bg-[#FEE2E2] hover:bg-[#FECACA] text-[#DC2626] font-bold text-[9px] flex items-center gap-1 border border-[#FCA5A5] transition-all cursor-pointer shadow-xs"
-                                              title="Reject Order (will not be billed)"
-                                            >
-                                              <X className="w-2.5 h-2.5 text-[#DC2626]" />
-                                              <span>Reject</span>
-                                            </button>
-                                          </div>
-                                        ) : order.status === 'preparing' ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => handleDeliverOrder(order.orderId)}
-                                            className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#EFF6FF] text-[#1D4ED8] hover:bg-[#DBEAFE] border border-[#BFDBFE] cursor-pointer"
-                                          >
-                                            Mark Delivered
-                                          </button>
-                                        ) : (
-                                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#DCFCE7] text-[#15803D] border border-[#BBF7D0]">
-                                            ✓ Delivered
-                                          </span>
-                                        )}
-                                        <span className="font-bold text-[#15803D] font-mono-code">
+                                        <span className="text-[10px] text-[#64748B] font-medium">Order Total</span>
+                                        <span className="font-bold text-[#15803D] font-mono-code text-xs">
                                           ₹{Number(order.totalAmount || 0).toFixed(2)}
                                         </span>
                                       </div>
@@ -2159,7 +2163,7 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                               {hasPendingCafeOrders && (
                                 <div className="p-1.5 rounded-xl bg-[#FFFBEB] border border-[#FDE68A] text-[#B45309] text-[10px] font-bold flex items-center gap-1">
                                   <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-[#D97706]" />
-                                  <span>Accept/Reject pending order(s) before settling</span>
+                                  <span>Accept/Reject pending order(s) in Orders tab before settling</span>
                                 </div>
                               )}
 
@@ -2181,7 +2185,7 @@ export const ConsoleMatrixDashboard: React.FC<ConsoleMatrixDashboardProps> = ({
                                       addNotification(
                                         'SYSTEM',
                                         '⚠️ Action Required',
-                                        `Cannot settle invoice for ${activeCust?.name}: Please Accept or Reject every pending order first.`
+                                        `Cannot settle invoice for ${activeCust?.name}: Please Accept or Reject pending order(s) in the Orders tab first.`
                                       );
                                       return;
                                     }

@@ -4,8 +4,8 @@ from decimal import Decimal
 from typing import List, Optional
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
-from sqlalchemy import select, delete, or_, func
+from fastapi import APIRouter, Depends, Header, HTTPException, status, Query, Body
+from sqlalchemy import select, delete, or_, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -446,22 +446,52 @@ async def delete_station(
 
 
 @router.post("/sessions/check-in")
+@router.post("/station/checkin")
 async def admin_check_in(
     payload: CheckInRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """
     Station check-in handler. Acquires exclusive FOR UPDATE lock and starts ACTIVE session.
+    Enforces concurrency checks against upcoming confirmed advance bookings.
     """
+    target_station_id = payload.station_id
+    assigned_device_id = payload.device_id
+
+    # Resolve UUID if station_id was provided as a string or device name
+    if isinstance(target_station_id, str):
+        try:
+            target_station_id = uuid.UUID(target_station_id)
+        except (ValueError, TypeError):
+            # Lookup station by name (e.g. "Solo", "Multiplayer", "PS1", "Car Simulator")
+            stmt = select(Station).where(func.upper(Station.name) == target_station_id.strip().upper())
+            found_st = (await db.execute(stmt)).scalar_one_or_none()
+            if found_st:
+                target_station_id = found_st.id
+            else:
+                # If target_station_id is a physical device like 'PS1', 'PS2', 'PS3', 'VR1'
+                if not assigned_device_id and target_station_id.strip().upper() in ("PS1", "PS2", "PS3", "VR1"):
+                    assigned_device_id = target_station_id.strip().upper()
+                stmt_fallback = select(Station).where(func.upper(Station.name) == "SOLO")
+                fallback_st = (await db.execute(stmt_fallback)).scalar_one_or_none()
+                if fallback_st:
+                    target_station_id = fallback_st.id
+                else:
+                    first_st = (await db.execute(select(Station).limit(1))).scalar_one_or_none()
+                    if first_st:
+                        target_station_id = first_st.id
+                    else:
+                        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Station not found")
+
     session = await check_in(
         db=db,
-        station_id=payload.station_id,
+        station_id=target_station_id,
         allocated_minutes=payload.allocated_minutes or settings.DEFAULT_SESSION_DURATION_MINUTES,
         customer_name=payload.customer_name,
         customer_phone=payload.customer_phone,
         user_id=payload.user_id,
         tier_price=payload.tier_price,
-        device_id=payload.device_id,
+        device_id=assigned_device_id,
     )
     return {
         "message": "Station checked in successfully",
@@ -519,9 +549,13 @@ async def admin_checkout(
 
 
 @router.get("/kitchen/orders", response_model=List[OrderResponse])
-async def get_kitchen_orders(db: AsyncSession = Depends(get_db)):
+async def get_kitchen_orders(
+    include_cancelled: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
     """
     Fetch all kitchen orders across active swimlanes (QUEUED, PREPARING, SERVED).
+    Strictly excludes CANCELLED and REJECTED orders by default.
     """
     stmt = (
         select(Order)
@@ -529,8 +563,12 @@ async def get_kitchen_orders(db: AsyncSession = Depends(get_db)):
             selectinload(Order.items).selectinload(OrderItem.menu_item),
             selectinload(Order.session).selectinload(Session.station),
         )
-        .order_by(Order.created_at.desc())
     )
+    if not include_cancelled:
+        stmt = stmt.where(
+            Order.status.notin_([OrderStatus.CANCELLED.value, OrderStatus.REJECTED.value, "CANCELLED", "REJECTED"])
+        )
+    stmt = stmt.order_by(Order.created_at.desc())
     result = await db.execute(stmt)
     orders = result.scalars().all()
     return [serialize_order(o) for o in orders]
@@ -544,7 +582,7 @@ async def update_kitchen_order_status(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Updates KDS status (QUEUED ➔ PREPARING ➔ SERVED ➔ CANCELLED).
+    Updates KDS status (QUEUED ➔ PREPARING ➔ SERVED ➔ CANCELLED / REJECTED).
     Buffers WebSocket events post-commit.
     """
     stmt = (
@@ -580,25 +618,30 @@ async def update_kitchen_order_status(
     order.status = new_status
 
     # If this was a Walk-in CAFE session and all its orders are now cancelled/rejected, cancel the session immediately
-    if is_reject_or_cancel and order.session:
-        is_cafe_sess = (
-            (order.session.category_id and any(c in order.session.category_id.lower() for c in ("dine-in", "dine-out", "cafe")))
-            or (order.session.device_name and "cafe" in order.session.device_name.lower())
-            or (order.session.station_name and "cafe" in order.session.station_name.lower())
+    if is_reject_or_cancel and order.session_id:
+        active_other_stmt = select(Order.id).where(
+            Order.session_id == order.session_id,
+            Order.id != order.id,
+            Order.status.notin_([OrderStatus.CANCELLED.value, OrderStatus.REJECTED.value, "CANCELLED", "REJECTED"]),
         )
-        if is_cafe_sess:
-            other_active = [
-                o for o in (order.session.orders or [])
-                if o.id != order.id and o.status not in (OrderStatus.CANCELLED.value, "cancelled", "rejected")
-            ]
-            if not other_active:
-                order.session.status = SessionStatus.CANCELLED.value
-                buffer_ws_event(
-                    db,
-                    channel="admin",
-                    event_type="SESSION_CANCELLED",
-                    payload={"session_id": str(order.session.id), "station_name": "Walk-in CAFE"},
+        has_other_active = (await db.execute(active_other_stmt)).first() is not None
+        if not has_other_active:
+            sess = await db.get(Session, order.session_id)
+            if sess and sess.status == SessionStatus.ACTIVE.value:
+                is_cafe_sess = (
+                    (sess.category_id and any(c in sess.category_id.lower() for c in ("dine-in", "dine-out", "cafe")))
+                    or (sess.device_name and "cafe" in sess.device_name.lower())
+                    or (sess.station_name and "cafe" in sess.station_name.lower())
                 )
+                if is_cafe_sess:
+                    sess.status = SessionStatus.CANCELLED.value
+                    sess.ended_at = datetime.now(timezone.utc)
+                    buffer_ws_event(
+                        db,
+                        channel="admin",
+                        event_type="SESSION_CANCELLED",
+                        payload={"session_id": str(sess.id), "station_name": "Walk-in CAFE"},
+                    )
 
     customer_message = (
         "Order Accepted — Food is being prepared"
@@ -606,7 +649,7 @@ async def update_kitchen_order_status(
         else "Order Served"
         if new_status == OrderStatus.SERVED.value
         else "Order Rejected"
-        if new_status == OrderStatus.CANCELLED.value
+        if is_reject_or_cancel
         else f"Order {new_status}"
     )
 
@@ -641,6 +684,210 @@ async def update_kitchen_order_status(
     response_data = serialize_order(order)
     await db.commit()
     return response_data
+
+
+@router.delete("/kitchen/orders/{order_id}")
+@with_transaction_retry()
+async def delete_kitchen_order(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Permanently deletes or cancels an order from the database in real-time.
+    Restores inventory if PREPARING or SERVED.
+    If attached to Walk-in CAFE and no other active orders remain, cancels the session.
+    Broadcasts ORDER_DELETED and SESSION_CANCELLED real-time events.
+    """
+    stmt = (
+        select(Order)
+        .where(Order.id == order_id)
+        .options(
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
+            selectinload(Order.session).selectinload(Session.station),
+        )
+    )
+    res = await db.execute(stmt)
+    order = res.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+
+    # Restore inventory stock
+    for itm in order.items:
+        if itm.menu_item:
+            itm.menu_item.stock += itm.quantity
+
+    session_id = order.session_id
+    st_name = (
+        order.session.station.name
+        if (order.session and order.session.station)
+        else (order.session.station_name if order.session else "Desk")
+    )
+
+    # Delete order from database
+    await db.delete(order)
+    await db.flush()
+
+    # If this was attached to a Walk-in CAFE session, check if any other active orders remain
+    if session_id:
+        rem_stmt = select(Order.id).where(
+            Order.session_id == session_id,
+            Order.status.notin_([OrderStatus.CANCELLED.value, OrderStatus.REJECTED.value, "CANCELLED", "REJECTED"]),
+        )
+        remaining = (await db.execute(rem_stmt)).first()
+        if not remaining:
+            sess = await db.get(Session, session_id)
+            if sess and sess.status == SessionStatus.ACTIVE.value:
+                is_cafe_sess = (
+                    (sess.category_id and any(c in sess.category_id.lower() for c in ("dine-in", "dine-out", "cafe")))
+                    or (sess.device_name and "cafe" in sess.device_name.lower())
+                    or (sess.station_name and "cafe" in sess.station_name.lower())
+                )
+                if is_cafe_sess:
+                    sess.status = SessionStatus.CANCELLED.value
+                    sess.ended_at = datetime.now(timezone.utc)
+                    buffer_ws_event(
+                        db,
+                        channel="admin",
+                        event_type="SESSION_CANCELLED",
+                        payload={"session_id": str(sess.id), "station_name": "Walk-in CAFE"},
+                    )
+
+    buffer_ws_event(
+        db,
+        channel="admin",
+        event_type="ORDER_DELETED",
+        payload={"order_id": str(order_id), "station_name": st_name},
+    )
+    buffer_ws_event(
+        db,
+        channel="admin",
+        event_type="ORDER_STATUS_CHANGED",
+        payload={
+            "order_id": str(order_id),
+            "status": "CANCELLED",
+            "station_name": st_name,
+            "message": "Order Deleted / Rejected",
+        },
+    )
+    await db.commit()
+    return {"message": "Order deleted successfully", "order_id": str(order_id)}
+
+
+@router.delete("/cafe/tab/{customer_name}")
+@router.post("/cafe/tab/delete")
+@with_transaction_retry()
+async def delete_cafe_customer_tab(
+    customer_name: Optional[str] = None,
+    session_id: Optional[str] = None,
+    payload: Optional[dict] = Body(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Permanently deletes a Walk-in CAFE customer tab from the database in real-time:
+    1. Cancels active Walk-in CAFE sessions for this customer or session_id.
+    2. Restores inventory for preparing/served items.
+    3. Deletes or cancels all active orders for this customer / session.
+    4. Broadcasts ORDER_DELETED and SESSION_CANCELLED real-time events.
+    """
+    target_cust = customer_name
+    target_sess_id = session_id
+    if payload:
+        if not target_cust:
+            target_cust = payload.get("customer_name") or payload.get("name")
+        if not target_sess_id:
+            target_sess_id = payload.get("session_id")
+
+    clean_name = target_cust.strip() if target_cust else ""
+
+    # 1. Find matching active cafe sessions
+    sess_conditions = []
+    if target_sess_id:
+        try:
+            sess_uuid = uuid.UUID(str(target_sess_id).strip())
+            sess_conditions.append(Session.id == sess_uuid)
+        except ValueError:
+            pass
+    if clean_name:
+        sess_conditions.append(func.upper(Session.customer_name) == clean_name.upper())
+
+    matched_sessions: List[Session] = []
+    if sess_conditions:
+        sess_stmt = (
+            select(Session)
+            .where(
+                Session.status == SessionStatus.ACTIVE.value,
+                or_(*sess_conditions),
+                or_(
+                    Session.station_name.ilike("%cafe%"),
+                    Session.device_name.ilike("%cafe%"),
+                    Session.console_room.ilike("%cafe%"),
+                    Session.category_id.ilike("%cafe%"),
+                    Session.category_id.ilike("%dine%"),
+                ),
+            )
+            .options(selectinload(Session.station))
+        )
+        matched_sessions = (await db.execute(sess_stmt)).scalars().all()
+
+    session_ids = [s.id for s in matched_sessions]
+
+    # 2. Find matching orders
+    order_conditions = []
+    if session_ids:
+        order_conditions.append(Order.session_id.in_(session_ids))
+    if clean_name:
+        order_conditions.append(
+            and_(
+                func.upper(Order.customer_name) == clean_name.upper(),
+                Order.status.notin_([OrderStatus.CANCELLED.value, OrderStatus.REJECTED.value, "CANCELLED", "REJECTED"]),
+            )
+        )
+
+    orders_to_delete: List[Order] = []
+    if order_conditions:
+        order_stmt = (
+            select(Order)
+            .where(or_(*order_conditions))
+            .options(
+                selectinload(Order.items).selectinload(OrderItem.menu_item),
+                selectinload(Order.session),
+            )
+        )
+        orders_to_delete = (await db.execute(order_stmt)).scalars().all()
+
+    # 3. Restore inventory for preparing/served items and delete orders
+    for ord_obj in orders_to_delete:
+        if ord_obj.status in (OrderStatus.PREPARING.value, OrderStatus.SERVED.value, "PREPARING", "SERVED"):
+            for itm in ord_obj.items:
+                if itm.menu_item:
+                    itm.menu_item.stock += itm.quantity
+
+        buffer_ws_event(
+            db,
+            channel="admin",
+            event_type="ORDER_DELETED",
+            payload={"order_id": str(ord_obj.id), "station_name": "Walk-in CAFE"},
+        )
+        await db.delete(ord_obj)
+
+    # 4. Cancel active sessions
+    now_utc = datetime.now(timezone.utc)
+    for s in matched_sessions:
+        s.status = SessionStatus.CANCELLED.value
+        s.ended_at = now_utc
+        buffer_ws_event(
+            db,
+            channel="admin",
+            event_type="SESSION_CANCELLED",
+            payload={"session_id": str(s.id), "station_name": "Walk-in CAFE"},
+        )
+
+    await db.commit()
+    return {
+        "message": f"Walk-in CAFE tab for '{clean_name}' successfully deleted",
+        "deleted_orders_count": len(orders_to_delete),
+        "cancelled_sessions_count": len(matched_sessions),
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -620,6 +620,29 @@ async def cancel_customer_session(
     session.status = SessionStatus.CANCELLED.value
     session.ended_at = datetime.now(timezone.utc)
 
+    # Cancel any active orders on this session and restore stock
+    active_orders_stmt = (
+        select(Order)
+        .where(
+            Order.session_id == session.id,
+            Order.status.notin_([OrderStatus.CANCELLED.value, OrderStatus.REJECTED.value, "CANCELLED", "REJECTED"]),
+        )
+        .options(selectinload(Order.items).selectinload(OrderItem.menu_item))
+    )
+    active_orders = (await db.execute(active_orders_stmt)).scalars().all()
+    for ao in active_orders:
+        if ao.status in (OrderStatus.PREPARING.value, OrderStatus.SERVED.value, "PREPARING", "SERVED"):
+            for itm in ao.items:
+                if itm.menu_item:
+                    itm.menu_item.stock += itm.quantity
+        ao.status = OrderStatus.CANCELLED.value
+        buffer_ws_event(
+            db,
+            channel="admin",
+            event_type="ORDER_STATUS_CHANGED",
+            payload={"order_id": str(ao.id), "status": "CANCELLED", "station_name": session.station_name or "Station"},
+        )
+
     # Free physical device in devices registry
     if session.device_name:
         pdev = await db.get(PhysicalDevice, session.device_name)

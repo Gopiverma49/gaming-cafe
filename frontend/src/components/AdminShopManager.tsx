@@ -744,7 +744,7 @@ export const AdminShopManager: React.FC = () => {
                   type="text"
                   value={newItemName}
                   onChange={(e) => setNewItemName(e.target.value)}
-                  placeholder="e.g. Mountain Dew Game Fuel"
+                  placeholder="Enter item name..."
                   className="w-full px-3.5 py-2.5 bg-[#FFF7ED] border border-[#E2E8F0] rounded-xl text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EA580C]"
                   required
                 />
@@ -775,7 +775,7 @@ export const AdminShopManager: React.FC = () => {
                     min="0"
                     value={newItemPrice}
                     onChange={(e) => setNewItemPrice(e.target.value)}
-                    placeholder="e.g. 150"
+                    placeholder="0.00"
                     className="w-full px-3.5 py-2.5 bg-[#FFF7ED] border border-[#E2E8F0] rounded-xl text-xs text-[#0F172A] font-mono-code focus:outline-none focus:border-[#EA580C]"
                     required
                   />
@@ -790,7 +790,7 @@ export const AdminShopManager: React.FC = () => {
                   type="number"
                   value={newItemStock}
                   onChange={(e) => setNewItemStock(e.target.value)}
-                  placeholder="e.g. 20"
+                  placeholder="0"
                   min="0"
                   className="w-full px-3.5 py-2.5 bg-[#FFF7ED] border border-[#E2E8F0] rounded-xl text-xs text-[#0F172A] font-mono-code focus:outline-none focus:border-[#EA580C]"
                   required

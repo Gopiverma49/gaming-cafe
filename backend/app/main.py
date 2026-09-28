@@ -24,12 +24,18 @@ from app.core.rate_limiter import RateLimiter
 from app.models.entities import Station, Session, User, PhysicalDevice, MenuItem
 from app.models.enums import StationStatus, SessionStatus
 from app.api.deps import IdempotencyMiddleware, get_db, get_optional_auth_user
-from app.api.v1.admin_routes import router as admin_router
+from app.api.v1.admin_routes import router as admin_router, admin_check_in
 from app.api.v1.customer_routes import router as customer_router
 from app.api.v1.auth_routes import router as auth_router
-from app.api.v1.booking_routes import router as booking_router
+from app.api.v1.booking_routes import router as booking_router, create_advance_booking, BookingPayload
 from app.api.v1.payment_routes import router as payment_router
-from app.schemas.api_schemas import CategoryAvailabilityResponse, SessionStartRequest, SessionResponse, StationMatrixResponse
+from app.schemas.api_schemas import (
+    CategoryAvailabilityResponse,
+    SessionStartRequest,
+    SessionResponse,
+    StationMatrixResponse,
+    CheckInRequest,
+)
 from app.services.session_service import get_fleet_categories, start_category_session, get_fleet_matrix
 from app.services.ws_notifier import manager
 
@@ -514,6 +520,39 @@ async def public_start_session(
         user_id=user_id,
         tier_price=payload.tier_price,
     )
+
+
+@app.post(
+    "/api/station/checkin",
+    tags=["Station Check-in"],
+)
+@app.post(
+    "/api/v1/station/checkin",
+    tags=["Station Check-in"],
+)
+async def public_station_checkin(
+    payload: CheckInRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    return await admin_check_in(payload=payload, db=db)
+
+
+@app.post(
+    "/api/bookings/create",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Advance Bookings"],
+)
+@app.post(
+    "/api/v1/bookings/create",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Advance Bookings"],
+)
+async def public_booking_create(
+    payload: BookingPayload,
+    db: AsyncSession = Depends(get_db),
+):
+    return await create_advance_booking(payload=payload, db=db)
+
 
 
 @app.get("/health", tags=["Health"])

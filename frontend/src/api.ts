@@ -345,6 +345,22 @@ export async function updateKitchenOrderStatus(orderId: string, status: OrderSta
   return handleResponse<Order>(res);
 }
 
+export async function deleteKitchenOrder(orderId: string): Promise<{ message: string; order_id: string }> {
+  const res = await safeFetch(`${API_BASE}/admin/kitchen/orders/${orderId}`, {
+    method: 'DELETE',
+  });
+  return handleResponse<{ message: string; order_id: string }>(res);
+}
+
+export async function deleteCafeCustomerTabApi(customerName: string, sessionId?: string): Promise<{ message: string }> {
+  const res = await safeFetch(`${API_BASE}/admin/cafe/tab/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer_name: customerName, session_id: sessionId }),
+  });
+  return handleResponse<{ message: string }>(res);
+}
+
 // Customer API
 export interface InSeatOrderPayloadClient {
   orderId: string;

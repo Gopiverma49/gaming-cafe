@@ -170,6 +170,7 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
               break;
 
             case 'ORDER_STATUS_CHANGED':
+            case 'ORDER_DELETED':
               if (wsEvent.payload) {
                 const lounge = useLoungeStore.getState();
                 const ordId = String(wsEvent.payload.order_id || wsEvent.payload.orderId || '');
@@ -177,7 +178,7 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
                 const stName = wsEvent.payload.station_name || wsEvent.payload.stationId;
 
                 if (ordId) {
-                  if (ordStatus === 'cancelled' || ordStatus === 'rejected') {
+                  if (wsEvent.event_type === 'ORDER_DELETED' || ordStatus === 'cancelled' || ordStatus === 'rejected') {
                     lounge.removeInSeatOrder(ordId);
                     if (stName) {
                       lounge.clearStationFoodOrders(stName);

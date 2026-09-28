@@ -54,7 +54,7 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('PS1');
 
   // Customer credentials
-  const [customerName, setCustomerName] = useState(defaultCustomerName || user?.name || (isAdmin ? 'Walk-in Gamer' : 'Gamer'));
+  const [customerName, setCustomerName] = useState(defaultCustomerName || user?.name || '');
   const [customerPhone, setCustomerPhone] = useState(defaultCustomerPhone || user?.phone || '');
 
   // Snacks & Drinks Quantities: Record<itemId, number> (clamped between 0 and 5, default 0)
@@ -176,7 +176,7 @@ export const SessionUpsellDrawer: React.FC<SessionUpsellDrawerProps> = ({
   // Reset states upon opening
   useEffect(() => {
     if (isOpen) {
-      setCustomerName(defaultCustomerName || user?.name || (isAdmin ? 'Walk-in Gamer' : 'Gamer'));
+      setCustomerName(defaultCustomerName || user?.name || '');
       setCustomerPhone(defaultCustomerPhone || user?.phone || '');
       setSnackQuantities({});
       setActiveSnackFilter('ALL');
