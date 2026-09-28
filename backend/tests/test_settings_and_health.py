@@ -60,22 +60,21 @@ async def test_health_check_database_connectivity(test_db):
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Test /health
+        # Test lightweight /health for Render probes
         res = await client.get("/health")
         assert res.status_code == 200
         data = res.json()
-        assert data["status"] in ("ok", "healthy")
-        assert data["dbStatus"] == "connected"
-        assert data["database"] == "healthy"
-        assert "uptime" in data
-        assert "timestamp" in data
+        assert data["status"] == "ok"
 
-        # Test /api/health alias
+        # Test detailed /api/health diagnostic
         res_api = await client.get("/api/health")
         assert res_api.status_code == 200
         data_api = res_api.json()
-        assert data_api["status"] == data["status"]
+        assert data_api["status"] in ("ok", "healthy")
         assert data_api["dbStatus"] == "connected"
+        assert data_api["database"] == "healthy"
+        assert "uptime" in data_api
+        assert "timestamp" in data_api
 
 
 def test_production_fail_fast_validation():

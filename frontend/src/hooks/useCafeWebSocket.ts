@@ -69,22 +69,27 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
   const connect = useCallback(() => {
     if (isUnmountedRef.current) return;
 
-    // Build WebSocket URL: prioritize direct backend tunnel if set in production/tunnel mode
+    // Build WebSocket URL: prioritize direct backend WebSocket endpoint if set
     let wsUrl: string;
     if (typeof window !== 'undefined') {
       const host = window.location.hostname;
       const isLocalhost = host === 'localhost' || host === '127.0.0.1';
-      const envWs = env.VITE_WS_URL;
+      const envWs = env.VITE_WS_URL || (import.meta.env.VITE_WS_URL as string | undefined);
 
-      if (envWs && !isLocalhost) {
-        let baseWs = envWs.replace(/\/+$/, '');
+      if (envWs) {
+        let baseWs = envWs.trim().replace(/\/+$/, '');
         if (baseWs.startsWith('http://')) baseWs = baseWs.replace(/^http:\/\//, 'ws://');
         else if (baseWs.startsWith('https://')) baseWs = baseWs.replace(/^https:\/\//, 'wss://');
         else if (baseWs.startsWith('wsss://')) baseWs = baseWs.replace(/^wsss:\/\//, 'wss://');
         wsUrl = `${baseWs}/ws/${channel}`;
-      } else {
+      } else if (isLocalhost) {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         wsUrl = `${protocol}//${window.location.host}/ws/${channel}`;
+      } else {
+        console.warn(
+          `[WebSocket] VITE_WS_URL environment variable is missing for channel "${channel}". WebSocket connection skipped to prevent broken local loopbacks on Vercel.`
+        );
+        return;
       }
     } else {
       wsUrl = `ws://127.0.0.1:8000/ws/${channel}`;

@@ -590,6 +590,11 @@ async def public_booking_create(
 
 
 @app.get("/health", tags=["Health"])
+async def health_probe():
+    """Lightweight, unauthenticated health probe for Render's zero-downtime health probes."""
+    return {"status": "ok"}
+
+
 @app.get("/api/health", tags=["Health"])
 async def health_check(db: AsyncSession = Depends(get_db)):
     is_healthy = True

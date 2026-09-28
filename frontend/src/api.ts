@@ -17,11 +17,15 @@ import { useAuthStore } from './store/authStore';
 import { env } from './config/env';
 
 function resolveApiBase(): string {
+  // In production builds, strictly rely on VITE_API_BASE_URL without referencing localhost or 127.0.0.1
+  if (import.meta.env.MODE === 'production' || env.IS_PRODUCTION) {
+    return (import.meta.env.VITE_API_BASE_URL || env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
+  }
+
   if (typeof window !== 'undefined') {
     const host = window.location.hostname;
-    // On localhost or 127.0.0.1, always use relative path '' so requests go through
-    // Vite's local reverse proxy directly to 127.0.0.1:8000 with sub-5ms latency,
-    // completely avoiding the external Cloudflare tunnel.
+    // On localhost or 127.0.0.1 in development, use relative path '' so requests go through
+    // Vite's local reverse proxy directly to 127.0.0.1:8000 with sub-5ms latency
     if (host === 'localhost' || host === '127.0.0.1') {
       return '';
     }
@@ -31,7 +35,7 @@ function resolveApiBase(): string {
       return '';
     }
   }
-  return env.VITE_API_BASE_URL || '';
+  return (import.meta.env.VITE_API_BASE_URL || env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
 }
 
 export const API_BASE = `${resolveApiBase()}/api/v1`;
