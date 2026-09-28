@@ -4,18 +4,15 @@ import { AuthUser } from '../types';
 export type UserRole = 'admin' | 'customer';
 export type PortalType = 'admin' | 'customer';
 
+// sessionStorage keys — primary (per-tab isolation, read first)
 const ADMIN_STORAGE_KEY = 'vanya_admin_auth';
 const ADMIN_TOKEN_KEY = 'vanya_admin_token';
+// localStorage keys — fallback for cross-refresh persistence
+const ADMIN_AUTH_LS_KEY = 'vanya_admin_auth_ls';
+const ADMIN_TOKEN_LS_KEY = 'vanya_admin_token_ls';
+
 const CUSTOMER_STORAGE_KEY = 'vanya_customer_auth';
 const CUSTOMER_TOKEN_KEY = 'vanya_customer_token';
-
-// Clean up any stale admin token accidentally saved in localStorage
-if (typeof window !== 'undefined') {
-  try {
-    localStorage.removeItem(ADMIN_STORAGE_KEY);
-    localStorage.removeItem(ADMIN_TOKEN_KEY);
-  } catch {}
-}
 
 // Determine initial portal based on URL pathname
 export function getCurrentPortal(): PortalType {
@@ -88,9 +85,9 @@ interface AuthState {
 }
 
 const initialPortal = getCurrentPortal();
-// Admin credentials are kept strictly in sessionStorage (tab-isolated, not auto-retained across restarts)
-const initialAdminUser = loadStoredUser(ADMIN_STORAGE_KEY, '');
-const initialAdminToken = loadStoredToken(ADMIN_TOKEN_KEY, '');
+// Admin: sessionStorage primary (tab isolation), localStorage fallback (cross-refresh persistence)
+const initialAdminUser = loadStoredUser(ADMIN_STORAGE_KEY, ADMIN_AUTH_LS_KEY);
+const initialAdminToken = loadStoredToken(ADMIN_TOKEN_KEY, ADMIN_TOKEN_LS_KEY);
 const initialCustomerUser = loadStoredUser(CUSTOMER_STORAGE_KEY, CUSTOMER_STORAGE_KEY);
 const initialCustomerToken = loadStoredToken(CUSTOMER_TOKEN_KEY, CUSTOMER_TOKEN_KEY);
 
@@ -139,8 +136,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     // Strict RBAC: Only users with role === 'admin' can be granted admin credentials
     if (role === 'admin') {
-      saveToStorage(ADMIN_STORAGE_KEY, '', JSON.stringify(normalizedUser));
-      saveToStorage(ADMIN_TOKEN_KEY, '', token);
+      saveToStorage(ADMIN_STORAGE_KEY, ADMIN_AUTH_LS_KEY, JSON.stringify(normalizedUser));
+      saveToStorage(ADMIN_TOKEN_KEY, ADMIN_TOKEN_LS_KEY, token);
       set((state) => ({
         adminUser: normalizedUser,
         adminToken: token,
@@ -178,7 +175,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       phone: '0000000000',
       role: 'admin',
     };
-    saveToStorage(ADMIN_STORAGE_KEY, '', JSON.stringify(fallbackUser));
+    saveToStorage(ADMIN_STORAGE_KEY, ADMIN_AUTH_LS_KEY, JSON.stringify(fallbackUser));
     set((state) => ({
       adminUser: fallbackUser,
       ...(state.currentPortal === 'admin' ? { user: fallbackUser } : {}),
@@ -202,8 +199,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logout: () => {
     const portal = get().currentPortal;
     if (portal === 'admin') {
-      saveToStorage(ADMIN_STORAGE_KEY, '', null);
-      saveToStorage(ADMIN_TOKEN_KEY, '', null);
+      saveToStorage(ADMIN_STORAGE_KEY, ADMIN_AUTH_LS_KEY, null);
+      saveToStorage(ADMIN_TOKEN_KEY, ADMIN_TOKEN_LS_KEY, null);
       set({ adminUser: null, adminToken: null, user: null, token: null });
     } else {
       saveToStorage(CUSTOMER_STORAGE_KEY, CUSTOMER_STORAGE_KEY, null);

@@ -248,8 +248,11 @@ export function useCafeWebSocket({ channel, onEvent }: UseCafeWebSocketOptions) 
         clearPingInterval();
         if (isUnmountedRef.current) return;
 
-        // Exponential backoff: 1s initial, 30s ceiling
-        const delay = Math.min(30000, 1000 * Math.pow(2, reconnectAttemptRef.current));
+        // Exponential backoff with ±20% jitter to prevent thundering-herd on cold starts.
+        // Base delay: 1 s → 2 s → 4 s → … → 30 s ceiling.
+        const baseDelay = Math.min(30000, 1000 * Math.pow(2, reconnectAttemptRef.current));
+        const jitter = baseDelay * 0.2 * (Math.random() * 2 - 1); // ±20%
+        const delay = Math.max(500, Math.round(baseDelay + jitter));
         reconnectAttemptRef.current += 1;
 
         reconnectTimeoutRef.current = window.setTimeout(() => {
